@@ -1,0 +1,6 @@
+# Project-scoped Codex configuration.
+# Keep model choice inherited from the user's Codex settings.
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 4

@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "note": "Seed definitions only. Do not create fake user accounts or transactions during first-run.",
+  "assets": [
+    {
+      "code": "CNY",
+      "name": "Chinese Yuan",
+      "symbol": "¥",
+      "type": "fiat",
+      "scale": 2,
+      "sortOrder": 10
+    },
+    {
+      "code": "USD",
+      "name": "US Dollar",
+      "symbol": "$",
+      "type": "fiat",
+      "scale": 2,
+      "sortOrder": 20
+    },
+    {
+      "code": "EUR",
+      "name": "Euro",
+      "symbol": "€",
+      "type": "fiat",
+      "scale": 2,
+      "sortOrder": 30
+    },
+    {
+      "code": "HKD",
+      "name": "Hong Kong Dollar",
+      "symbol": "HK$",
+      "type": "fiat",
+      "scale": 2,
+      "sortOrder": 40
+    },
+    {
+      "code": "USDT",
+      "name": "Tether",
+      "symbol": "USDT",
+      "type": "crypto",
+      "scale": 6,
+      "sortOrder": 100
+    },
+    {
+      "code": "USDC",
+      "name": "USD Coin",
+      "symbol": "USDC",
+      "type": "crypto",
+      "scale": 6,
+      "sortOrder": 110
+    },
+    {
+      "code": "BTC",
+      "name": "Bitcoin",
+      "symbol": "BTC",
+      "type": "crypto",
+      "scale": 8,
+      "sortOrder": 120
+    },
+    {
+      "code": "ETH",
+      "name": "Ethereum",
+      "symbol": "ETH",
+      "type": "crypto",
+      "scale": 18,
+      "sortOrder": 130
+    },
+    {
+      "code": "SOL",
+      "name": "Solana",
+      "symbol": "SOL",
+      "type": "crypto",
+      "scale": 9,
+      "sortOrder": 140
+    }
+  ],
+  "categories": [
+    {
+      "name": "餐饮",
+      "type": "expense"
+    },
+    {
+      "name": "交通",
+      "type": "expense"
+    },
+    {
+      "name": "购物",
+      "type": "expense"
+    },
+    {
+      "name": "住房",
+      "type": "expense"
+    },
+    {
+      "name": "订阅",
+      "type": "expense"
+    },
+    {
+      "name": "服务器",
+      "type": "expense"
+    },
+    {
+      "name": "学习",
+      "type": "expense"
+    },
+    {
+      "name": "娱乐",
+      "type": "expense"
+    },
+    {
+      "name": "医疗",
+      "type": "expense"
+    },
+    {
+      "name": "旅行",
+      "type": "expense"
+    },
+    {
+      "name": "工资/收入",
+      "type": "income"
+    },
+    {
+      "name": "退款",
+      "type": "income"
+    },
+    {
+      "name": "其他",
+      "type": "both"
+    }
+  ]
+}
