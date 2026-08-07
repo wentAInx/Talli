@@ -1139,6 +1139,10 @@ button:disabled {
     display: none;
   }
 
+  .page-heading .primary-button.mobile-page-action {
+    display: inline-flex;
+  }
+
   .content-section,
   .form-card {
     border-radius: 12px;

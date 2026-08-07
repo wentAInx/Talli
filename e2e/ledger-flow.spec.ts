@@ -20,10 +20,16 @@ test("account, expense, dashboard, edit, and delete stay exact", async ({
 }, testInfo) => {
   const accountName = `${testInfo.project.name}-支付宝`;
 
+  await page.goto("/accounts");
+  await expect(page.getByRole("link", { name: "+ 添加账户" })).toBeVisible();
+
   await page.goto("/accounts/new");
   await page.getByLabel("账户名称").fill(accountName);
   await page.getByLabel("账户类型").selectOption("ewallet");
   await page.getByLabel("资产").selectOption("seed-asset-cny");
+  await expect(page.getByTestId("initial-balance-precision")).toContainText(
+    "CNY · 最多 2 位小数",
+  );
   await page.getByLabel("初始余额（可选）").fill("1000.00");
   await page.getByRole("button", { name: "创建账户" }).click();
 
@@ -127,6 +133,21 @@ test("income, transfer, exchange, and reconciliation forms reach their services"
     .getByRole("combobox", { name: "转出账户", exact: true })
     .selectOption({ label: "矩阵-CNY-A · CNY" });
   await expect(
+    page.getByText("CNY · 最多 2 位小数", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator(
+      '[data-testid="occurred-at-field"], [data-testid="fee-toggle"]',
+    ),
+  ).toHaveCount(2);
+  expect(
+    await page
+      .locator('[data-testid="occurred-at-field"], [data-testid="fee-toggle"]')
+      .evaluateAll((elements) =>
+        elements.map((element) => element.getAttribute("data-testid")),
+      ),
+  ).toEqual(["occurred-at-field", "fee-toggle"]);
+  await expect(
     page
       .getByRole("combobox", { name: "转入账户", exact: true })
       .locator("option", { hasText: "矩阵-USD" }),
@@ -151,6 +172,9 @@ test("income, transfer, exchange, and reconciliation forms reach their services"
   await page
     .getByRole("combobox", { name: "手续费账户", exact: true })
     .selectOption({ label: "矩阵-CNY-A · CNY" });
+  await expect(
+    page.getByText("CNY · 最多 2 位小数", { exact: true }),
+  ).toBeVisible();
   await page.getByLabel("手续费金额").fill("1.00");
   await expect(page.getByText("1 USDT = 0.995 USD")).toBeVisible();
   await page.getByRole("button", { name: "保存兑换" }).click();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 
 import { INITIAL_ACTION_STATE, type ActionState } from "@/app/action-state";
 import type { AccountView, AssetView } from "@/services";
@@ -28,6 +28,8 @@ export function AccountForm({
   initial?: AccountView;
 }) {
   const [state, formAction] = useActionState(action, INITIAL_ACTION_STATE);
+  const [assetId, setAssetId] = useState(initial?.asset.id ?? "");
+  const selectedAsset = assets.find((asset) => asset.id === assetId);
 
   return (
     <form action={formAction} className="form-stack">
@@ -78,7 +80,8 @@ export function AccountForm({
           <select
             name="assetId"
             required
-            defaultValue={initial?.asset.id ?? ""}
+            value={assetId}
+            onChange={(event) => setAssetId(event.target.value)}
           >
             <option value="" disabled>
               选择原生资产
@@ -114,7 +117,12 @@ export function AccountForm({
             autoComplete="off"
             placeholder="可输入负数；留空则不创建余额锚点"
           />
-          <small>初始余额会保存为账户创建时刻的余额锚点，不会记为收入。</small>
+          <small data-testid="initial-balance-precision">
+            {selectedAsset
+              ? `${selectedAsset.code} · 最多 ${selectedAsset.scale} 位小数。`
+              : "请先选择上方选项以确认金额单位与精度。"}
+            初始余额会保存为账户创建时刻的余额锚点，不会记为收入。
+          </small>
         </label>
       ) : null}
 

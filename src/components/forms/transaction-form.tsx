@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 
 import { INITIAL_ACTION_STATE, type ActionState } from "@/app/action-state";
 import { deriveExecutedExchangeRate } from "@/domain/exchange-rate";
@@ -46,6 +46,12 @@ function AccountOptions({ accounts }: { accounts: AccountView[] }) {
       {account.name} · {account.asset.code}
     </option>
   ));
+}
+
+function precisionText(account: AccountView | undefined): string {
+  return account
+    ? `${account.asset.code} · 最多 ${account.asset.scale} 位小数`
+    : "选择后显示单位与精度";
 }
 
 function FieldError({ error }: { error: string | null }) {
@@ -94,14 +100,12 @@ export function TransactionForm({
     initialDestination?.amountInput ?? "",
   );
   const [hasFee, setHasFee] = useState(Boolean(initialFee));
+  const [feeAccountId, setFeeAccountId] = useState(initialFee?.accountId ?? "");
   const [state, formAction] = useActionState(action, INITIAL_ACTION_STATE);
-  const dateRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (dateRef.current) {
-      dateRef.current.value = localInputValue(initial?.occurredAt);
-    }
-  }, [initial?.occurredAt]);
+  const occurredAtLocal = useMemo(
+    () => localInputValue(initial?.occurredAt),
+    [initial?.occurredAt],
+  );
 
   const selectedAccount = accounts.find((account) => account.id === accountId);
   const sourceAccount = accounts.find(
@@ -110,6 +114,7 @@ export function TransactionForm({
   const destinationAccount = accounts.find(
     (account) => account.id === destinationAccountId,
   );
+  const feeAccount = accounts.find((account) => account.id === feeAccountId);
 
   const destinationAccounts = useMemo(() => {
     if (!sourceAccount) {
@@ -175,6 +180,19 @@ export function TransactionForm({
     Object.keys(OPERATION_LABELS) as OperationType[]
   ).filter((type) => allowReconcile || type !== "reconcile");
 
+  const dateField = (
+    <label className="field" data-testid="occurred-at-field">
+      <span>{operationType === "reconcile" ? "调整时间" : "日期与时间"}</span>
+      <input
+        type="datetime-local"
+        step="0.001"
+        name="occurredAtLocal"
+        required
+        defaultValue={occurredAtLocal}
+      />
+    </label>
+  );
+
   function selectOperation(type: OperationType) {
     setOperationType(type);
     setDestinationAccountId("");
@@ -238,6 +256,7 @@ export function TransactionForm({
                 />
                 <span>{selectedAccount?.asset.code ?? "资产"}</span>
               </div>
+              <small>{precisionText(selectedAccount)}</small>
             </label>
             <label className="field">
               <span>账户</span>
@@ -273,6 +292,7 @@ export function TransactionForm({
                   ))}
               </select>
             </label>
+            {dateField}
           </>
         ) : null}
 
@@ -332,6 +352,7 @@ export function TransactionForm({
                   />
                   <span>{sourceAccount?.asset.code ?? "资产"}</span>
                 </div>
+                <small>{precisionText(sourceAccount)}</small>
               </label>
             ) : (
               <div className="field-grid field-grid-two">
@@ -349,6 +370,7 @@ export function TransactionForm({
                     />
                     <span>{sourceAccount?.asset.code ?? "资产"}</span>
                   </div>
+                  <small>{precisionText(sourceAccount)}</small>
                 </label>
                 <label className="field amount-field">
                   <span>买入数量</span>
@@ -366,6 +388,7 @@ export function TransactionForm({
                     />
                     <span>{destinationAccount?.asset.code ?? "资产"}</span>
                   </div>
+                  <small>{precisionText(destinationAccount)}</small>
                 </label>
               </div>
             )}
@@ -380,7 +403,9 @@ export function TransactionForm({
               </p>
             ) : null}
 
-            <label className="checkbox-row">
+            {dateField}
+
+            <label className="checkbox-row" data-testid="fee-toggle">
               <input
                 type="checkbox"
                 name="hasFee"
@@ -396,7 +421,8 @@ export function TransactionForm({
                   <select
                     name="feeAccountId"
                     required
-                    defaultValue={initialFee?.accountId ?? ""}
+                    value={feeAccountId}
+                    onChange={(event) => setFeeAccountId(event.target.value)}
                   >
                     <option value="" disabled>
                       选择账户（可为其他资产）
@@ -404,14 +430,18 @@ export function TransactionForm({
                     <AccountOptions accounts={accounts} />
                   </select>
                 </label>
-                <label className="field">
+                <label className="field amount-field">
                   <span>手续费金额</span>
-                  <input
-                    name="feeAmount"
-                    inputMode="decimal"
-                    required
-                    defaultValue={initialFee?.amountInput ?? ""}
-                  />
+                  <div className="amount-input-wrap">
+                    <input
+                      name="feeAmount"
+                      inputMode="decimal"
+                      required
+                      defaultValue={initialFee?.amountInput ?? ""}
+                    />
+                    <span>{feeAccount?.asset.code ?? "资产"}</span>
+                  </div>
+                  <small>{precisionText(feeAccount)}</small>
                 </label>
               </div>
             ) : null}
@@ -450,25 +480,14 @@ export function TransactionForm({
                 />
                 <span>{selectedAccount?.asset.code ?? "资产"}</span>
               </div>
+              <small>{precisionText(selectedAccount)}</small>
             </label>
+            {dateField}
             <p className="anchor-warning">
               该余额将成为此时间点的新锚点；更早日期后来补记的流水不会改变该锚点之后的余额。
             </p>
           </>
         ) : null}
-
-        <label className="field">
-          <span>
-            {operationType === "reconcile" ? "调整时间" : "日期与时间"}
-          </span>
-          <input
-            ref={dateRef}
-            type="datetime-local"
-            step="0.001"
-            name="occurredAtLocal"
-            required
-          />
-        </label>
 
         {operationType === "expense" || operationType === "income" ? (
           <label className="field">
@@ -481,6 +500,13 @@ export function TransactionForm({
                 operationType === "expense" ? "例如：便利店" : "例如：公司"
               }
             />
+          </label>
+        ) : null}
+
+        {operationType === "transfer" || operationType === "exchange" ? (
+          <label className="field">
+            <span>备注（可选）</span>
+            <textarea name="note" rows={3} defaultValue={initial?.note ?? ""} />
           </label>
         ) : null}
 
@@ -503,10 +529,14 @@ export function TransactionForm({
           </fieldset>
         ) : null}
 
-        <label className="field">
-          <span>备注（可选）</span>
-          <textarea name="note" rows={3} defaultValue={initial?.note ?? ""} />
-        </label>
+        {operationType === "expense" ||
+        operationType === "income" ||
+        operationType === "reconcile" ? (
+          <label className="field">
+            <span>备注（可选）</span>
+            <textarea name="note" rows={3} defaultValue={initial?.note ?? ""} />
+          </label>
+        ) : null}
         <FieldError error={state.error} />
         <div className="form-actions sticky-form-action">
           <SubmitButton>保存{OPERATION_LABELS[operationType]}</SubmitButton>

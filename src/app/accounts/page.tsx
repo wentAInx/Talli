@@ -21,7 +21,10 @@ export default async function AccountsPage() {
           <h1>账户</h1>
           <p>一个账户只绑定一种资产；各资产余额保持独立。</p>
         </div>
-        <Link className="primary-button" href="/accounts/new">
+        <Link
+          className="primary-button mobile-page-action"
+          href="/accounts/new"
+        >
           + 添加账户
         </Link>
       </header>
