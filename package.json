@@ -2,6 +2,7 @@
   "name": "asset-ledger",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Single-user, self-hosted multi-asset personal ledger.",
   "packageManager": "pnpm@10.11.0",
   "engines": {
