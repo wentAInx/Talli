@@ -1,34 +1,60 @@
-const principles = [
-  "原生资产数量独立记账",
-  "金额使用 bigint 与 SQLite TEXT",
-  "不接入行情、汇率或统一估值",
-];
+import Link from "next/link";
 
-export default function HomePage() {
+import { AssetGroups } from "@/components/ledger/asset-groups";
+import { EventList } from "@/components/ledger/event-list";
+import { LedgerReadService } from "@/services";
+
+import { withDatabase } from "./server-runtime";
+
+export const dynamic = "force-dynamic";
+
+export default async function DashboardPage() {
+  const queryTime = new Date().toISOString();
+  const dashboard = await withDatabase((context) =>
+    new LedgerReadService(context).getDashboard(queryTime),
+  );
+
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl items-center px-6 py-16">
-      <section className="w-full rounded-3xl border border-slate-200 bg-white p-8 shadow-sm sm:p-12">
-        <p className="text-sm font-semibold tracking-[0.2em] text-slate-500 uppercase">
-          Asset Ledger · V1
-        </p>
-        <h1 className="mt-4 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
-          多资产个人账本
-        </h1>
-        <p className="mt-4 max-w-2xl text-base leading-7 text-slate-600">
-          当前工程先完成精确金额、账本不变量、SQLite
-          持久化与幂等初始化；产品界面将在下一阶段接入同一服务边界。
-        </p>
-        <ul className="mt-8 grid gap-3 sm:grid-cols-3">
-          {principles.map((principle) => (
-            <li
-              key={principle}
-              className="rounded-2xl bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700"
-            >
-              {principle}
-            </li>
-          ))}
-        </ul>
+    <div className="page-stack">
+      <header className="page-heading dashboard-heading">
+        <div>
+          <p className="eyebrow">Native quantities · 原生数量</p>
+          <h1>资产总览</h1>
+          <p>
+            {dashboard.assetCount} 种资产 · {dashboard.activeAccountCount}{" "}
+            个活跃账户
+          </p>
+        </div>
+      </header>
+
+      {dashboard.assetGroups.length > 0 ? (
+        <AssetGroups groups={dashboard.assetGroups} />
+      ) : (
+        <section className="empty-state">
+          <span className="empty-mark" aria-hidden="true">
+            0
+          </span>
+          <h2>还没有账户</h2>
+          <p>先添加一个账户，并按需要设置初始余额。</p>
+          <Link className="primary-button" href="/accounts/new">
+            + 添加账户
+          </Link>
+        </section>
+      )}
+
+      <section className="content-section">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Latest ledger events</p>
+            <h2>最近流水</h2>
+          </div>
+          <Link href="/transactions">查看全部</Link>
+        </div>
+        <EventList
+          events={dashboard.recentEvents}
+          emptyText="录入第一笔交易后，逻辑事件会显示在这里。"
+        />
       </section>
-    </main>
+    </div>
   );
 }

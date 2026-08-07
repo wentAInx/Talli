@@ -1,7 +1,7 @@
 import { asc, eq } from "drizzle-orm";
 
 import type { DatabaseExecutor } from "../connection";
-import { accounts, assets } from "../schema";
+import { accounts, assets, balanceSnapshots, ledgerEntries } from "../schema";
 
 export function findAccountById(executor: DatabaseExecutor, id: string) {
   return executor.select().from(accounts).where(eq(accounts.id, id)).get();
@@ -41,6 +41,7 @@ export function updateAccount(
   value: Partial<
     Pick<
       typeof accounts.$inferInsert,
+      | "assetId"
       | "name"
       | "accountType"
       | "institutionName"
@@ -51,4 +52,30 @@ export function updateAccount(
   >,
 ): void {
   executor.update(accounts).set(value).where(eq(accounts.id, id)).run();
+}
+
+export function accountHasLedgerEntries(
+  executor: DatabaseExecutor,
+  accountId: string,
+): boolean {
+  return Boolean(
+    executor
+      .select({ id: ledgerEntries.id })
+      .from(ledgerEntries)
+      .where(eq(ledgerEntries.accountId, accountId))
+      .get(),
+  );
+}
+
+export function accountHasSnapshots(
+  executor: DatabaseExecutor,
+  accountId: string,
+): boolean {
+  return Boolean(
+    executor
+      .select({ id: balanceSnapshots.id })
+      .from(balanceSnapshots)
+      .where(eq(balanceSnapshots.accountId, accountId))
+      .get(),
+  );
 }

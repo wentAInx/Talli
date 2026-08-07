@@ -55,6 +55,7 @@ export interface CreateAccountInput {
 }
 
 export interface UpdateAccountInput {
+  assetId?: string;
   name: string;
   accountType: AccountType;
   institutionName?: string | null;

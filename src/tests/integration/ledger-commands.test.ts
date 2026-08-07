@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { atomicFromDb, PersistenceIntegrityError } from "../../db/atomic";
 import {
+  findAccountById,
   findEntriesForEvent,
   findLedgerEventById,
   findTagIdsForEvent,
@@ -102,6 +103,34 @@ describe("ledger command services", () => {
         .prepare("select count(*) as count from balance_snapshots")
         .get(),
     ).toEqual({ count: 0 });
+  });
+
+  it("changes an account asset only while the account has no history", async () => {
+    const emptyAccount = await createAccount("Empty account", "CNY");
+    await accounts.updateAccount(emptyAccount, {
+      assetId: seedAssetId("USD"),
+      name: "Empty account",
+      accountType: "other",
+    });
+    expect(findAccountById(database.context.db, emptyAccount)?.assetId).toBe(
+      seedAssetId("USD"),
+    );
+
+    const anchoredAccount = await createAccount(
+      "Anchored account",
+      "CNY",
+      "0.00",
+    );
+    await expect(
+      accounts.updateAccount(anchoredAccount, {
+        assetId: seedAssetId("USD"),
+        name: "Anchored account",
+        accountType: "other",
+      }),
+    ).rejects.toMatchObject({ code: "ACCOUNT_ASSET_LOCKED" });
+    expect(findAccountById(database.context.db, anchoredAccount)?.assetId).toBe(
+      seedAssetId("CNY"),
+    );
   });
 
   it("persists expense, income, transfer fee, and exchange fee exactly", async () => {
@@ -413,6 +442,35 @@ describe("ledger command services", () => {
     await expect(
       reconciliation.balanceAt(account, "2026-08-04T23:59:59.999Z"),
     ).resolves.toBe(7000n);
+  });
+
+  it("allows an existing snapshot to be corrected after its account is archived", async () => {
+    const account = await createAccount("Archived history", "USD");
+    const snapshotId = await reconciliation.reconcile({
+      accountId: account,
+      actualBalance: "10.00",
+      asOf: "2026-08-02T10:00:00.000Z",
+    });
+    await accounts.setArchived(account, true);
+
+    await expect(
+      reconciliation.update(snapshotId, {
+        actualBalance: "12.34",
+        asOf: "2026-08-02T10:01:00.000Z",
+        note: "Corrected archived history",
+      }),
+    ).resolves.toBeUndefined();
+    expect(
+      database.context.sqlite
+        .prepare(
+          "select balance_atomic, as_of, note from balance_snapshots where id = ?",
+        )
+        .get(snapshotId),
+    ).toEqual({
+      balance_atomic: "1234",
+      as_of: "2026-08-02T10:01:00.000Z",
+      note: "Corrected archived history",
+    });
   });
 
   it("recomputes a balance when an event crosses a snapshot boundary", async () => {

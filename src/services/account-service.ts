@@ -2,6 +2,8 @@ import { parseDecimalToAtomic } from "../domain/money";
 import { atomicToDb } from "../db/atomic";
 import type { DatabaseContext } from "../db/connection";
 import {
+  accountHasLedgerEntries,
+  accountHasSnapshots,
   findAccountById,
   findAssetById,
   findBookById,
@@ -97,7 +99,8 @@ export class AccountService {
   ): Promise<void> {
     this.context.db.transaction(
       (transaction) => {
-        if (!findAccountById(transaction, accountId)) {
+        const account = findAccountById(transaction, accountId);
+        if (!account) {
           throw new ServiceError(
             "ACCOUNT_NOT_FOUND",
             `Account ${accountId} was not found.`,
@@ -108,7 +111,25 @@ export class AccountService {
           "INVALID_ACCOUNT_TYPE",
           "Account type is invalid.",
         );
+        let assetId = account.assetId;
+        if (input.assetId && input.assetId !== account.assetId) {
+          const asset = findAssetById(transaction, input.assetId);
+          assertService(asset, "ASSET_NOT_FOUND", "Asset was not found.");
+          assertService(
+            !asset.isArchived,
+            "ASSET_ARCHIVED",
+            "Archived asset cannot be selected.",
+          );
+          assertService(
+            !accountHasLedgerEntries(transaction, accountId) &&
+              !accountHasSnapshots(transaction, accountId),
+            "ACCOUNT_ASSET_LOCKED",
+            "An account asset cannot change after ledger or snapshot history exists.",
+          );
+          assetId = asset.id;
+        }
         updateAccount(transaction, accountId, {
+          assetId,
           name: requiredText(input.name, "Account name"),
           accountType: input.accountType,
           institutionName: optionalText(input.institutionName),

@@ -6,7 +6,7 @@ FX conversion, stablecoin assumptions, or cross-asset totals.
 
 ## Current implementation status
 
-Phases 0–3 are implemented:
+Phases 0–6 are implemented:
 
 - Next.js 16, strict TypeScript, Tailwind CSS, ESLint, Prettier, Vitest, and
   Playwright tooling.
@@ -15,9 +15,15 @@ Phases 0–3 are implemented:
 - Drizzle schema and repeatable SQLite migration with WAL and foreign keys.
 - Atomic account, ledger event, and reconciliation command services.
 - Idempotent first-run seed for one default book, 9 assets, and 13 categories.
+- Responsive product shell with desktop navigation and phone bottom navigation.
+- Account list, create/edit/archive, initial balance, detail, and reconciliation UI.
+- Expense, income, same-asset transfer, cross-asset exchange, fee, edit, and
+  delete flows through Server Actions and the existing transactional services.
+- Dashboard balances grouped by native asset with per-account breakdown and
+  recent logical ledger events; no cross-asset total is calculated or shown.
 
-The product UI and later V1 phases are intentionally not claimed complete in
-this Core checkpoint.
+Transaction search/filtering, reports, backup/export/restore, and final V1
+hardening remain later phases and are not claimed complete here.
 
 ## Local development
 

@@ -84,16 +84,6 @@ export class ReconciliationService {
           "ACCOUNT_NOT_FOUND",
           "Snapshot account was not found.",
         );
-        assertService(
-          !account.account.isArchived,
-          "ACCOUNT_ARCHIVED",
-          "Archived account snapshots cannot be edited.",
-        );
-        assertService(
-          !account.asset.isArchived,
-          "ASSET_ARCHIVED",
-          "Archived asset snapshots cannot be edited.",
-        );
         const asOf = canonicalTimestamp(input.asOf);
         assertService(
           !findSnapshotAtTime(

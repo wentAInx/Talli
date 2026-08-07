@@ -20,7 +20,7 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: 1,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: "http://127.0.0.1:3106",
@@ -41,6 +41,7 @@ export default defineConfig({
     url: "http://127.0.0.1:3106",
     reuseExistingServer: false,
     env: {
+      AUTO_SETUP_DATABASE: "1",
       DATABASE_PATH: e2eDatabasePath,
     },
   },

@@ -4,5 +4,6 @@ export * from "./balances";
 export * from "./books";
 export * from "./categories";
 export * from "./events";
+export * from "./read-models";
 export * from "./snapshots";
 export * from "./tags";
