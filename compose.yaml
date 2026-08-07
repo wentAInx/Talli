@@ -1,0 +1,15 @@
+services:
+  asset-ledger:
+    build:
+      context: .
+    image: asset-ledger:local
+    restart: unless-stopped
+    environment:
+      DATABASE_PATH: /data/finance.db
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      - asset-ledger-data:/data
+
+volumes:
+  asset-ledger-data:
