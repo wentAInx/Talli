@@ -1,13 +1,18 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
-import { listDefaultBooks } from "@/db/queries";
 import { DomainValidationError } from "@/domain/errors";
 import { monthInTimeZone, monthUtcRange } from "@/domain/time";
-import { ReportService, ServiceError, SettingsService } from "@/services";
+import {
+  ReferenceDataService,
+  ReportService,
+  SettingsService,
+} from "@/services";
 
 import { withDatabase } from "../server-runtime";
 
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "月度收支" };
 
 function adjacentMonth(month: string, delta: number): string {
   const [year, monthNumber] = month.split("-").map(Number);
@@ -28,13 +33,7 @@ export default async function ReportsPage({
     ? rawMonthValue[0]
     : rawMonthValue;
   const result = await withDatabase((context) => {
-    const books = listDefaultBooks(context.db);
-    if (books.length !== 1) {
-      throw new ServiceError(
-        "DEFAULT_BOOK_UNAVAILABLE",
-        "Exactly one default book is required.",
-      );
-    }
+    const bookId = new ReferenceDataService(context).getDefaultBookId();
     const timeZone = new SettingsService(context).getTimeZoneOrDefault();
     const currentMonth = monthInTimeZone(new Date().toISOString(), timeZone);
     let month = rawMonth?.trim() || currentMonth;
@@ -51,7 +50,7 @@ export default async function ReportsPage({
     }
     return {
       report: new ReportService(context).monthlyIncomeExpense({
-        bookId: books[0].id,
+        bookId,
         month,
       }),
       warning,

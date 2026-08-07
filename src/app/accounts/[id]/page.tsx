@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -17,6 +18,7 @@ import { LedgerReadService, SettingsService } from "@/services";
 import { withDatabase } from "../../server-runtime";
 
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "账户详情" };
 
 function dateLabel(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat("zh-CN", {

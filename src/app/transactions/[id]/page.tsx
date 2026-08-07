@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -12,6 +13,7 @@ import { LedgerReadService, SettingsService } from "@/services";
 import { withDatabase } from "../../server-runtime";
 
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "编辑流水" };
 
 export default async function TransactionDetailPage({
   params,
@@ -22,9 +24,13 @@ export default async function TransactionDetailPage({
   const view = await withDatabase((context) => {
     const service = new LedgerReadService(context);
     try {
+      const event = service.getEvent(id);
       return {
-        event: service.getEvent(id),
-        reference: service.getReferenceData(new Date().toISOString()),
+        event,
+        reference: service.getReferenceData(new Date().toISOString(), {
+          categoryIds: event.categoryId ? [event.categoryId] : [],
+          tagIds: event.tagIds,
+        }),
         timeZone: new SettingsService(context).getTimeZoneOrDefault(),
         now: new Date().toISOString(),
       };

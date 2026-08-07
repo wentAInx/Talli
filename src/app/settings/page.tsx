@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+
 import {
   createAssetSettingsAction,
   createCategorySettingsAction,
@@ -13,17 +15,12 @@ import {
 import { ConfirmActionForm } from "@/components/forms/confirm-action-form";
 import { SettingsActionForm } from "@/components/forms/settings-action-form";
 import { RestorePanel } from "@/components/settings/restore-panel";
-import {
-  listAssets,
-  listCategoriesForBook,
-  listDefaultBooks,
-  listTagsForBook,
-} from "@/db/queries";
-import { ServiceError, SettingsService } from "@/services";
+import { ReferenceDataService, SettingsService } from "@/services";
 
 import { withDatabase } from "../server-runtime";
 
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "设置" };
 
 const ASSET_TYPE_LABELS = {
   fiat: "法币",
@@ -40,12 +37,26 @@ const CATEGORY_TYPE_LABELS = {
 function ArchiveControl({
   action,
   archived,
+  disabled = false,
+  disabledReason,
   label,
 }: {
   action: () => Promise<void>;
   archived: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
   label: string;
 }) {
+  if (disabled) {
+    return (
+      <div className="archive-disabled">
+        <button className="danger-button" disabled type="button">
+          归档
+        </button>
+        <small>{disabledReason}</small>
+      </div>
+    );
+  }
   return (
     <ConfirmActionForm
       action={action}
@@ -58,14 +69,9 @@ function ArchiveControl({
 
 export default async function SettingsPage() {
   const data = await withDatabase((context) => {
-    const books = listDefaultBooks(context.db);
-    if (books.length !== 1) {
-      throw new ServiceError("DEFAULT_BOOK_UNAVAILABLE", "默认账本不可用。");
-    }
+    const references = new ReferenceDataService(context).getSettingsData();
     return {
-      assets: listAssets(context.db),
-      categories: listCategoriesForBook(context.db, books[0].id),
-      tags: listTagsForBook(context.db, books[0].id),
+      ...references,
       timeZone: new SettingsService(context).getTimeZoneOrDefault(),
     };
   });
@@ -176,7 +182,18 @@ export default async function SettingsPage() {
                     </label>
                     <label className="field">
                       <span>类型</span>
-                      <select defaultValue={asset.assetType} name="assetType">
+                      {asset.factsLocked ? (
+                        <input
+                          name="assetType"
+                          type="hidden"
+                          value={asset.assetType}
+                        />
+                      ) : null}
+                      <select
+                        defaultValue={asset.assetType}
+                        disabled={asset.factsLocked}
+                        name={asset.factsLocked ? undefined : "assetType"}
+                      >
                         {Object.entries(ASSET_TYPE_LABELS).map(
                           ([value, label]) => (
                             <option key={value} value={value}>
@@ -193,6 +210,7 @@ export default async function SettingsPage() {
                         max="30"
                         min="0"
                         name="scale"
+                        readOnly={asset.factsLocked}
                         type="number"
                       />
                     </label>
@@ -212,6 +230,8 @@ export default async function SettingsPage() {
                 <ArchiveControl
                   action={archive}
                   archived={asset.isArchived}
+                  disabled={!asset.isArchived && asset.hasActiveAccounts}
+                  disabledReason="请先归档该资产下的所有活跃账户。"
                   label={`资产 ${asset.code}`}
                 />
               </details>

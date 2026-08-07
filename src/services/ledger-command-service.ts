@@ -15,6 +15,7 @@ import {
   findAccountWithAsset,
   findCategoryById,
   findLedgerEventById,
+  findTagIdsForEvent,
   findTagsByIds,
   insertEventTags,
   insertLedgerEntries,
@@ -46,6 +47,11 @@ interface PreparedCommand {
   note: string | null;
   tagIds: string[];
   entries: LedgerEntryDraft[];
+}
+
+interface ExistingArchivedReferences {
+  categoryId?: string | null;
+  tagIds?: readonly string[];
 }
 
 type AccountWithAsset = NonNullable<ReturnType<typeof findAccountWithAsset>>;
@@ -108,6 +114,7 @@ function validateCategory(
   categoryId: string | null,
   bookId: string,
   eventType: "expense" | "income",
+  existingCategoryId?: string | null,
 ): void {
   if (!categoryId) {
     return;
@@ -125,7 +132,7 @@ function validateCategory(
     "Category belongs to another book.",
   );
   assertService(
-    !category.isArchived,
+    !category.isArchived || category.id === existingCategoryId,
     "CATEGORY_ARCHIVED",
     "Archived category cannot be selected.",
   );
@@ -140,6 +147,7 @@ function validateTags(
   executor: DatabaseExecutor,
   tagIds: readonly string[],
   bookId: string,
+  existingTagIds: readonly string[] = [],
 ): void {
   const tagRows = findTagsByIds(executor, tagIds);
   assertService(
@@ -153,7 +161,7 @@ function validateTags(
     "All tags must belong to the event book.",
   );
   assertService(
-    tagRows.every((tag) => !tag.isArchived),
+    tagRows.every((tag) => !tag.isArchived || existingTagIds.includes(tag.id)),
     "TAG_ARCHIVED",
     "Archived tags cannot be selected.",
   );
@@ -175,14 +183,26 @@ function prepareExpenseOrIncome(
   executor: DatabaseExecutor,
   eventType: "expense" | "income",
   input: ExpenseInput | IncomeInput,
+  existing: ExistingArchivedReferences,
 ): PreparedCommand {
   const account = requireAccount(executor, input.accountId);
   const amountAtomic = parseDecimalToAtomic(input.amount, account.asset.scale);
   const categoryId = input.categoryId ?? null;
   const common = commonInput(input);
 
-  validateCategory(executor, categoryId, account.account.bookId, eventType);
-  validateTags(executor, common.tagIds, account.account.bookId);
+  validateCategory(
+    executor,
+    categoryId,
+    account.account.bookId,
+    eventType,
+    existing.categoryId,
+  );
+  validateTags(
+    executor,
+    common.tagIds,
+    account.account.bookId,
+    existing.tagIds,
+  );
 
   return {
     bookId: account.account.bookId,
@@ -202,6 +222,7 @@ function prepareExpenseOrIncome(
 function prepareTransfer(
   executor: DatabaseExecutor,
   input: TransferInput,
+  existing: ExistingArchivedReferences,
 ): PreparedCommand {
   const source = requireAccount(executor, input.sourceAccountId);
   const destination = requireAccount(executor, input.destinationAccountId);
@@ -212,7 +233,7 @@ function prepareTransfer(
   requireSameBook(source.account.bookId, accounts);
 
   const common = commonInput(input);
-  validateTags(executor, common.tagIds, source.account.bookId);
+  validateTags(executor, common.tagIds, source.account.bookId, existing.tagIds);
 
   return {
     bookId: source.account.bookId,
@@ -236,6 +257,7 @@ function prepareTransfer(
 function prepareExchange(
   executor: DatabaseExecutor,
   input: ExchangeInput,
+  existing: ExistingArchivedReferences,
 ): PreparedCommand {
   const source = requireAccount(executor, input.sourceAccountId);
   const destination = requireAccount(executor, input.destinationAccountId);
@@ -246,7 +268,7 @@ function prepareExchange(
   requireSameBook(source.account.bookId, accounts);
 
   const common = commonInput(input);
-  validateTags(executor, common.tagIds, source.account.bookId);
+  validateTags(executor, common.tagIds, source.account.bookId, existing.tagIds);
 
   return {
     bookId: source.account.bookId,
@@ -277,15 +299,21 @@ function prepareExchange(
 function prepareCommand(
   executor: DatabaseExecutor,
   command: LedgerMutationInput,
+  existing: ExistingArchivedReferences = {},
 ): PreparedCommand {
   switch (command.eventType) {
     case "expense":
     case "income":
-      return prepareExpenseOrIncome(executor, command.eventType, command.input);
+      return prepareExpenseOrIncome(
+        executor,
+        command.eventType,
+        command.input,
+        existing,
+      );
     case "transfer":
-      return prepareTransfer(executor, command.input);
+      return prepareTransfer(executor, command.input, existing);
     case "exchange":
-      return prepareExchange(executor, command.input);
+      return prepareExchange(executor, command.input, existing);
   }
 }
 
@@ -325,7 +353,10 @@ export class LedgerCommandService {
           );
         }
 
-        const prepared = prepareCommand(transaction, command);
+        const prepared = prepareCommand(transaction, command, {
+          categoryId: existing.categoryId,
+          tagIds: findTagIdsForEvent(transaction, eventId),
+        });
         assertService(
           prepared.bookId === existing.bookId,
           "EVENT_BOOK_CHANGE",

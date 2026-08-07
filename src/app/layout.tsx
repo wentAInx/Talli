@@ -5,7 +5,10 @@ import { AppShell } from "@/components/layout/app-shell";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Asset Ledger",
+  title: {
+    default: "Asset Ledger",
+    template: "%s | Asset Ledger",
+  },
   description: "A precise, self-hosted multi-asset personal ledger.",
 };
 

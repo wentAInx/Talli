@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import { createAccountAction } from "@/app/actions";
@@ -7,6 +8,7 @@ import { LedgerReadService } from "@/services";
 import { withDatabase } from "../../server-runtime";
 
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "添加账户" };
 
 export default async function NewAccountPage() {
   const reference = await withDatabase((context) =>

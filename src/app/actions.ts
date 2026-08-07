@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
-import { listDefaultBooks } from "@/db/queries";
 import { accountTypes, assetTypes, categoryTypes } from "@/db/schema";
 import { DomainValidationError } from "@/domain/errors";
 import { localDateTimeToUtc } from "@/domain/time";
@@ -237,12 +236,9 @@ export async function createAccountAction(
   let accountId: string;
   try {
     accountId = await withDatabase(async (context) => {
-      const books = listDefaultBooks(context.db);
-      if (books.length !== 1) {
-        throw new ServiceError("DEFAULT_BOOK_UNAVAILABLE", "默认账本不可用。");
-      }
+      const bookId = new ReferenceDataService(context).getDefaultBookId();
       return new AccountService(context).createAccount({
-        bookId: books[0].id,
+        bookId,
         assetId: requiredFormText(formData, "assetId", "资产"),
         name: requiredFormText(formData, "name", "账户名称"),
         accountType: z
@@ -503,16 +499,6 @@ export async function setAssetArchivedSettingsAction(
   revalidateSettingsViews();
 }
 
-function defaultBookForSettings(
-  context: Parameters<typeof listDefaultBooks>[0],
-) {
-  const books = listDefaultBooks(context);
-  if (books.length !== 1) {
-    throw new ServiceError("DEFAULT_BOOK_UNAVAILABLE", "默认账本不可用。");
-  }
-  return books[0];
-}
-
 function categorySettingsInput(formData: FormData, bookId: string) {
   return {
     bookId,
@@ -531,9 +517,9 @@ export async function createCategorySettingsAction(
 ): Promise<ActionState> {
   try {
     await withDatabase((context) => {
-      const book = defaultBookForSettings(context.db);
+      const bookId = new ReferenceDataService(context).getDefaultBookId();
       return new ReferenceDataService(context).createCategory(
-        categorySettingsInput(formData, book.id),
+        categorySettingsInput(formData, bookId),
       );
     });
   } catch (error) {
@@ -550,10 +536,10 @@ export async function updateCategorySettingsAction(
 ): Promise<ActionState> {
   try {
     await withDatabase((context) => {
-      const book = defaultBookForSettings(context.db);
+      const bookId = new ReferenceDataService(context).getDefaultBookId();
       return new ReferenceDataService(context).updateCategory(
         categoryId,
-        categorySettingsInput(formData, book.id),
+        categorySettingsInput(formData, bookId),
       );
     });
   } catch (error) {
@@ -582,9 +568,9 @@ export async function createTagSettingsAction(
 ): Promise<ActionState> {
   try {
     await withDatabase((context) => {
-      const book = defaultBookForSettings(context.db);
+      const bookId = new ReferenceDataService(context).getDefaultBookId();
       return new ReferenceDataService(context).createTag(
-        book.id,
+        bookId,
         requiredFormText(formData, "name", "标签名称"),
       );
     });

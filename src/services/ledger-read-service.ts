@@ -250,9 +250,17 @@ function normalizedEventListInput(input: LedgerEventListInput) {
 export class LedgerReadService {
   constructor(private readonly context: DatabaseContext) {}
 
-  getReferenceData(queryTime: string): LedgerReferenceView {
+  getReferenceData(
+    queryTime: string,
+    include: {
+      categoryIds?: readonly string[];
+      tagIds?: readonly string[];
+    } = {},
+  ): LedgerReferenceView {
     const bookId = defaultBookId(this.context);
     const accounts = this.accountViews(bookId, queryTime);
+    const includedCategoryIds = new Set(include.categoryIds ?? []);
+    const includedTagIds = new Set(include.tagIds ?? []);
     return {
       bookId,
       assets: listAssets(this.context.db)
@@ -270,15 +278,23 @@ export class LedgerReadService {
         (account) => !account.isArchived && !account.asset.isArchived,
       ),
       categories: listCategoriesForBook(this.context.db, bookId)
-        .filter((category) => !category.isArchived)
+        .filter(
+          (category) =>
+            !category.isArchived || includedCategoryIds.has(category.id),
+        )
         .map((category) => ({
           id: category.id,
           name: category.name,
           type: category.categoryType,
+          isArchived: category.isArchived,
         })),
       tags: listTagsForBook(this.context.db, bookId)
-        .filter((tag) => !tag.isArchived)
-        .map((tag) => ({ id: tag.id, name: tag.name })),
+        .filter((tag) => !tag.isArchived || includedTagIds.has(tag.id))
+        .map((tag) => ({
+          id: tag.id,
+          name: tag.name,
+          isArchived: tag.isArchived,
+        })),
     };
   }
 

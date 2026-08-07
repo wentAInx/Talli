@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import { createLedgerOperationAction } from "@/app/actions";
@@ -7,6 +8,7 @@ import { LedgerReadService, SettingsService } from "@/services";
 import { withDatabase } from "../../server-runtime";
 
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "记一笔" };
 
 const TYPES = [
   "expense",

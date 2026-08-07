@@ -10,8 +10,11 @@ import {
   insertAsset,
   insertCategory,
   insertTag,
+  listAssets,
   listCategoriesForBook,
+  listDefaultBooks,
   listEventTypesForCategory,
+  listTagsForBook,
   updateAsset,
   updateCategory,
   updateTag,
@@ -98,6 +101,50 @@ export class ReferenceDataService {
     private readonly context: DatabaseContext,
     private readonly runtime: ServiceRuntime = defaultServiceRuntime,
   ) {}
+
+  getDefaultBookId(): string {
+    const books = listDefaultBooks(this.context.db);
+    assertService(
+      books.length === 1,
+      "DEFAULT_BOOK_UNAVAILABLE",
+      "Exactly one default book is required.",
+    );
+    return books[0].id;
+  }
+
+  getSettingsData() {
+    const bookId = this.getDefaultBookId();
+    return {
+      bookId,
+      assets: listAssets(this.context.db).map((asset) => ({
+        id: asset.id,
+        code: asset.code,
+        name: asset.name,
+        symbol: asset.symbol,
+        assetType: asset.assetType,
+        scale: asset.scale,
+        isArchived: asset.isArchived,
+        sortOrder: asset.sortOrder,
+        factsLocked: assetHasAccounts(this.context.db, asset.id),
+        hasActiveAccounts: assetHasActiveAccounts(this.context.db, asset.id),
+      })),
+      categories: listCategoriesForBook(this.context.db, bookId).map(
+        (category) => ({
+          id: category.id,
+          parentId: category.parentId,
+          name: category.name,
+          categoryType: category.categoryType,
+          isArchived: category.isArchived,
+          sortOrder: category.sortOrder,
+        }),
+      ),
+      tags: listTagsForBook(this.context.db, bookId).map((tag) => ({
+        id: tag.id,
+        name: tag.name,
+        isArchived: tag.isArchived,
+      })),
+    };
+  }
 
   async createAsset(input: AssetMutationInput): Promise<string> {
     const code = normalizedCode(input.code);

@@ -113,6 +113,10 @@ export function RestorePanel() {
           </p>
           <dl>
             <div>
+              <dt>资产</dt>
+              <dd>{preview.summary.assets}</dd>
+            </div>
+            <div>
               <dt>账户</dt>
               <dd>{preview.summary.accounts}</dd>
             </div>

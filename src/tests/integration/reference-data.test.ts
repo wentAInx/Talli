@@ -121,4 +121,30 @@ describe("reference data settings service", () => {
       isArchived: true,
     });
   });
+
+  it("reports asset lock and archive preconditions for settings UI", async () => {
+    const cnyId = seedAssetId("CNY");
+    const before = references
+      .getSettingsData()
+      .assets.find((asset) => asset.id === cnyId);
+    expect(before).toMatchObject({
+      factsLocked: false,
+      hasActiveAccounts: false,
+    });
+
+    const accountId = await accounts.createAccount({
+      bookId: SEED_BOOK_ID,
+      assetId: cnyId,
+      name: "CNY settings lock",
+      accountType: "cash",
+    });
+    expect(
+      references.getSettingsData().assets.find((asset) => asset.id === cnyId),
+    ).toMatchObject({ factsLocked: true, hasActiveAccounts: true });
+
+    await accounts.setArchived(accountId, true);
+    expect(
+      references.getSettingsData().assets.find((asset) => asset.id === cnyId),
+    ).toMatchObject({ factsLocked: true, hasActiveAccounts: false });
+  });
 });

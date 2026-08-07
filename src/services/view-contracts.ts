@@ -28,11 +28,13 @@ export interface CategoryView {
   id: string;
   name: string;
   type: "expense" | "income" | "both";
+  isArchived: boolean;
 }
 
 export interface TagView {
   id: string;
   name: string;
+  isArchived: boolean;
 }
 
 export interface EventEntryView {

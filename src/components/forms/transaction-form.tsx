@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 
 import { INITIAL_ACTION_STATE, type ActionState } from "@/app/action-state";
 import { deriveExecutedExchangeRate } from "@/domain/exchange-rate";
@@ -45,8 +45,22 @@ function precisionText(account: AccountView | undefined): string {
 }
 
 function FieldError({ error }: { error: string | null }) {
+  const errorRef = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    if (error) {
+      errorRef.current?.focus();
+    }
+  }, [error]);
+
   return error ? (
-    <p className="form-error" role="alert" data-testid="form-error">
+    <p
+      className="form-error"
+      role="alert"
+      data-testid="form-error"
+      ref={errorRef}
+      tabIndex={-1}
+    >
       {error}
     </p>
   ) : null;
@@ -287,6 +301,7 @@ export function TransactionForm({
                   .map((category) => (
                     <option key={category.id} value={category.id}>
                       {category.name}
+                      {category.isArchived ? "（已归档）" : ""}
                     </option>
                   ))}
               </select>
@@ -522,6 +537,7 @@ export function TransactionForm({
                     defaultChecked={initial?.tagIds.includes(tag.id)}
                   />
                   <span>{tag.name}</span>
+                  {tag.isArchived ? <small>已归档</small> : null}
                 </label>
               ))}
             </div>
