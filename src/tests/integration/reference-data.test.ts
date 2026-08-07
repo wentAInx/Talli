@@ -5,6 +5,7 @@ import { seedDatabase } from "../../db/seed";
 import { SEED_BOOK_ID, SEED_CATEGORIES, seedAssetId } from "../../db/seed-data";
 import { AccountService } from "../../services/account-service";
 import { LedgerCommandService } from "../../services/ledger-command-service";
+import { LedgerReadService } from "../../services/ledger-read-service";
 import { ReferenceDataService } from "../../services/reference-data-service";
 import type { TestDatabase } from "./test-database";
 import { createTestDatabase, deterministicRuntime } from "./test-database";
@@ -146,5 +147,40 @@ describe("reference data settings service", () => {
     expect(
       references.getSettingsData().assets.find((asset) => asset.id === cnyId),
     ).toMatchObject({ factsLocked: true, hasActiveAccounts: false });
+  });
+
+  it("does not restore an account while its asset is archived", async () => {
+    const assetId = await references.createAsset({
+      code: "CAD",
+      name: "Canadian Dollar",
+      symbol: "C$",
+      assetType: "fiat",
+      scale: 2,
+    });
+    const accountId = await accounts.createAccount({
+      bookId: SEED_BOOK_ID,
+      assetId,
+      name: "CAD cash",
+      accountType: "cash",
+      initialBalance: "10.00",
+    });
+
+    await accounts.setArchived(accountId, true);
+    await references.setAssetArchived(assetId, true);
+
+    await expect(accounts.setArchived(accountId, false)).rejects.toMatchObject({
+      code: "ASSET_ARCHIVED",
+    });
+    expect(
+      new LedgerReadService(database.context).getDashboard(
+        "2026-08-08T00:00:00.000Z",
+      ).assetGroups,
+    ).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          asset: expect.objectContaining({ id: assetId }),
+        }),
+      ]),
+    );
   });
 });

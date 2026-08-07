@@ -66,7 +66,13 @@ test("account, expense, dashboard, edit, and delete stay exact", async ({
   await page.goto("/transactions");
   await page.getByRole("link", { name: /便利店/ }).click();
   await page.getByLabel("金额").fill("40.80");
+  const updateResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().includes("/transactions/"),
+  );
   await page.getByRole("button", { name: "保存支出" }).click();
+  await updateResponse;
 
   await page.goto("/");
   await expect(

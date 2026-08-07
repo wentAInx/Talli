@@ -455,7 +455,7 @@ export class LedgerReadService {
   getDashboard(queryTime: string): DashboardView {
     const bookId = defaultBookId(this.context);
     const accounts = this.accountViews(bookId, queryTime).filter(
-      (account) => !account.isArchived,
+      (account) => !account.isArchived && !account.asset.isArchived,
     );
     const groups = new Map<
       string,

@@ -144,10 +144,19 @@ export class AccountService {
   async setArchived(accountId: string, isArchived: boolean): Promise<void> {
     this.context.db.transaction(
       (transaction) => {
-        if (!findAccountById(transaction, accountId)) {
+        const account = findAccountById(transaction, accountId);
+        if (!account) {
           throw new ServiceError(
             "ACCOUNT_NOT_FOUND",
             `Account ${accountId} was not found.`,
+          );
+        }
+        if (!isArchived) {
+          const asset = findAssetById(transaction, account.assetId);
+          assertService(
+            asset && !asset.isArchived,
+            "ASSET_ARCHIVED",
+            "An account cannot be restored while its asset is archived.",
           );
         }
         updateAccount(transaction, accountId, {

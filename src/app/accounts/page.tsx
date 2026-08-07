@@ -12,8 +12,12 @@ export default async function AccountsPage() {
   const accounts = await withDatabase((context) =>
     new LedgerReadService(context).listAccounts(new Date().toISOString()),
   );
-  const active = accounts.filter((account) => !account.isArchived);
-  const archived = accounts.filter((account) => account.isArchived);
+  const active = accounts.filter(
+    (account) => !account.isArchived && !account.asset.isArchived,
+  );
+  const archived = accounts.filter(
+    (account) => account.isArchived || account.asset.isArchived,
+  );
 
   return (
     <div className="page-stack">
