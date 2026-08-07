@@ -53,26 +53,26 @@ function eventContext(event: LedgerEventView): string {
   return TYPE_LABELS[event.type];
 }
 
-const UTC_DATE_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
-  timeZone: "UTC",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
-
-function utcLabel(iso: string): string {
-  return `${UTC_DATE_FORMATTER.format(new Date(iso))} UTC`;
+function dateLabel(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(iso));
 }
 
 export function EventList({
   events,
   emptyText = "还没有流水。",
+  timeZone = "UTC",
 }: {
   events: LedgerEventView[];
   emptyText?: string;
+  timeZone?: string;
 }) {
   if (events.length === 0) {
     return <p className="empty-inline">{emptyText}</p>;
@@ -96,8 +96,8 @@ export function EventList({
               </span>
               <span className="event-figure">
                 {eventAmount(event)}
-                <time dateTime={event.occurredAt}>
-                  {utcLabel(event.occurredAt)}
+                <time dateTime={event.occurredAt} title={timeZone}>
+                  {dateLabel(event.occurredAt, timeZone)}
                 </time>
               </span>
             </Link>

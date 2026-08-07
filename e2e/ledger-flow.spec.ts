@@ -202,3 +202,66 @@ test("income, transfer, exchange, and reconciliation forms reach their services"
       .getByRole("link", { name: /矩阵-USDT/ }),
   ).toContainText("400.000000 USDT");
 });
+
+test("filters, native-asset reports, settings, and exports form a V1 loop", async ({
+  page,
+}, testInfo) => {
+  const accountName = `${testInfo.project.name}-筛选账户`;
+  const payee = `${testInfo.project.name}-筛选商户`;
+  await createAccount(page, {
+    name: accountName,
+    assetId: "seed-asset-cny",
+    initialBalance: "100.00",
+  });
+
+  await page.goto("/transactions/new?type=expense");
+  await page.getByLabel("金额").fill("12.34");
+  await page.getByLabel("账户").selectOption({ label: `${accountName} · CNY` });
+  await page.getByLabel("对象（可选）").fill(payee);
+  await page.getByRole("button", { name: "保存支出" }).click();
+
+  await page.goto("/transactions");
+  await page.getByLabel("搜索").fill(payee);
+  await page.getByLabel("类型").selectOption("expense");
+  await page.getByRole("button", { name: "应用筛选" }).click();
+  await expect(
+    page.getByRole("link", { name: new RegExp(payee) }),
+  ).toBeVisible();
+
+  await page.getByRole("link", { name: "报表", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "月度收支" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Chinese Yuan" }),
+  ).toBeVisible();
+  await expect(page.getByText("不做行情或跨资产换算")).toBeVisible();
+
+  await page.getByRole("link", { name: "设置", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "设置" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "下载无损 JSON 备份" }),
+  ).toBeVisible();
+
+  const backupResponse = await page.request.get("/api/data/backup");
+  expect(backupResponse.ok()).toBe(true);
+  const backup = (await backupResponse.json()) as {
+    format: string;
+    schemaVersion: number;
+    data: { ledgerEntries: { amountAtomic: string }[] };
+  };
+  expect(backup.format).toBe("multi-asset-ledger-backup");
+  expect(backup.schemaVersion).toBe(1);
+  expect(
+    backup.data.ledgerEntries.every(
+      (entry) => typeof entry.amountAtomic === "string",
+    ),
+  ).toBe(true);
+
+  const csvResponse = await page.request.get("/api/data/export.csv");
+  expect(csvResponse.ok()).toBe(true);
+  expect(await csvResponse.text()).toContain(accountName);
+
+  const noHorizontalOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth <= window.innerWidth,
+  );
+  expect(noHorizontalOverflow).toBe(true);
+});

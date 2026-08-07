@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { createLedgerOperationAction } from "@/app/actions";
 import { TransactionForm } from "@/components/forms/transaction-form";
-import { LedgerReadService } from "@/services";
+import { LedgerReadService, SettingsService } from "@/services";
 
 import { withDatabase } from "../../server-runtime";
 
@@ -25,9 +25,14 @@ export default async function NewTransactionPage({
   const initialType = TYPES.includes(type as (typeof TYPES)[number])
     ? (type as (typeof TYPES)[number])
     : "expense";
-  const reference = await withDatabase((context) =>
-    new LedgerReadService(context).getReferenceData(new Date().toISOString()),
-  );
+  const view = await withDatabase((context) => {
+    const now = new Date().toISOString();
+    return {
+      reference: new LedgerReadService(context).getReferenceData(now),
+      timeZone: new SettingsService(context).getTimeZoneOrDefault(),
+      now,
+    };
+  });
 
   return (
     <div className="transaction-page page-stack">
@@ -40,14 +45,16 @@ export default async function NewTransactionPage({
           <p>选择操作类型；资产、方向与精度会在服务端再次校验。</p>
         </div>
       </header>
-      {reference.accounts.length > 0 ? (
+      {view.reference.accounts.length > 0 ? (
         <section className="form-card transaction-card">
           <TransactionForm
             action={createLedgerOperationAction}
-            accounts={reference.accounts}
-            categories={reference.categories}
-            tags={reference.tags}
+            accounts={view.reference.accounts}
+            categories={view.reference.categories}
+            tags={view.reference.tags}
             initialType={initialType}
+            timeZone={view.timeZone}
+            defaultOccurredAt={view.now}
           />
         </section>
       ) : (

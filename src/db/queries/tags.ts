@@ -1,10 +1,22 @@
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 
 import type { DatabaseExecutor } from "../connection";
 import { tags } from "../schema";
 
 export function findTagById(executor: DatabaseExecutor, id: string) {
   return executor.select().from(tags).where(eq(tags.id, id)).get();
+}
+
+export function findTagByName(
+  executor: DatabaseExecutor,
+  bookId: string,
+  name: string,
+) {
+  return executor
+    .select()
+    .from(tags)
+    .where(and(eq(tags.bookId, bookId), eq(tags.name, name)))
+    .get();
 }
 
 export function findTagsByIds(

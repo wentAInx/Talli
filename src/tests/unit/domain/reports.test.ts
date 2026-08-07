@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { aggregateReportEntriesByAsset } from "../../../domain/reports";
+import {
+  aggregateReportEntriesByAsset,
+  aggregateReportEntriesByAssetAndCategory,
+} from "../../../domain/reports";
 import type { ReportEntryFact } from "../../../domain/types";
 
 describe("report entry classification", () => {
@@ -81,6 +84,46 @@ describe("report entry classification", () => {
     ).toEqual([
       { assetId: "cny", incomeAtomic: 0n, expenseAtomic: 3580n },
       { assetId: "usd", incomeAtomic: 10000n, expenseAtomic: 0n },
+    ]);
+  });
+
+  it("uses a virtual fee category and never assigns principal to a category", () => {
+    expect(
+      aggregateReportEntriesByAssetAndCategory([
+        {
+          assetId: "usdt",
+          eventType: "exchange",
+          role: "source",
+          amountAtomic: -100000000n,
+          categoryId: null,
+          categoryName: null,
+        },
+        {
+          assetId: "usd",
+          eventType: "exchange",
+          role: "destination",
+          amountAtomic: 9950n,
+          categoryId: null,
+          categoryName: null,
+        },
+        {
+          assetId: "eth",
+          eventType: "exchange",
+          role: "fee",
+          amountAtomic: -10000000000000000n,
+          categoryId: "ignored-event-category",
+          categoryName: "不应使用",
+        },
+      ]),
+    ).toEqual([
+      {
+        assetId: "eth",
+        categoryKey: "fees",
+        categoryId: null,
+        categoryName: "手续费",
+        incomeAtomic: 0n,
+        expenseAtomic: 10000000000000000n,
+      },
     ]);
   });
 });

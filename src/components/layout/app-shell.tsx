@@ -1,10 +1,12 @@
 import Link from "next/link";
 
 import { MobileHeader, Navigation } from "./navigation";
+import { TimeZoneBootstrap } from "./time-zone-bootstrap";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="app-shell">
+      <TimeZoneBootstrap />
       <a className="skip-link" href="#main-content">
         跳到主要内容
       </a>

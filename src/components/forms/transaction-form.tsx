@@ -5,6 +5,7 @@ import { useActionState, useMemo, useState } from "react";
 import { INITIAL_ACTION_STATE, type ActionState } from "@/app/action-state";
 import { deriveExecutedExchangeRate } from "@/domain/exchange-rate";
 import { parseDecimalToAtomic } from "@/domain/money";
+import { utcInstantToLocalDateTime } from "@/domain/time";
 import type {
   AccountView,
   CategoryView,
@@ -24,17 +25,6 @@ const OPERATION_LABELS: Record<OperationType, string> = {
   exchange: "兑换",
   reconcile: "调整余额",
 };
-
-function localInputValue(iso?: string): string {
-  const date = iso ? new Date(iso) : new Date();
-  const pad = (value: number) => String(value).padStart(2, "0");
-  const milliseconds = String(date.getMilliseconds()).padStart(3, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
-    date.getDate(),
-  )}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(
-    date.getSeconds(),
-  )}.${milliseconds}`;
-}
 
 function entry(initial: LedgerEventView | undefined, role: string) {
   return initial?.entries.find((candidate) => candidate.role === role);
@@ -70,6 +60,8 @@ export function TransactionForm({
   initial,
   initialType = "expense",
   allowReconcile = true,
+  timeZone,
+  defaultOccurredAt,
 }: {
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
   accounts: AccountView[];
@@ -78,6 +70,8 @@ export function TransactionForm({
   initial?: LedgerEventView;
   initialType?: OperationType;
   allowReconcile?: boolean;
+  timeZone: string;
+  defaultOccurredAt: string;
 }) {
   const startingType = initial?.type ?? initialType;
   const [operationType, setOperationType] =
@@ -103,8 +97,12 @@ export function TransactionForm({
   const [feeAccountId, setFeeAccountId] = useState(initialFee?.accountId ?? "");
   const [state, formAction] = useActionState(action, INITIAL_ACTION_STATE);
   const occurredAtLocal = useMemo(
-    () => localInputValue(initial?.occurredAt),
-    [initial?.occurredAt],
+    () =>
+      utcInstantToLocalDateTime(
+        initial?.occurredAt ?? defaultOccurredAt,
+        timeZone,
+      ),
+    [defaultOccurredAt, initial?.occurredAt, timeZone],
   );
 
   const selectedAccount = accounts.find((account) => account.id === accountId);
@@ -165,17 +163,6 @@ export function TransactionForm({
     sourceAmount,
   ]);
 
-  function actionWithUtc(formData: FormData) {
-    const localValue = formData.get("occurredAtLocal");
-    if (typeof localValue === "string" && localValue.length > 0) {
-      const date = new Date(localValue);
-      if (!Number.isNaN(date.getTime())) {
-        formData.set("occurredAt", date.toISOString());
-      }
-    }
-    formAction(formData);
-  }
-
   const visibleTypes = (
     Object.keys(OPERATION_LABELS) as OperationType[]
   ).filter((type) => allowReconcile || type !== "reconcile");
@@ -190,6 +177,7 @@ export function TransactionForm({
         required
         defaultValue={occurredAtLocal}
       />
+      <small>按 App 时区 {timeZone} 保存</small>
     </label>
   );
 
@@ -199,7 +187,7 @@ export function TransactionForm({
   }
 
   return (
-    <form action={actionWithUtc} className="transaction-form">
+    <form action={formAction} autoComplete="off" className="transaction-form">
       <div className="operation-tabs" role="tablist" aria-label="记账类型">
         {visibleTypes.map((type) => (
           <button
@@ -209,18 +197,29 @@ export function TransactionForm({
             id={`operation-tab-${type}`}
             aria-controls="operation-panel"
             aria-selected={operationType === type}
+            tabIndex={operationType === type ? 0 : -1}
             className="operation-tab"
             onClick={() => selectOperation(type)}
             onKeyDown={(event) => {
-              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+              if (
+                event.key !== "ArrowLeft" &&
+                event.key !== "ArrowRight" &&
+                event.key !== "Home" &&
+                event.key !== "End"
+              ) {
                 return;
               }
               event.preventDefault();
-              const direction = event.key === "ArrowRight" ? 1 : -1;
               const currentIndex = visibleTypes.indexOf(type);
               const nextIndex =
-                (currentIndex + direction + visibleTypes.length) %
-                visibleTypes.length;
+                event.key === "Home"
+                  ? 0
+                  : event.key === "End"
+                    ? visibleTypes.length - 1
+                    : (currentIndex +
+                        (event.key === "ArrowRight" ? 1 : -1) +
+                        visibleTypes.length) %
+                      visibleTypes.length;
               const nextType = visibleTypes[nextIndex];
               selectOperation(nextType);
               event.currentTarget.parentElement

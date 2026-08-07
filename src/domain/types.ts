@@ -54,8 +54,19 @@ export interface ReportEntryFact {
   amountAtomic: AtomicAmount;
 }
 
+export interface CategorizedReportEntryFact extends ReportEntryFact {
+  categoryId: string | null;
+  categoryName: string | null;
+}
+
 export interface AssetReportBucket {
   assetId: string;
   incomeAtomic: AtomicAmount;
   expenseAtomic: AtomicAmount;
+}
+
+export interface AssetCategoryReportBucket extends AssetReportBucket {
+  categoryKey: string;
+  categoryId: string | null;
+  categoryName: string;
 }

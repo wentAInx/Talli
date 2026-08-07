@@ -1,0 +1,1 @@
+CREATE INDEX `idx_events_book_order` ON `ledger_events` (`book_id`,"occurred_at" desc,"created_at" desc,"id" desc);

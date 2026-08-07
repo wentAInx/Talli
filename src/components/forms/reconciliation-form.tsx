@@ -1,53 +1,37 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState } from "react";
 
 import { INITIAL_ACTION_STATE, type ActionState } from "@/app/action-state";
+import { utcInstantToLocalDateTime } from "@/domain/time";
 
 import { SubmitButton } from "./submit-button";
-
-function localInputValue(iso?: string): string {
-  const date = iso ? new Date(iso) : new Date();
-  const pad = (value: number) => String(value).padStart(2, "0");
-  const milliseconds = String(date.getMilliseconds()).padStart(3, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
-    date.getDate(),
-  )}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(
-    date.getSeconds(),
-  )}.${milliseconds}`;
-}
 
 export function ReconciliationForm({
   action,
   assetCode,
   currentBalance,
   initial,
+  timeZone,
+  defaultAsOf,
 }: {
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
   assetCode: string;
   currentBalance: string;
   initial?: { actualBalance: string; asOf: string; note: string | null };
+  timeZone: string;
+  defaultAsOf: string;
 }) {
   const [state, formAction] = useActionState(action, INITIAL_ACTION_STATE);
-  const dateRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (dateRef.current) {
-      dateRef.current.value = localInputValue(initial?.asOf);
-    }
-  }, [initial?.asOf]);
-
-  function actionWithUtc(formData: FormData) {
-    const localValue = formData.get("asOfLocal");
-    if (typeof localValue === "string" && localValue.length > 0) {
-      formData.set("asOf", new Date(localValue).toISOString());
-    }
-    formAction(formData);
-  }
+  const localAsOf = utcInstantToLocalDateTime(
+    initial?.asOf ?? defaultAsOf,
+    timeZone,
+  );
 
   return (
     <form
-      action={actionWithUtc}
+      action={formAction}
+      autoComplete="off"
       className="form-stack compact-form"
       onSubmit={(event) => {
         if (
@@ -80,12 +64,13 @@ export function ReconciliationForm({
       <label className="field">
         <span>调整时间</span>
         <input
-          ref={dateRef}
           type="datetime-local"
           step="0.001"
           name="asOfLocal"
           required
+          defaultValue={localAsOf}
         />
+        <small>按 App 时区 {timeZone} 保存</small>
       </label>
       <label className="field">
         <span>备注（可选）</span>

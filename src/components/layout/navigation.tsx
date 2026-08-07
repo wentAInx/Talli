@@ -6,9 +6,9 @@ import { usePathname } from "next/navigation";
 const items = [
   { href: "/", label: "总览", mark: "总" },
   { href: "/transactions", label: "流水", mark: "流" },
-  { href: null, label: "报表", mark: "报" },
+  { href: "/reports", label: "报表", mark: "报" },
   { href: "/accounts", label: "账户", mark: "账" },
-  { href: null, label: "设置", mark: "设" },
+  { href: "/settings", label: "设置", mark: "设" },
 ] as const;
 
 function isCurrent(pathname: string, href: string): boolean {
@@ -22,33 +22,19 @@ export function Navigation({ mobile = false }: { mobile?: boolean }) {
       aria-label={mobile ? "手机主导航" : "主导航"}
       className={mobile ? "mobile-nav" : "desktop-nav"}
     >
-      {items.map((item) =>
-        item.href ? (
-          <Link
-            key={item.label}
-            href={item.href}
-            className="nav-item"
-            aria-current={isCurrent(pathname, item.href) ? "page" : undefined}
-          >
-            <span aria-hidden="true" className="nav-mark">
-              {item.mark}
-            </span>
-            <span>{item.label}</span>
-          </Link>
-        ) : (
-          <span
-            key={item.label}
-            className="nav-item nav-item-disabled"
-            aria-disabled="true"
-            title="后续阶段提供"
-          >
-            <span aria-hidden="true" className="nav-mark">
-              {item.mark}
-            </span>
-            <span>{item.label}</span>
+      {items.map((item) => (
+        <Link
+          key={item.label}
+          href={item.href}
+          className="nav-item"
+          aria-current={isCurrent(pathname, item.href) ? "page" : undefined}
+        >
+          <span aria-hidden="true" className="nav-mark">
+            {item.mark}
           </span>
-        ),
-      )}
+          <span>{item.label}</span>
+        </Link>
+      ))}
     </nav>
   );
 }
@@ -60,11 +46,15 @@ export function MobileHeader() {
       ? "记一笔"
       : /^\/transactions\/[^/]+$/.test(pathname)
         ? "编辑流水"
-        : pathname.startsWith("/accounts")
-          ? "账户"
-          : pathname.startsWith("/transactions")
-            ? "流水"
-            : "资产总览";
+        : pathname.startsWith("/reports")
+          ? "报表"
+          : pathname.startsWith("/settings")
+            ? "设置"
+            : pathname.startsWith("/accounts")
+              ? "账户"
+              : pathname.startsWith("/transactions")
+                ? "流水"
+                : "资产总览";
   return (
     <>
       <span>{title}</span>

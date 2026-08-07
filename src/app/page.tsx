@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { AssetGroups } from "@/components/ledger/asset-groups";
 import { EventList } from "@/components/ledger/event-list";
-import { LedgerReadService } from "@/services";
+import { LedgerReadService, SettingsService } from "@/services";
 
 import { withDatabase } from "./server-runtime";
 
@@ -10,9 +10,11 @@ export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const queryTime = new Date().toISOString();
-  const dashboard = await withDatabase((context) =>
-    new LedgerReadService(context).getDashboard(queryTime),
-  );
+  const view = await withDatabase((context) => ({
+    dashboard: new LedgerReadService(context).getDashboard(queryTime),
+    timeZone: new SettingsService(context).getTimeZoneOrDefault(),
+  }));
+  const { dashboard } = view;
 
   return (
     <div className="page-stack">
@@ -52,6 +54,7 @@ export default async function DashboardPage() {
         </div>
         <EventList
           events={dashboard.recentEvents}
+          timeZone={view.timeZone}
           emptyText="录入第一笔交易后，逻辑事件会显示在这里。"
         />
       </section>

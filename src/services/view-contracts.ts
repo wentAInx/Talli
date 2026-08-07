@@ -59,6 +59,65 @@ export interface LedgerEventView {
   tagIds: string[];
 }
 
+export interface LedgerEventListInput {
+  startInclusive?: string;
+  endExclusive?: string;
+  eventType?: EventType;
+  accountId?: string;
+  assetId?: string;
+  categoryId?: string;
+  tagId?: string;
+  query?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface LedgerEventPageView {
+  events: LedgerEventView[];
+  nextCursor: string | null;
+}
+
+export interface LedgerFilterOptionView {
+  id: string;
+  label: string;
+  isArchived: boolean;
+}
+
+export interface LedgerFilterReferenceView {
+  accounts: LedgerFilterOptionView[];
+  assets: LedgerFilterOptionView[];
+  categories: LedgerFilterOptionView[];
+  tags: LedgerFilterOptionView[];
+}
+
+export interface ReportCategoryView {
+  key: string;
+  id: string | null;
+  name: string;
+  incomeAtomic: string;
+  expenseAtomic: string;
+  incomeDisplay: string;
+  expenseDisplay: string;
+}
+
+export interface MonthlyAssetReportView {
+  asset: AssetView;
+  incomeAtomic: string;
+  expenseAtomic: string;
+  incomeDisplay: string;
+  expenseDisplay: string;
+  categories: ReportCategoryView[];
+}
+
+export interface MonthlyReportView {
+  bookId: string;
+  month: string;
+  timeZone: string;
+  startInclusive: string;
+  endExclusive: string;
+  assets: MonthlyAssetReportView[];
+}
+
 export interface SnapshotView {
   id: string;
   asOf: string;

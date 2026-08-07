@@ -12,24 +12,22 @@ import { AccountForm } from "@/components/forms/account-form";
 import { ConfirmActionForm } from "@/components/forms/confirm-action-form";
 import { ReconciliationForm } from "@/components/forms/reconciliation-form";
 import { EventList } from "@/components/ledger/event-list";
-import { LedgerReadService } from "@/services";
+import { LedgerReadService, SettingsService } from "@/services";
 
 import { withDatabase } from "../../server-runtime";
 
 export const dynamic = "force-dynamic";
 
-const UTC_DATE_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
-  timeZone: "UTC",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
-
-function utcLabel(iso: string): string {
-  return `${UTC_DATE_FORMATTER.format(new Date(iso))} UTC`;
+function dateLabel(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(iso));
 }
 
 export default async function AccountDetailPage({
@@ -45,6 +43,8 @@ export default async function AccountDetailPage({
       return {
         detail: service.getAccountDetail(id, queryTime),
         assets: service.getReferenceData(queryTime).assets,
+        timeZone: new SettingsService(context).getTimeZoneOrDefault(),
+        queryTime,
       };
     } catch {
       return null;
@@ -91,7 +91,7 @@ export default async function AccountDetailPage({
             <h2>最近流水</h2>
             <Link href="/transactions/new">+ 记一笔</Link>
           </div>
-          <EventList events={detail.recentEvents} />
+          <EventList events={detail.recentEvents} timeZone={view.timeZone} />
         </section>
 
         <aside className="content-section anchor-panel">
@@ -105,6 +105,8 @@ export default async function AccountDetailPage({
               action={reconcileAction}
               assetCode={account.asset.code}
               currentBalance={account.balanceDisplay}
+              timeZone={view.timeZone}
+              defaultAsOf={view.queryTime}
             />
           )}
         </aside>
@@ -133,7 +135,7 @@ export default async function AccountDetailPage({
                   <div>
                     <strong>{snapshot.balanceDisplay}</strong>
                     <time dateTime={snapshot.asOf}>
-                      {utcLabel(snapshot.asOf)}
+                      {dateLabel(snapshot.asOf, view.timeZone)}
                     </time>
                     <small>{snapshot.note ?? "余额锚点"}</small>
                   </div>
@@ -148,6 +150,8 @@ export default async function AccountDetailPage({
                         asOf: snapshot.asOf,
                         note: snapshot.note,
                       }}
+                      timeZone={view.timeZone}
+                      defaultAsOf={view.queryTime}
                     />
                     <ConfirmActionForm
                       action={deleteSnapshot}

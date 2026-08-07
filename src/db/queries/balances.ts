@@ -1,10 +1,20 @@
-import { and, eq, gt, lte } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  lte,
+  or,
+  type SQL,
+} from "drizzle-orm";
 
 import { balanceAt } from "../../domain/balance";
 import { canonicalUtcInstantValue } from "../../domain/time";
 import { atomicFromDb } from "../atomic";
 import type { DatabaseExecutor } from "../connection";
-import { ledgerEntries, ledgerEvents } from "../schema";
+import { balanceSnapshots, ledgerEntries, ledgerEvents } from "../schema";
 import { findLatestSnapshotAtOrBefore } from "./snapshots";
 
 export function queryBalanceAt(
@@ -51,4 +61,64 @@ export function queryBalanceAt(
       amountAtomic: atomicFromDb(entry.amountAtomic),
     })),
   });
+}
+
+export function queryBalancesAt(
+  executor: DatabaseExecutor,
+  accountIds: readonly string[],
+  queryTime: string,
+): Map<string, bigint> {
+  canonicalUtcInstantValue(queryTime);
+  const balances = new Map(accountIds.map((accountId) => [accountId, 0n]));
+  if (accountIds.length === 0) {
+    return balances;
+  }
+  const snapshots = executor
+    .select()
+    .from(balanceSnapshots)
+    .where(
+      and(
+        inArray(balanceSnapshots.accountId, [...accountIds]),
+        lte(balanceSnapshots.asOf, queryTime),
+      ),
+    )
+    .orderBy(
+      asc(balanceSnapshots.accountId),
+      desc(balanceSnapshots.asOf),
+      desc(balanceSnapshots.createdAt),
+      desc(balanceSnapshots.id),
+    )
+    .all();
+  const latest = new Map<string, (typeof snapshots)[number]>();
+  for (const snapshot of snapshots) {
+    if (!latest.has(snapshot.accountId)) {
+      latest.set(snapshot.accountId, snapshot);
+      balances.set(snapshot.accountId, atomicFromDb(snapshot.balanceAtomic));
+    }
+  }
+  const accountConditions: SQL[] = accountIds.map((accountId) => {
+    const snapshot = latest.get(accountId);
+    return and(
+      eq(ledgerEntries.accountId, accountId),
+      snapshot ? gt(ledgerEvents.occurredAt, snapshot.asOf) : undefined,
+    )!;
+  });
+  const entries = executor
+    .select({
+      accountId: ledgerEntries.accountId,
+      amountAtomic: ledgerEntries.amountAtomic,
+    })
+    .from(ledgerEntries)
+    .innerJoin(ledgerEvents, eq(ledgerEntries.eventId, ledgerEvents.id))
+    .where(
+      and(lte(ledgerEvents.occurredAt, queryTime), or(...accountConditions)),
+    )
+    .all();
+  for (const entry of entries) {
+    balances.set(
+      entry.accountId,
+      (balances.get(entry.accountId) ?? 0n) + atomicFromDb(entry.amountAtomic),
+    );
+  }
+  return balances;
 }

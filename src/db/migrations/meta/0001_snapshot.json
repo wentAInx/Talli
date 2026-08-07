@@ -1,0 +1,930 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "66df4624-2e3c-4fdd-abf6-0ec21fa7896c",
+  "prevId": "d076ec71-8697-4930-bdc9-3a88bf85f6ca",
+  "tables": {
+    "accounts": {
+      "name": "accounts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_id": {
+          "name": "book_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "asset_id": {
+          "name": "asset_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "account_type": {
+          "name": "account_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "institution_name": {
+          "name": "institution_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_archived": {
+          "name": "is_archived",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_accounts_book": {
+          "name": "idx_accounts_book",
+          "columns": ["book_id"],
+          "isUnique": false
+        },
+        "idx_accounts_asset": {
+          "name": "idx_accounts_asset",
+          "columns": ["asset_id"],
+          "isUnique": false
+        },
+        "idx_accounts_archived": {
+          "name": "idx_accounts_archived",
+          "columns": ["is_archived"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "accounts_book_id_books_id_fk": {
+          "name": "accounts_book_id_books_id_fk",
+          "tableFrom": "accounts",
+          "tableTo": "books",
+          "columnsFrom": ["book_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "accounts_asset_id_assets_id_fk": {
+          "name": "accounts_asset_id_assets_id_fk",
+          "tableFrom": "accounts",
+          "tableTo": "assets",
+          "columnsFrom": ["asset_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "accounts_type_check": {
+          "name": "accounts_type_check",
+          "value": "\"accounts\".\"account_type\" in ('cash', 'bank', 'ewallet', 'exchange', 'crypto_wallet', 'credit', 'loan', 'other')"
+        },
+        "accounts_is_archived_check": {
+          "name": "accounts_is_archived_check",
+          "value": "\"accounts\".\"is_archived\" in (0, 1)"
+        }
+      }
+    },
+    "app_meta": {
+      "name": "app_meta",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "app_settings": {
+      "name": "app_settings",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value_json": {
+          "name": "value_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "assets": {
+      "name": "assets",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "symbol": {
+          "name": "symbol",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "asset_type": {
+          "name": "asset_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scale": {
+          "name": "scale",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "is_archived": {
+          "name": "is_archived",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "assets_code_unique_nocase": {
+          "name": "assets_code_unique_nocase",
+          "columns": ["\"code\" collate nocase"],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "assets_type_check": {
+          "name": "assets_type_check",
+          "value": "\"assets\".\"asset_type\" in ('fiat', 'crypto', 'custom')"
+        },
+        "assets_scale_check": {
+          "name": "assets_scale_check",
+          "value": "\"assets\".\"scale\" >= 0 and \"assets\".\"scale\" <= 30"
+        },
+        "assets_is_archived_check": {
+          "name": "assets_is_archived_check",
+          "value": "\"assets\".\"is_archived\" in (0, 1)"
+        }
+      }
+    },
+    "balance_snapshots": {
+      "name": "balance_snapshots",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "as_of": {
+          "name": "as_of",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "balance_atomic": {
+          "name": "balance_atomic",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_snapshots_account_asof": {
+          "name": "idx_snapshots_account_asof",
+          "columns": ["account_id", "\"as_of\" desc"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "balance_snapshots_account_id_accounts_id_fk": {
+          "name": "balance_snapshots_account_id_accounts_id_fk",
+          "tableFrom": "balance_snapshots",
+          "tableTo": "accounts",
+          "columnsFrom": ["account_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "snapshots_balance_nonempty_check": {
+          "name": "snapshots_balance_nonempty_check",
+          "value": "length(\"balance_snapshots\".\"balance_atomic\") > 0"
+        }
+      }
+    },
+    "books": {
+      "name": "books",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "is_default": {
+          "name": "is_default",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "books_is_default_check": {
+          "name": "books_is_default_check",
+          "value": "\"books\".\"is_default\" in (0, 1)"
+        }
+      }
+    },
+    "categories": {
+      "name": "categories",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_id": {
+          "name": "book_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "parent_id": {
+          "name": "parent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "category_type": {
+          "name": "category_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'both'"
+        },
+        "is_archived": {
+          "name": "is_archived",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_categories_book": {
+          "name": "idx_categories_book",
+          "columns": ["book_id"],
+          "isUnique": false
+        },
+        "idx_categories_parent": {
+          "name": "idx_categories_parent",
+          "columns": ["parent_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "categories_book_id_books_id_fk": {
+          "name": "categories_book_id_books_id_fk",
+          "tableFrom": "categories",
+          "tableTo": "books",
+          "columnsFrom": ["book_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "categories_parent_id_categories_id_fk": {
+          "name": "categories_parent_id_categories_id_fk",
+          "tableFrom": "categories",
+          "tableTo": "categories",
+          "columnsFrom": ["parent_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "categories_type_check": {
+          "name": "categories_type_check",
+          "value": "\"categories\".\"category_type\" in ('expense', 'income', 'both')"
+        },
+        "categories_is_archived_check": {
+          "name": "categories_is_archived_check",
+          "value": "\"categories\".\"is_archived\" in (0, 1)"
+        }
+      }
+    },
+    "event_tags": {
+      "name": "event_tags",
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tag_id": {
+          "name": "tag_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_event_tags_tag": {
+          "name": "idx_event_tags_tag",
+          "columns": ["tag_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "event_tags_event_id_ledger_events_id_fk": {
+          "name": "event_tags_event_id_ledger_events_id_fk",
+          "tableFrom": "event_tags",
+          "tableTo": "ledger_events",
+          "columnsFrom": ["event_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "event_tags_tag_id_tags_id_fk": {
+          "name": "event_tags_tag_id_tags_id_fk",
+          "tableFrom": "event_tags",
+          "tableTo": "tags",
+          "columnsFrom": ["tag_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "event_tags_event_id_tag_id_pk": {
+          "columns": ["event_id", "tag_id"],
+          "name": "event_tags_event_id_tag_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "ledger_entries": {
+      "name": "ledger_entries",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_id": {
+          "name": "event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "entry_role": {
+          "name": "entry_role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount_atomic": {
+          "name": "amount_atomic",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_entries_event": {
+          "name": "idx_entries_event",
+          "columns": ["event_id"],
+          "isUnique": false
+        },
+        "idx_entries_account": {
+          "name": "idx_entries_account",
+          "columns": ["account_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "ledger_entries_event_id_ledger_events_id_fk": {
+          "name": "ledger_entries_event_id_ledger_events_id_fk",
+          "tableFrom": "ledger_entries",
+          "tableTo": "ledger_events",
+          "columnsFrom": ["event_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ledger_entries_account_id_accounts_id_fk": {
+          "name": "ledger_entries_account_id_accounts_id_fk",
+          "tableFrom": "ledger_entries",
+          "tableTo": "accounts",
+          "columnsFrom": ["account_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "entries_role_check": {
+          "name": "entries_role_check",
+          "value": "\"ledger_entries\".\"entry_role\" in ('main', 'source', 'destination', 'fee')"
+        },
+        "entries_amount_nonempty_check": {
+          "name": "entries_amount_nonempty_check",
+          "value": "length(\"ledger_entries\".\"amount_atomic\") > 0"
+        }
+      }
+    },
+    "ledger_events": {
+      "name": "ledger_events",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_id": {
+          "name": "book_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "category_id": {
+          "name": "category_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "payee": {
+          "name": "payee",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_events_book_occurred": {
+          "name": "idx_events_book_occurred",
+          "columns": ["book_id", "\"occurred_at\" desc"],
+          "isUnique": false
+        },
+        "idx_events_book_order": {
+          "name": "idx_events_book_order",
+          "columns": [
+            "book_id",
+            "\"occurred_at\" desc",
+            "\"created_at\" desc",
+            "\"id\" desc"
+          ],
+          "isUnique": false
+        },
+        "idx_events_type": {
+          "name": "idx_events_type",
+          "columns": ["event_type"],
+          "isUnique": false
+        },
+        "idx_events_category": {
+          "name": "idx_events_category",
+          "columns": ["category_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "ledger_events_book_id_books_id_fk": {
+          "name": "ledger_events_book_id_books_id_fk",
+          "tableFrom": "ledger_events",
+          "tableTo": "books",
+          "columnsFrom": ["book_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ledger_events_category_id_categories_id_fk": {
+          "name": "ledger_events_category_id_categories_id_fk",
+          "tableFrom": "ledger_events",
+          "tableTo": "categories",
+          "columnsFrom": ["category_id"],
+          "columnsTo": ["id"],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "events_type_check": {
+          "name": "events_type_check",
+          "value": "\"ledger_events\".\"event_type\" in ('expense', 'income', 'transfer', 'exchange')"
+        }
+      }
+    },
+    "tags": {
+      "name": "tags",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_id": {
+          "name": "book_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "is_archived": {
+          "name": "is_archived",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "tags_book_name_unique": {
+          "name": "tags_book_name_unique",
+          "columns": ["book_id", "name"],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "tags_book_id_books_id_fk": {
+          "name": "tags_book_id_books_id_fk",
+          "tableFrom": "tags",
+          "tableTo": "books",
+          "columnsFrom": ["book_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "tags_is_archived_check": {
+          "name": "tags_is_archived_check",
+          "value": "\"tags\".\"is_archived\" in (0, 1)"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {
+      "assets_code_unique_nocase": {
+        "columns": {
+          "\"code\" collate nocase": {
+            "isExpression": true
+          }
+        }
+      },
+      "idx_snapshots_account_asof": {
+        "columns": {
+          "\"as_of\" desc": {
+            "isExpression": true
+          }
+        }
+      },
+      "idx_events_book_occurred": {
+        "columns": {
+          "\"occurred_at\" desc": {
+            "isExpression": true
+          }
+        }
+      },
+      "idx_events_book_order": {
+        "columns": {
+          "\"occurred_at\" desc": {
+            "isExpression": true
+          },
+          "\"created_at\" desc": {
+            "isExpression": true
+          },
+          "\"id\" desc": {
+            "isExpression": true
+          }
+        }
+      }
+    }
+  }
+}

@@ -12,13 +12,16 @@ import {
   listDefaultBooks,
   listEntryReadRows,
   listEventHeaderRows,
+  listEventHeaderPageRows,
   listEventHeaderRowsForAccount,
+  listEventTagReadRows,
   listSnapshotReadRows,
   listTagsForBook,
-  queryBalanceAt,
+  queryBalancesAt,
 } from "../db/queries";
 import { formatAtomic } from "../domain/money";
 import type { EventType } from "../domain/types";
+import { canonicalUtcInstantValue } from "../domain/time";
 import { ServiceError } from "./errors";
 import type {
   AccountDetailView,
@@ -28,6 +31,9 @@ import type {
   DashboardView,
   EventEntryView,
   LedgerEventView,
+  LedgerEventListInput,
+  LedgerEventPageView,
+  LedgerFilterReferenceView,
   LedgerReferenceView,
 } from "./view-contracts";
 
@@ -51,7 +57,7 @@ function formatNumberText(amount: bigint, scale: number): string {
   return `${sign}${grouped}${fraction === undefined ? "" : `.${fraction}`}`;
 }
 
-function formatAssetAmount(amount: bigint, asset: AssetView): string {
+export function formatAssetAmount(amount: bigint, asset: AssetView): string {
   const value = formatNumberText(amount, asset.scale);
   if (asset.type === "fiat" && asset.symbol) {
     return `${value.startsWith("-") ? "-" : ""}${asset.symbol}${value.replace(
@@ -138,6 +144,107 @@ function eventViews(
     entries: entries.get(header.id) ?? [],
     tagIds: tagIds.get(header.id) ?? [],
   }));
+}
+
+function tagIdsByEvent(
+  rows: ReturnType<typeof listEventTagReadRows>,
+): Map<string, string[]> {
+  const grouped = new Map<string, string[]>();
+  for (const row of rows) {
+    const eventTagIds = grouped.get(row.eventId) ?? [];
+    eventTagIds.push(row.tagId);
+    grouped.set(row.eventId, eventTagIds);
+  }
+  return grouped;
+}
+
+interface CursorPayload {
+  occurredAt: string;
+  createdAt: string;
+  id: string;
+}
+
+function encodeEventCursor(cursor: CursorPayload): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeEventCursor(value: string): CursorPayload {
+  try {
+    if (value.length === 0 || value.length > 1024) {
+      throw new Error("Cursor length is invalid.");
+    }
+    const parsed: unknown = JSON.parse(
+      Buffer.from(value, "base64url").toString("utf8"),
+    );
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      Object.keys(parsed).sort().join(",") !== "createdAt,id,occurredAt"
+    ) {
+      throw new Error("Cursor shape is invalid.");
+    }
+    const candidate = parsed as Record<string, unknown>;
+    if (
+      typeof candidate.occurredAt !== "string" ||
+      typeof candidate.createdAt !== "string" ||
+      typeof candidate.id !== "string" ||
+      candidate.id.length === 0
+    ) {
+      throw new Error("Cursor values are invalid.");
+    }
+    canonicalUtcInstantValue(candidate.occurredAt);
+    canonicalUtcInstantValue(candidate.createdAt);
+    return {
+      occurredAt: candidate.occurredAt,
+      createdAt: candidate.createdAt,
+      id: candidate.id,
+    };
+  } catch {
+    throw new ServiceError(
+      "INVALID_EVENT_CURSOR",
+      "The transaction page cursor is invalid.",
+    );
+  }
+}
+
+function normalizedEventListInput(input: LedgerEventListInput) {
+  const limit = input.limit ?? 50;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new ServiceError(
+      "INVALID_EVENT_PAGE_SIZE",
+      "Transaction page size must be between 1 and 100.",
+    );
+  }
+  if (input.startInclusive) {
+    canonicalUtcInstantValue(input.startInclusive);
+  }
+  if (input.endExclusive) {
+    canonicalUtcInstantValue(input.endExclusive);
+  }
+  if (
+    input.startInclusive &&
+    input.endExclusive &&
+    input.startInclusive >= input.endExclusive
+  ) {
+    throw new ServiceError(
+      "INVALID_EVENT_DATE_RANGE",
+      "Transaction date range start must be before its end.",
+    );
+  }
+  const query = input.query?.trim() || undefined;
+  if (query && query.length > 100) {
+    throw new ServiceError(
+      "EVENT_QUERY_TOO_LONG",
+      "Transaction search is limited to 100 characters.",
+    );
+  }
+  return {
+    ...input,
+    query,
+    limit,
+    cursor: input.cursor ? decodeEventCursor(input.cursor) : undefined,
+  };
 }
 
 export class LedgerReadService {
@@ -237,6 +344,71 @@ export class LedgerReadService {
     return eventViews(headers, entries);
   }
 
+  listEventPage(input: LedgerEventListInput = {}): LedgerEventPageView {
+    const normalized = normalizedEventListInput(input);
+    const bookId = defaultBookId(this.context);
+    const rows = listEventHeaderPageRows(this.context.db, {
+      bookId,
+      limit: normalized.limit + 1,
+      cursor: normalized.cursor,
+      startInclusive: normalized.startInclusive,
+      endExclusive: normalized.endExclusive,
+      eventType: normalized.eventType,
+      accountId: normalized.accountId,
+      assetId: normalized.assetId,
+      categoryId: normalized.categoryId,
+      tagId: normalized.tagId,
+      query: normalized.query,
+    });
+    const hasMore = rows.length > normalized.limit;
+    const headers = rows.slice(0, normalized.limit);
+    const eventIds = headers.map((header) => header.id);
+    const entries = entryViews(listEntryReadRows(this.context.db, eventIds));
+    const tagIds = tagIdsByEvent(
+      listEventTagReadRows(this.context.db, eventIds),
+    );
+    const last = headers.at(-1);
+    return {
+      events: eventViews(headers, entries, tagIds),
+      nextCursor:
+        hasMore && last
+          ? encodeEventCursor({
+              occurredAt: last.occurredAt,
+              createdAt: last.createdAt,
+              id: last.id,
+            })
+          : null,
+    };
+  }
+
+  getEventFilterReferences(): LedgerFilterReferenceView {
+    const bookId = defaultBookId(this.context);
+    return {
+      accounts: listAccountReadRows(this.context.db, bookId).map((row) => ({
+        id: row.id,
+        label: `${row.name} · ${row.assetCode}`,
+        isArchived: row.isArchived || row.assetIsArchived,
+      })),
+      assets: listAssets(this.context.db).map((asset) => ({
+        id: asset.id,
+        label: `${asset.code} · ${asset.name}`,
+        isArchived: asset.isArchived,
+      })),
+      categories: listCategoriesForBook(this.context.db, bookId).map(
+        (category) => ({
+          id: category.id,
+          label: category.name,
+          isArchived: category.isArchived,
+        }),
+      ),
+      tags: listTagsForBook(this.context.db, bookId).map((tag) => ({
+        id: tag.id,
+        label: tag.name,
+        isArchived: tag.isArchived,
+      })),
+    };
+  }
+
   getEvent(eventId: string): LedgerEventView {
     const event = findLedgerEventById(this.context.db, eventId);
     if (!event || event.bookId !== defaultBookId(this.context)) {
@@ -309,9 +481,15 @@ export class LedgerReadService {
   }
 
   private accountViews(bookId: string, queryTime: string): AccountView[] {
-    return listAccountReadRows(this.context.db, bookId).map((row) => {
+    const rows = listAccountReadRows(this.context.db, bookId);
+    const balances = queryBalancesAt(
+      this.context.db,
+      rows.map((row) => row.id),
+      queryTime,
+    );
+    return rows.map((row) => {
       const asset = assetFromAccountRow(row);
-      const balance = queryBalanceAt(this.context.db, row.id, queryTime);
+      const balance = balances.get(row.id) ?? 0n;
       return {
         id: row.id,
         name: row.name,

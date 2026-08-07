@@ -32,7 +32,7 @@ export function AccountForm({
   const selectedAsset = assets.find((asset) => asset.id === assetId);
 
   return (
-    <form action={formAction} className="form-stack">
+    <form action={formAction} autoComplete="off" className="form-stack">
       <div className="field-grid field-grid-two">
         <label className="field">
           <span>账户名称</span>

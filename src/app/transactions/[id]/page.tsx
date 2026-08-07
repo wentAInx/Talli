@@ -7,7 +7,7 @@ import {
 } from "@/app/actions";
 import { ConfirmActionForm } from "@/components/forms/confirm-action-form";
 import { TransactionForm } from "@/components/forms/transaction-form";
-import { LedgerReadService } from "@/services";
+import { LedgerReadService, SettingsService } from "@/services";
 
 import { withDatabase } from "../../server-runtime";
 
@@ -25,6 +25,8 @@ export default async function TransactionDetailPage({
       return {
         event: service.getEvent(id),
         reference: service.getReferenceData(new Date().toISOString()),
+        timeZone: new SettingsService(context).getTimeZoneOrDefault(),
+        now: new Date().toISOString(),
       };
     } catch {
       return null;
@@ -56,6 +58,8 @@ export default async function TransactionDetailPage({
           tags={view.reference.tags}
           initial={view.event}
           allowReconcile={false}
+          timeZone={view.timeZone}
+          defaultOccurredAt={view.now}
         />
       </section>
       <section className="danger-zone">

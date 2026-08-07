@@ -1,7 +1,7 @@
 import { and, asc, eq } from "drizzle-orm";
 
 import type { DatabaseExecutor } from "../connection";
-import { categories } from "../schema";
+import { categories, ledgerEvents } from "../schema";
 
 export function findCategoryById(executor: DatabaseExecutor, id: string) {
   return executor.select().from(categories).where(eq(categories.id, id)).get();
@@ -67,4 +67,15 @@ export function updateCategory(
   >,
 ): void {
   executor.update(categories).set(value).where(eq(categories.id, id)).run();
+}
+
+export function listEventTypesForCategory(
+  executor: DatabaseExecutor,
+  categoryId: string,
+) {
+  return executor
+    .selectDistinct({ eventType: ledgerEvents.eventType })
+    .from(ledgerEvents)
+    .where(eq(ledgerEvents.categoryId, categoryId))
+    .all();
 }

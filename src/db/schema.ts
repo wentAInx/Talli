@@ -183,6 +183,12 @@ export const ledgerEvents = sqliteTable(
   },
   (table) => [
     index("idx_events_book_occurred").on(table.bookId, desc(table.occurredAt)),
+    index("idx_events_book_order").on(
+      table.bookId,
+      desc(table.occurredAt),
+      desc(table.createdAt),
+      desc(table.id),
+    ),
     index("idx_events_type").on(table.eventType),
     index("idx_events_category").on(table.categoryId),
     check(
