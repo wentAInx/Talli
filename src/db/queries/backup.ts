@@ -8,11 +8,16 @@ import {
   appSettings,
   assets,
   balanceSnapshots,
+  bookValuationSettings,
   books,
   categories,
   eventTags,
   ledgerEntries,
   ledgerEvents,
+  latestPriceQuotes,
+  manualPriceQuotes,
+  priceProviderMappings,
+  priceProviderState,
   tags,
 } from "../schema";
 
@@ -52,6 +57,25 @@ export function readBackupData(executor: DatabaseExecutor): BackupData {
       .from(appSettings)
       .orderBy(asc(appSettings.key))
       .all(),
+    bookValuationSettings: executor
+      .select()
+      .from(bookValuationSettings)
+      .orderBy(asc(bookValuationSettings.bookId))
+      .all(),
+    priceProviderMappings: executor
+      .select()
+      .from(priceProviderMappings)
+      .orderBy(
+        asc(priceProviderMappings.provider),
+        asc(priceProviderMappings.priority),
+        asc(priceProviderMappings.assetId),
+      )
+      .all(),
+    manualPriceQuotes: executor
+      .select()
+      .from(manualPriceQuotes)
+      .orderBy(asc(manualPriceQuotes.id))
+      .all(),
   };
 }
 
@@ -59,7 +83,24 @@ export function readAppMetaRows(executor: DatabaseExecutor) {
   return executor.select().from(appMeta).orderBy(asc(appMeta.key)).all();
 }
 
+export function upsertAppMetaValue(
+  executor: DatabaseExecutor,
+  key: string,
+  value: string,
+): void {
+  executor
+    .insert(appMeta)
+    .values({ key, value })
+    .onConflictDoUpdate({ target: appMeta.key, set: { value } })
+    .run();
+}
+
 export function clearRestoreTarget(executor: DatabaseExecutor): void {
+  executor.delete(latestPriceQuotes).run();
+  executor.delete(priceProviderState).run();
+  executor.delete(manualPriceQuotes).run();
+  executor.delete(priceProviderMappings).run();
+  executor.delete(bookValuationSettings).run();
   executor.delete(eventTags).run();
   executor.delete(ledgerEntries).run();
   executor.delete(ledgerEvents).run();
@@ -106,5 +147,20 @@ export function insertBackupData(
   }
   if (data.settings.length > 0) {
     executor.insert(appSettings).values(data.settings).run();
+  }
+  if (data.bookValuationSettings.length > 0) {
+    executor
+      .insert(bookValuationSettings)
+      .values(data.bookValuationSettings)
+      .run();
+  }
+  if (data.priceProviderMappings.length > 0) {
+    executor
+      .insert(priceProviderMappings)
+      .values(data.priceProviderMappings)
+      .run();
+  }
+  if (data.manualPriceQuotes.length > 0) {
+    executor.insert(manualPriceQuotes).values(data.manualPriceQuotes).run();
   }
 }

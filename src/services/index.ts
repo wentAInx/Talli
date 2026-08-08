@@ -10,3 +10,7 @@ export * from "./reference-data-service";
 export * from "./runtime";
 export * from "./settings-service";
 export * from "./view-contracts";
+export * from "./valuation-config-service";
+export * from "./price-refresh-service";
+export * from "./portfolio-valuation-service";
+export * from "./quote-resolver-service";

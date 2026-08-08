@@ -3,7 +3,13 @@ import Link from "next/link";
 
 import { AssetGroups } from "@/components/ledger/asset-groups";
 import { EventList } from "@/components/ledger/event-list";
-import { LedgerReadService, SettingsService } from "@/services";
+import { ValuationCard } from "@/components/valuation/valuation-card";
+import {
+  LedgerReadService,
+  PortfolioValuationService,
+  ReferenceDataService,
+  SettingsService,
+} from "@/services";
 
 import { withDatabase } from "./server-runtime";
 
@@ -12,10 +18,17 @@ export const metadata: Metadata = { title: "资产总览 | Talli" };
 
 export default async function DashboardPage() {
   const queryTime = new Date().toISOString();
-  const view = await withDatabase((context) => ({
-    dashboard: new LedgerReadService(context).getDashboard(queryTime),
-    timeZone: new SettingsService(context).getTimeZoneOrDefault(),
-  }));
+  const view = await withDatabase((context) => {
+    const bookId = new ReferenceDataService(context).getDefaultBookId();
+    return {
+      dashboard: new LedgerReadService(context).getDashboard(queryTime),
+      valuation: new PortfolioValuationService(context).current({
+        bookId,
+        queryTime,
+      }),
+      timeZone: new SettingsService(context).getTimeZoneOrDefault(),
+    };
+  });
   const { dashboard } = view;
 
   return (
@@ -31,8 +44,13 @@ export default async function DashboardPage() {
         </div>
       </header>
 
+      <ValuationCard timeZone={view.timeZone} valuation={view.valuation} />
+
       {dashboard.assetGroups.length > 0 ? (
-        <AssetGroups groups={dashboard.assetGroups} />
+        <AssetGroups
+          groups={dashboard.assetGroups}
+          valuation={view.valuation}
+        />
       ) : (
         <section className="empty-state">
           <span className="empty-mark" aria-hidden="true">

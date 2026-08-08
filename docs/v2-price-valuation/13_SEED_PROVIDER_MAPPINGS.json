@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 2,
+  "note": "V2 valuation seed definitions only. Match by canonical Talli asset code/type; do not guess unknown assets by symbol.",
+  "defaultHomeAsset": {
+    "bookId": "seed-book-default",
+    "assetCode": "CNY"
+  },
+  "providerMappings": [
+    {
+      "assetCode": "CNY",
+      "expectedAssetType": "fiat",
+      "provider": "ecb",
+      "providerAssetKey": "CNY",
+      "priority": 100,
+      "isEnabled": true
+    },
+    {
+      "assetCode": "USD",
+      "expectedAssetType": "fiat",
+      "provider": "ecb",
+      "providerAssetKey": "USD",
+      "priority": 100,
+      "isEnabled": true
+    },
+    {
+      "assetCode": "EUR",
+      "expectedAssetType": "fiat",
+      "provider": "ecb",
+      "providerAssetKey": "EUR",
+      "priority": 100,
+      "isEnabled": true
+    },
+    {
+      "assetCode": "HKD",
+      "expectedAssetType": "fiat",
+      "provider": "ecb",
+      "providerAssetKey": "HKD",
+      "priority": 100,
+      "isEnabled": true
+    },
+    {
+      "assetCode": "USDT",
+      "expectedAssetType": "crypto",
+      "provider": "coingecko",
+      "providerAssetKey": "tether",
+      "priority": 100,
+      "isEnabled": true
+    },
+    {
+      "assetCode": "USDC",
+      "expectedAssetType": "crypto",
+      "provider": "coingecko",
+      "providerAssetKey": "usd-coin",
+      "priority": 100,
+      "isEnabled": true
+    },
+    {
+      "assetCode": "BTC",
+      "expectedAssetType": "crypto",
+      "provider": "coingecko",
+      "providerAssetKey": "bitcoin",
+      "priority": 100,
+      "isEnabled": true
+    },
+    {
+      "assetCode": "ETH",
+      "expectedAssetType": "crypto",
+      "provider": "coingecko",
+      "providerAssetKey": "ethereum",
+      "priority": 100,
+      "isEnabled": true
+    },
+    {
+      "assetCode": "SOL",
+      "expectedAssetType": "crypto",
+      "provider": "coingecko",
+      "providerAssetKey": "solana",
+      "priority": 100,
+      "isEnabled": true
+    }
+  ]
+}

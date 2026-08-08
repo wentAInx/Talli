@@ -1,12 +1,12 @@
 # Talli
 
-Talli is a single-user, self-hosted, multi-asset personal ledger. V1
-stores exact asset quantities and deliberately does not perform market pricing,
-FX conversion, stablecoin assumptions, or cross-asset totals.
+Talli is a single-user, self-hosted, multi-asset personal ledger. Its V1 core
+stores exact native-asset quantities; V2.0 adds an optional, current-only price
+and valuation layer without changing ledger facts.
 
-## V1 implementation status
+## V2.0 implementation status
 
-Phases 0–10 are implemented:
+The frozen V1 ledger remains intact, and the V2.0 task-package phases are implemented:
 
 - Next.js 16, strict TypeScript, Tailwind CSS, ESLint, Prettier, Vitest, and
   Playwright tooling.
@@ -20,7 +20,7 @@ Phases 0–10 are implemented:
 - Expense, income, same-asset transfer, cross-asset exchange, fee, edit, and
   delete flows through Server Actions and the existing transactional services.
 - Dashboard balances grouped by native asset with per-account breakdown and
-  recent logical ledger events; no cross-asset total is calculated or shown.
+  recent logical ledger events.
 - Stable keyset transaction pagination with date, event type, account, asset,
   category, tag, and text filters. Event entries and tags are hydrated in
   batches rather than with per-row queries.
@@ -30,8 +30,16 @@ Phases 0–10 are implemented:
   sections. Transfer/exchange principal is excluded; fee expense stays in its
   own fee asset.
 - Asset, category, tag, timezone, archive, and self-hosted data settings.
-- Lossless versioned JSON backup, guarded preview/restore, and human-readable
-  CSV export. Restore is all-or-nothing and V1 never merges databases.
+- Current valuation with a fiat Home Asset, exact Decimal composition,
+  completeness semantics, provenance, and final-display-only rounding.
+- CoinGecko crypto/USD market quotes, ECB EUR reference legs/cross rates,
+  explicit provider mappings, manual exact-pair override, TTL/stale cache, and
+  per-provider cooldown/state.
+- Same-origin client refresh after hydration; Server Components never wait for
+  external providers and provider credentials remain server-only.
+- Lossless schemaVersion 2 JSON backup, guarded preview/restore, and
+  human-readable CSV export. V1 schemaVersion 1 payloads are upgraded in memory;
+  derived quote cache/provider state and API credentials are excluded.
 - Loading/error/404 states, keyboard tab navigation, mobile layouts, indexed
   event pages, and desktop/mobile Playwright coverage.
 
@@ -53,6 +61,31 @@ On the first browser visit the app stores the browser IANA timezone, such as
 `Asia/Shanghai`. It can be changed under **Settings → Date and timezone**.
 All persisted timestamps remain canonical UTC.
 
+For CoinGecko Demo API access, copy `.env.example` and set the key only in the
+server runtime environment:
+
+```bash
+COINGECKO_MODE=demo
+COINGECKO_API_KEY=your-server-only-demo-key
+```
+
+`COINGECKO_MODE=keyless` is an explicit local-development option. Talli never
+falls back from failed demo-key authentication to keyless mode.
+
+## Current valuation semantics
+
+- Home Asset must be an active fiat asset.
+- CoinGecko supplies mapped crypto → USD current market prices. USDT and USDC
+  follow this same market path and are never hardcoded to 1 USD.
+- ECB supplies provider-native `EUR → fiat` reference legs. Talli composes fiat
+  cross rates with `decimal.js` and labels them as reference rates.
+- An active manual `base → Home` exact-pair quote overrides the automatic path.
+- Fresh/stale/missing/error states are explicit. A missing quote for a nonzero
+  asset makes the estimate incomplete; it is never silently treated as zero.
+- The dashboard keeps native quantities primary and marks Home values with `≈`.
+- Valuation is current-only. V2.0 has no historical chart, cost basis, P&L,
+  background collector, external account sync, or stablecoin shortcut.
+
 ## Backup, CSV, and restore
 
 - **Settings → Data** downloads a complete JSON backup from
@@ -62,12 +95,18 @@ All persisted timestamps remain canonical UTC.
   CSV is not a restore format.
 - The backup wire identifier remains `multi-asset-ledger-backup` after the
   Talli rename so existing V1 backups stay compatible.
+- V2 exports use `schemaVersion=2` and include Home settings, provider mappings,
+  and manual quotes. V1 `schemaVersion=1` backups are upgraded and fully
+  validated before any write.
+- `latest_price_quotes`, `price_provider_state`, and API keys are intentionally
+  excluded because they are derived or operational data.
 - `POST /api/data/restore` supports preview and commit. The complete payload,
   foreign keys, category tree, event roles/signs, and atomic strings are
   validated before any write.
 - Restore accepts only a migrated empty database or an unchanged seed-only
   database. A database with user accounts, transactions, snapshots, tags, or
-  edited seed rows is rejected because V1 does not merge data.
+  edited seed or valuation configuration is rejected because restore does not
+  merge data.
 - Commit rechecks the target inside one `BEGIN IMMEDIATE` transaction and runs
   SQLite foreign-key verification before commit. Any error rolls back all rows.
 
@@ -92,7 +131,7 @@ docker compose up --build
 
 The container listens on port 3000 and stores SQLite data in the named volume
 mounted at `/data`. Container startup runs migration and seed automatically;
-both operations are repeatable. The app has no V1 authentication layer, so
+both operations are repeatable. The app has no built-in authentication layer, so
 deploy it only behind a trusted private network or an external access-control
 proxy.
 
@@ -103,6 +142,8 @@ Runtime configuration:
 | `DATABASE_PATH` | `/data/finance.db` | Writable SQLite file in persistent storage. |
 | `PORT` | `3000` | Next.js listener inside a direct container run. Compose maps `${PORT:-3000}`. |
 | `AUTO_SETUP_DATABASE` | `1` | Run checked migrations and idempotent seed at startup. |
+| `COINGECKO_MODE` | `demo` | `demo` sends the server-only Demo key; `keyless` is explicit. |
+| `COINGECKO_API_KEY` | empty | Server-only CoinGecko Demo key; never stored in SQLite or backup. |
 
 Before upgrading, download and verify a JSON backup. For an additional raw
 volume snapshot, stop writes (normally stop the container) before copying the
@@ -125,4 +166,9 @@ file.
 - Initial balances and reconciliation facts are snapshots, never synthetic
   income events.
 - Reports never render a combined native-asset total, an implied CNY value, or
-  an assumption such as `USDT = USD`.
+  an assumption such as `USDT = USD`. The separate V2 valuation card may show
+  an explicit Home estimate only when quote resolution supplies each leg.
+- Ledger atomic columns remain SQLite `TEXT` plus TypeScript `bigint`; V2 rate
+  columns are positive plain-decimal `TEXT` plus `decimal.js`, never `REAL`.
+- Provider HTTP is server-only and outside SQLite write transactions. Resolver,
+  portfolio valuation, SSR, backup, and native reports never perform HTTP.

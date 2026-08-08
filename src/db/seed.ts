@@ -7,15 +7,21 @@ import {
   findBookById,
   findCategoryByDefinition,
   findCategoryById,
+  findBookValuationSetting,
+  findPriceProviderMapping,
   insertAsset,
   insertBook,
   insertCategory,
   listDefaultBooks,
+  upsertBookValuationSetting,
+  upsertPriceProviderMapping,
 } from "./queries";
 import {
   SEED_ASSETS,
   SEED_BOOK_ID,
   SEED_CATEGORIES,
+  SEED_DEFAULT_HOME_ASSET_CODE,
+  SEED_PROVIDER_MAPPINGS,
   SEED_SCHEMA_VERSION,
   SEED_TIMESTAMP,
 } from "./seed-data";
@@ -136,12 +142,49 @@ function recordSeedVersion(executor: DatabaseExecutor): void {
     .run();
 }
 
+function seedValuationConfiguration(
+  executor: DatabaseExecutor,
+  bookId: string,
+): void {
+  if (!findBookValuationSetting(executor, bookId)) {
+    const home = findAssetByCode(executor, SEED_DEFAULT_HOME_ASSET_CODE);
+    if (home && home.assetType === "fiat" && !home.isArchived) {
+      upsertBookValuationSetting(executor, {
+        bookId,
+        homeAssetId: home.id,
+        createdAt: SEED_TIMESTAMP,
+        updatedAt: SEED_TIMESTAMP,
+      });
+    }
+  }
+
+  for (const definition of SEED_PROVIDER_MAPPINGS) {
+    const asset = findAssetByCode(executor, definition.assetCode);
+    if (!asset || asset.assetType !== definition.expectedAssetType) {
+      continue;
+    }
+    if (findPriceProviderMapping(executor, asset.id, definition.provider)) {
+      continue;
+    }
+    upsertPriceProviderMapping(executor, {
+      assetId: asset.id,
+      provider: definition.provider,
+      providerAssetKey: definition.providerAssetKey,
+      isEnabled: definition.isEnabled,
+      priority: definition.priority,
+      createdAt: SEED_TIMESTAMP,
+      updatedAt: SEED_TIMESTAMP,
+    });
+  }
+}
+
 export function seedDatabase(context: DatabaseContext): void {
   context.db.transaction(
     (transaction) => {
       const bookId = seedDefaultBook(transaction);
       seedAssets(transaction);
       seedCategories(transaction, bookId);
+      seedValuationConfiguration(transaction, bookId);
       recordSeedVersion(transaction);
     },
     { behavior: "immediate" },

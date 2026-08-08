@@ -16,6 +16,11 @@ const expectedTables = [
   "balance_snapshots",
   "app_settings",
   "app_meta",
+  "book_valuation_settings",
+  "price_provider_mappings",
+  "manual_price_quotes",
+  "latest_price_quotes",
+  "price_provider_state",
 ];
 
 describe("SQLite persistence boundary", () => {

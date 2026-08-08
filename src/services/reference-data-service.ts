@@ -2,6 +2,7 @@ import type { DatabaseContext, DatabaseExecutor } from "../db/connection";
 import {
   assetHasAccounts,
   assetHasActiveAccounts,
+  deleteLatestPriceQuoteForMapping,
   findAssetByCode,
   findAssetById,
   findCategoryById,
@@ -11,14 +12,17 @@ import {
   insertCategory,
   insertTag,
   listAssets,
+  listBookValuationSettings,
   listCategoriesForBook,
   listDefaultBooks,
   listEventTypesForCategory,
+  listPriceProviderMappings,
   listTagsForBook,
   updateAsset,
   updateCategory,
   updateTag,
 } from "../db/queries";
+import { SEED_ASSETS } from "../db/seed-data";
 import type { AssetType } from "../domain/types";
 import { assertService } from "./errors";
 import {
@@ -126,6 +130,9 @@ export class ReferenceDataService {
         isArchived: asset.isArchived,
         sortOrder: asset.sortOrder,
         factsLocked: assetHasAccounts(this.context.db, asset.id),
+        seedDefinitionLocked: SEED_ASSETS.some(
+          (definition) => definition.id === asset.id,
+        ),
         hasActiveAccounts: assetHasActiveAccounts(this.context.db, asset.id),
       })),
       categories: listCategoriesForBook(this.context.db, bookId).map(
@@ -194,6 +201,35 @@ export class ReferenceDataService {
       (transaction) => {
         const asset = findAssetById(transaction, assetId);
         assertService(asset, "ASSET_NOT_FOUND", "Asset was not found.");
+        const isHomeAsset = listBookValuationSettings(transaction).some(
+          (setting) => setting.homeAssetId === assetId,
+        );
+        assertService(
+          !isHomeAsset || input.assetType === "fiat",
+          "HOME_ASSET_TYPE_LOCKED",
+          "Change the Home Asset before changing this asset away from fiat.",
+        );
+        for (const mapping of listPriceProviderMappings(transaction).filter(
+          (candidate) => candidate.assetId === assetId,
+        )) {
+          assertService(
+            mapping.provider === "coingecko"
+              ? input.assetType === "crypto"
+              : input.assetType === "fiat",
+            "ASSET_PROVIDER_MAPPING_LOCKED",
+            "Asset type must remain compatible with its provider mapping.",
+          );
+        }
+        const seedDefinition = SEED_ASSETS.find(
+          (definition) => definition.id === assetId,
+        );
+        assertService(
+          !seedDefinition ||
+            (input.assetType === seedDefinition.assetType &&
+              input.scale === seedDefinition.scale),
+          "ASSET_SEED_DEFINITION_LOCKED",
+          "Canonical seed asset type and scale cannot be changed.",
+        );
         const codeOwner = findAssetByCode(transaction, code);
         assertService(
           !codeOwner || codeOwner.id === assetId,
@@ -229,12 +265,28 @@ export class ReferenceDataService {
         assertService(asset, "ASSET_NOT_FOUND", "Asset was not found.");
         if (isArchived) {
           assertService(
+            !listBookValuationSettings(transaction).some(
+              (setting) => setting.homeAssetId === assetId,
+            ),
+            "HOME_ASSET_ARCHIVE_BLOCKED",
+            "Change the Home Asset before archiving this asset.",
+          );
+          assertService(
             !assetHasActiveAccounts(transaction, assetId),
             "ASSET_HAS_ACTIVE_ACCOUNTS",
             "Archive every account for this asset before archiving the asset.",
           );
         }
         updateAsset(transaction, assetId, { isArchived, updatedAt: now });
+        for (const mapping of listPriceProviderMappings(transaction).filter(
+          (candidate) => candidate.assetId === assetId,
+        )) {
+          deleteLatestPriceQuoteForMapping(
+            transaction,
+            assetId,
+            mapping.provider,
+          );
+        }
       },
       { behavior: "immediate" },
     );

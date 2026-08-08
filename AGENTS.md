@@ -1,18 +1,18 @@
-# AGENTS.md — Talli (Multi-Asset Ledger V1)
+# AGENTS.md — Talli V2.0
 
 ## Project identity
 
-This repository implements the **Multi-Asset Personal Ledger V1** described by the canonical specification files in the repository root.
+This repository implements the frozen **Multi-Asset Personal Ledger V1** core plus the additive **Talli V2.0 Price & Valuation Engine**.
 
 The product is a single-user, self-hosted Next.js + TypeScript application backed by SQLite. Its primary invariant is:
 
-> Ledger quantities are source of truth. Market valuation is derived data and does not exist in V1.
+> Ledger quantities are source of truth. Current market valuation is optional derived data and may never mutate or replace ledger facts.
 
-Do not reinterpret the project as a portfolio tracker, market-price dashboard, banking sync product, or multi-user SaaS.
+Do not reinterpret the project as a historical portfolio tracker, investment-accounting system, banking-sync product, or multi-user SaaS.
 
 ## Canonical specification and precedence
 
-Before substantial implementation work, read the relevant canonical files. For a fresh session or a cross-cutting change, read them in the order listed in `00_README_CN.md`.
+Before substantial implementation work, read the relevant V1 canonical files and `docs/v2-price-valuation/CODEX_HANDOFF_PROMPT.txt`. For V2 price/valuation work, the preserved package under `docs/v2-price-valuation/` is the highest-priority specification.
 
 When rules conflict, use this precedence:
 
@@ -22,12 +22,16 @@ When rules conflict, use this precedence:
 4. `04_DATABASE_SCHEMA.sql` and `05_TYPES_AND_SERVICE_CONTRACTS.ts`
 5. UI and implementation guidance
 
+For V2 conflicts, `docs/v2-price-valuation/01_CODEX_MASTER_INSTRUCTION_CN.md` and its numbered package files override V1 text that says valuation does not yet exist. They do not override V1 ledger, snapshot, report, or atomic-money invariants.
+
 Do not modify canonical specification files unless the user explicitly asks to change the specification.
 
 ## V1 non-negotiable invariants
 
-- No market-price, FX, crypto-price, historical-price, quote, or valuation network calls.
-- No base/home currency, unified net-worth number, cross-asset aggregation, P&L, or stablecoin peg assumption.
+- No historical pricing, P&L, cost basis, account sync, background collector, or stablecoin peg assumption.
+- V2 current valuation permits one explicit fiat Home Asset. CoinGecko provides crypto/USD market quotes, ECB provides EUR reference legs, and active manual exact-pair quotes have precedence.
+- Provider calls are server-only, on-demand, outside SQLite write transactions, and never block SSR. Resolver and portfolio valuation remain cache-only.
+- Price/rate facts use positive plain-decimal `TEXT` and `decimal.js`; they never reuse ledger `bigint` semantics or JS floating-point arithmetic.
 - Persist monetary quantities as signed base-10 integer **TEXT** atomic units. Domain arithmetic uses `bigint`.
 - Never use JavaScript `number`, `Number()`, `parseFloat()`, SQLite `REAL`, or floating-point arithmetic for persisted money, balances, fees, or executed exchange quantities.
 - Reject user input with fractional digits greater than the asset `scale`; never silently round.
@@ -45,7 +49,7 @@ When touching ledger semantics, invoke or follow `$ledger-domain-guard`.
 
 For implementation details not fixed by the canonical specs, also follow `CODEX_ARCHITECTURE_DEFAULTS_CN.md`.
 
-Use a pragmatic modular monolith. Do not introduce microservices, Redis, queues, GraphQL, event buses, CQRS frameworks, generic repository frameworks, or distributed infrastructure in V1.
+Use a pragmatic modular monolith. Do not introduce microservices, Redis, queues, cron collectors, GraphQL, event buses, CQRS frameworks, generic repository frameworks, or distributed infrastructure in V2.0.
 
 Preferred dependency direction:
 
@@ -103,7 +107,8 @@ Product-specific requirements include:
 - tabular numerals for amounts;
 - clear asset code/precision and explicit negative signs;
 - never communicate sign only through color;
-- never show a unified cross-asset total;
+- a Home-denominated total is always marked approximate (`≈`), sourced from explicit quote legs, and marked incomplete when a nonzero asset is missing a usable quote;
+- never show an implicit native-asset total or assume `USDT/USDC = USD`;
 - transaction entry should minimize steps;
 - transfer and exchange forms must expose their different semantics;
 - destructive delete and destructive restore require explicit confirmation;
@@ -111,16 +116,16 @@ Product-specific requirements include:
 
 ## Implementation workflow
 
-Follow `08_IMPLEMENTATION_PLAN_CN.md`. Correctness of Money, ledger invariants, balance snapshots, and persistence comes before elaborate UI.
+For V1 core follow `08_IMPLEMENTATION_PLAN_CN.md`; for V2 follow `docs/v2-price-valuation/11_IMPLEMENTATION_PLAN_CN.md`. Correctness of Money, ledger invariants, balance snapshots, cache state, and persistence comes before elaborate UI.
 
 For non-trivial work:
 
 1. Inspect existing code and the relevant spec sections before editing.
 2. State the affected invariants and acceptance cases.
-3. Make the smallest coherent change that preserves V1 scope.
+3. Make the smallest coherent change that preserves the frozen V1 core and V2.0 scope.
 4. Add/update tests together with behavior changes.
 5. Run targeted checks first, then the repository validation gate.
-6. Review the diff for accidental V2 features, float money, cross-asset aggregation, hidden DB access, and missing transaction boundaries.
+6. Review the diff for V2.1 scope creep, float money/rates, implicit FX or stablecoin pegs, client key leakage, hidden DB access, and missing transaction boundaries.
 
 Do not ask the user to resolve an ambiguity if the canonical specs already resolve it. For minor unspecified implementation details, choose the simplest conservative V1-compatible option and record it briefly if consequential.
 

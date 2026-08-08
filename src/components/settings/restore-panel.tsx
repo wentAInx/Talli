@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 
 interface RestoreResult {
   exportedAt: string;
+  schemaVersion: number;
   target: "empty" | "seed-only";
   summary: {
     accounts: number;
@@ -16,6 +17,9 @@ interface RestoreResult {
     settings: number;
     snapshots: number;
     tags: number;
+    valuationSettings: number;
+    providerMappings: number;
+    manualQuotes: number;
   };
 }
 
@@ -94,7 +98,7 @@ export function RestorePanel() {
             required
             type="file"
           />
-          <small>V1 最大 50 MB。预览不会写入数据库。</small>
+          <small>最大 50 MB。兼容 V1 备份；预览不会写入数据库。</small>
         </label>
         <button className="secondary-button" disabled={pending} type="submit">
           {pending ? "正在校验…" : "校验并预览"}
@@ -109,7 +113,8 @@ export function RestorePanel() {
         <div className="restore-preview" aria-live="polite">
           <strong>备份校验通过</strong>
           <p>
-            导出时间 {preview.exportedAt} · 目标 {preview.target}
+            Schema V{preview.schemaVersion} · 导出时间 {preview.exportedAt} ·
+            目标 {preview.target}
           </p>
           <dl>
             <div>
@@ -129,6 +134,18 @@ export function RestorePanel() {
             <div>
               <dt>余额锚点</dt>
               <dd>{preview.summary.snapshots}</dd>
+            </div>
+            <div>
+              <dt>Home 设置</dt>
+              <dd>{preview.summary.valuationSettings}</dd>
+            </div>
+            <div>
+              <dt>价格源映射</dt>
+              <dd>{preview.summary.providerMappings}</dd>
+            </div>
+            <div>
+              <dt>手动价格</dt>
+              <dd>{preview.summary.manualQuotes}</dd>
             </div>
           </dl>
           {complete ? (

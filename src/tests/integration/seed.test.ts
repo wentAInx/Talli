@@ -12,6 +12,7 @@ import {
   SEED_ASSETS,
   SEED_BOOK_ID,
   SEED_CATEGORIES,
+  SEED_PROVIDER_MAPPINGS,
   SEED_SCHEMA_VERSION,
   SEED_TIMESTAMP,
 } from "../../db/seed-data";
@@ -52,7 +53,8 @@ describe("canonical seed", () => {
       }>;
     };
 
-    expect(SEED_SCHEMA_VERSION).toBe(canonical.schemaVersion);
+    expect(canonical.schemaVersion).toBe(1);
+    expect(SEED_SCHEMA_VERSION).toBe(2);
     expect(
       SEED_ASSETS.map(
         ({ code, name, symbol, assetType: type, scale, sortOrder }) => ({
@@ -85,6 +87,13 @@ describe("canonical seed", () => {
     expect(countRows(database, "books")).toBe(1);
     expect(countRows(database, "assets")).toBe(SEED_ASSETS.length);
     expect(countRows(database, "categories")).toBe(SEED_CATEGORIES.length);
+    expect(countRows(database, "book_valuation_settings")).toBe(1);
+    expect(countRows(database, "price_provider_mappings")).toBe(
+      SEED_PROVIDER_MAPPINGS.length,
+    );
+    expect(countRows(database, "manual_price_quotes")).toBe(0);
+    expect(countRows(database, "latest_price_quotes")).toBe(0);
+    expect(countRows(database, "price_provider_state")).toBe(0);
     expect(countRows(database, "accounts")).toBe(0);
     expect(countRows(database, "ledger_events")).toBe(0);
     expect(countRows(database, "ledger_entries")).toBe(0);
@@ -190,6 +199,42 @@ describe("canonical seed", () => {
       category_type: "both",
       is_archived: 1,
       sort_order: 999,
+    });
+  });
+
+  it("preserves Home Asset and provider mapping edits across restarts", () => {
+    database = createTestDatabase();
+    seedDatabase(database.context);
+    database.context.sqlite
+      .prepare(
+        "update book_valuation_settings set home_asset_id = 'seed-asset-usd', updated_at = '2026-08-08T00:00:00.000Z' where book_id = ?",
+      )
+      .run(SEED_BOOK_ID);
+    database.context.sqlite
+      .prepare(
+        "update price_provider_mappings set provider_asset_key = 'my-bitcoin', is_enabled = 0, priority = 7, updated_at = '2026-08-08T00:00:00.000Z' where asset_id = 'seed-asset-btc' and provider = 'coingecko'",
+      )
+      .run();
+
+    seedDatabase(database.context);
+
+    expect(
+      database.context.sqlite
+        .prepare(
+          "select home_asset_id from book_valuation_settings where book_id = ?",
+        )
+        .get(SEED_BOOK_ID),
+    ).toEqual({ home_asset_id: "seed-asset-usd" });
+    expect(
+      database.context.sqlite
+        .prepare(
+          "select provider_asset_key, is_enabled, priority from price_provider_mappings where asset_id = 'seed-asset-btc' and provider = 'coingecko'",
+        )
+        .get(),
+    ).toEqual({
+      provider_asset_key: "my-bitcoin",
+      is_enabled: 0,
+      priority: 7,
     });
   });
 

@@ -4,6 +4,7 @@ import {
   insertBackupData,
   readAppMetaRows,
   readBackupData,
+  upsertAppMetaValue,
 } from "../db/queries";
 import {
   BACKUP_FORMAT,
@@ -19,8 +20,11 @@ import {
   SEED_ASSETS,
   SEED_BOOK_ID,
   SEED_CATEGORIES,
+  SEED_DEFAULT_HOME_ASSET_CODE,
+  SEED_PROVIDER_MAPPINGS,
   SEED_SCHEMA_VERSION,
   SEED_TIMESTAMP,
+  seedAssetId,
 } from "../db/seed-data";
 import {
   defaultServiceRuntime,
@@ -46,6 +50,9 @@ export interface BackupSummary {
   entries: number;
   snapshots: number;
   settings: number;
+  valuationSettings: number;
+  providerMappings: number;
+  manualQuotes: number;
 }
 
 export interface RestorePreview {
@@ -66,15 +73,13 @@ function summary(data: BackupData): BackupSummary {
     entries: data.ledgerEntries.length,
     snapshots: data.balanceSnapshots.length,
     settings: data.settings.length,
+    valuationSettings: data.bookValuationSettings.length,
+    providerMappings: data.priceProviderMappings.length,
+    manualQuotes: data.manualPriceQuotes.length,
   };
 }
 
 function sortedJson<T>(values: readonly T[]): string {
-  const sorted = [...values].sort((left, right) => {
-    const leftId = String((left as { id?: string }).id ?? "");
-    const rightId = String((right as { id?: string }).id ?? "");
-    return leftId.localeCompare(rightId);
-  });
   const canonical = (value: unknown): unknown => {
     if (Array.isArray(value)) {
       return value.map(canonical);
@@ -88,7 +93,13 @@ function sortedJson<T>(values: readonly T[]): string {
     }
     return value;
   };
-  return JSON.stringify(canonical(sorted));
+  return JSON.stringify(
+    values
+      .map(canonical)
+      .sort((left, right) =>
+        JSON.stringify(left).localeCompare(JSON.stringify(right)),
+      ),
+  );
 }
 
 function targetTimeZoneOnly(data: BackupData): boolean {
@@ -108,6 +119,7 @@ function targetKind(executor: DatabaseExecutor): "empty" | "seed-only" {
     data.ledgerEntries.length === 0 &&
     data.eventTags.length === 0 &&
     data.balanceSnapshots.length === 0 &&
+    data.manualPriceQuotes.length === 0 &&
     targetTimeZoneOnly(data);
 
   if (
@@ -115,6 +127,8 @@ function targetKind(executor: DatabaseExecutor): "empty" | "seed-only" {
     data.books.length === 0 &&
     data.assets.length === 0 &&
     data.categories.length === 0 &&
+    data.bookValuationSettings.length === 0 &&
+    data.priceProviderMappings.length === 0 &&
     meta.length === 0
   ) {
     return "empty";
@@ -143,11 +157,32 @@ function targetKind(executor: DatabaseExecutor): "empty" | "seed-only" {
     createdAt: SEED_TIMESTAMP,
     updatedAt: SEED_TIMESTAMP,
   }));
+  const expectedValuationSettings = [
+    {
+      bookId: SEED_BOOK_ID,
+      homeAssetId: seedAssetId(SEED_DEFAULT_HOME_ASSET_CODE),
+      createdAt: SEED_TIMESTAMP,
+      updatedAt: SEED_TIMESTAMP,
+    },
+  ];
+  const expectedProviderMappings = SEED_PROVIDER_MAPPINGS.map((mapping) => ({
+    assetId: seedAssetId(mapping.assetCode),
+    provider: mapping.provider,
+    providerAssetKey: mapping.providerAssetKey,
+    isEnabled: mapping.isEnabled,
+    priority: mapping.priority,
+    createdAt: SEED_TIMESTAMP,
+    updatedAt: SEED_TIMESTAMP,
+  }));
   const isSeedOnly =
     userFactsAreEmpty &&
     sortedJson(data.books) === sortedJson(expectedBooks) &&
     sortedJson(data.assets) === sortedJson(expectedAssets) &&
     sortedJson(data.categories) === sortedJson(expectedCategories) &&
+    sortedJson(data.bookValuationSettings) ===
+      sortedJson(expectedValuationSettings) &&
+    sortedJson(data.priceProviderMappings) ===
+      sortedJson(expectedProviderMappings) &&
     JSON.stringify(meta) ===
       JSON.stringify([
         { key: "seed_schema_version", value: String(SEED_SCHEMA_VERSION) },
@@ -156,7 +191,7 @@ function targetKind(executor: DatabaseExecutor): "empty" | "seed-only" {
     return "seed-only";
   }
   throw new RestoreTargetError(
-    "Restore requires an empty database or an unchanged seed-only database. V1 does not merge data.",
+    "Restore requires an empty database or an unchanged seed-only database. Talli does not merge backup data.",
   );
 }
 
@@ -213,6 +248,11 @@ export class BackupService {
           ...payload.data,
           categories: categoriesParentFirst(payload.data.categories),
         });
+        upsertAppMetaValue(
+          transaction,
+          "seed_schema_version",
+          String(SEED_SCHEMA_VERSION),
+        );
         const violations = this.context.sqlite.pragma(
           "foreign_key_check",
         ) as unknown[];

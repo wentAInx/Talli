@@ -37,7 +37,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "pnpm dev --hostname 127.0.0.1 --port 3106",
+    command:
+      "pnpm exec tsx e2e/seed-valuation.ts && pnpm dev --hostname 127.0.0.1 --port 3106",
     url: "http://127.0.0.1:3106",
     reuseExistingServer: false,
     env: {

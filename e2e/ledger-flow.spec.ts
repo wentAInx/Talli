@@ -283,7 +283,7 @@ test("filters, native-asset reports, settings, and exports form a V1 loop", asyn
     data: { ledgerEntries: { amountAtomic: string }[] };
   };
   expect(backup.format).toBe("multi-asset-ledger-backup");
-  expect(backup.schemaVersion).toBe(1);
+  expect(backup.schemaVersion).toBe(2);
   expect(
     backup.data.ledgerEntries.every(
       (entry) => typeof entry.amountAtomic === "string",
@@ -293,6 +293,131 @@ test("filters, native-asset reports, settings, and exports form a V1 loop", asyn
   const csvResponse = await page.request.get("/api/data/export.csv");
   expect(csvResponse.ok()).toBe(true);
   expect(await csvResponse.text()).toContain(accountName);
+
+  const noHorizontalOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth <= window.innerWidth,
+  );
+  expect(noHorizontalOverflow).toBe(true);
+});
+
+test("V2 current valuation, manual override, missing state, and refresh UX stay explicit", async ({
+  page,
+}, testInfo) => {
+  const missingOrigin = await page.request.post("/api/prices/refresh", {
+    data: { providers: [] },
+  });
+  expect(missingOrigin.status()).toBe(403);
+  const crossOrigin = await page.request.post("/api/prices/refresh", {
+    data: { providers: [] },
+    headers: { Origin: "https://example.invalid" },
+  });
+  expect(crossOrigin.status()).toBe(403);
+  await page.goto("/");
+  const sameOriginStatus = await page.evaluate(async () => {
+    const response = await fetch("/api/prices/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providers: [] }),
+    });
+    return response.status;
+  });
+  expect(sameOriginStatus).toBe(200);
+
+  const prefix = `${testInfo.project.name}-V2`;
+  await createAccount(page, {
+    name: `${prefix}-BTC`,
+    assetId: "seed-asset-btc",
+    initialBalance: "0.10000000",
+  });
+  await createAccount(page, {
+    name: `${prefix}-USDT`,
+    assetId: "seed-asset-usdt",
+    initialBalance: "100.000000",
+  });
+
+  await page.goto("/");
+  await expect(page.getByTestId("valuation-card")).toContainText("估算总资产");
+  await expect(page.getByTestId("valuation-total")).toContainText("≈");
+  await expect(page.getByTestId("asset-group-BTC")).toContainText(
+    "CoinGecko BTC/USD market · 68000",
+  );
+  await expect(page.getByTestId("asset-group-USDT")).toContainText(
+    "CoinGecko USDT/USD market · 0.9972",
+  );
+
+  let refreshRequests = 0;
+  await page.route("**/api/prices/refresh", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    refreshRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        refreshed: refreshRequests === 1 ? ["coingecko"] : [],
+        skipped: refreshRequests === 1 ? ["ecb"] : ["coingecko", "ecb"],
+        failed: [],
+      }),
+    });
+  });
+  await page.getByRole("button", { name: "刷新价格" }).click();
+  await expect(page.getByRole("button", { name: "正在刷新…" })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("价格已刷新");
+  await page.getByRole("button", { name: "刷新价格" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "刚刚已请求，请稍后再刷新",
+  );
+  await page.unroute("**/api/prices/refresh");
+  await page.waitForLoadState("networkidle");
+
+  await page.goto("/settings#valuation");
+  await page.getByLabel("估值币种").selectOption("seed-asset-cny");
+  await page.getByRole("button", { name: "保存 Home Asset" }).click();
+  await expect(page.getByText("Crypto market data provided by")).toBeVisible();
+  await expect(page.getByRole("link", { name: "CoinGecko" })).toBeVisible();
+  const cnyAssetSettings = page.getByTestId("asset-setting-CNY");
+  await cnyAssetSettings.locator("summary").click();
+  await expect(
+    cnyAssetSettings.getByRole("button", { name: "归档" }),
+  ).toBeDisabled();
+  await expect(cnyAssetSettings).toContainText("请先在估值区切换 Home Asset");
+
+  await page.getByLabel("基础资产").selectOption("seed-asset-btc");
+  await page.getByLabel("报价资产").selectOption("seed-asset-cny");
+  await page.getByLabel("价格（1 BASE = ? QUOTE）").fill("500000");
+  await page.getByRole("button", { name: "保存并启用" }).click();
+
+  await page.goto("/");
+  await expect(page.getByTestId("asset-group-BTC")).toContainText("手动价格");
+  await expect(page.getByTestId("asset-group-BTC")).toContainText(
+    "Manual BTC/CNY · 500000",
+  );
+
+  await page.goto("/settings#valuation");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "停用" }).first().click();
+  const btcMapping = page.getByTestId("mapping-BTC-coingecko");
+  await btcMapping.locator("summary").click();
+  await btcMapping.getByLabel("启用该映射").uncheck();
+  await btcMapping.getByRole("button", { name: "保存映射" }).click();
+
+  await page.goto("/");
+  await expect(page.getByTestId("valuation-card")).toContainText("估值不完整");
+  await expect(page.getByTestId("asset-group-BTC")).toContainText("缺少映射");
+
+  await page.goto("/settings#valuation");
+  const disabledBtcMapping = page.getByTestId("mapping-BTC-coingecko");
+  await disabledBtcMapping.locator("summary").click();
+  await disabledBtcMapping.getByLabel("启用该映射").check();
+  await disabledBtcMapping.getByRole("button", { name: "保存映射" }).click();
+
+  await page.goto("/");
+  await expect(page.getByTestId("asset-group-BTC")).toContainText(
+    "CoinGecko BTC/USD market · 68000",
+  );
+  await expect(page.getByTestId("asset-group-BTC")).not.toContainText(
+    "手动价格",
+  );
 
   const noHorizontalOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth <= window.innerWidth,

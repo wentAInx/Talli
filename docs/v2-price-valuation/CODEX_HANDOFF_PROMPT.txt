@@ -1,0 +1,13 @@
+你正在处理私有仓库 wentAInx/Talli。请把附件中的 Talli V2.0 Price & Valuation Engine 工程任务包视为本轮最高优先级实现规范。
+
+V1 frozen baseline commit: 9345d8516aaa78495e408d53bb74e03f2f5eaa57
+
+先严格按 00_README_CN.md 的顺序完整阅读任务包，再检查当前仓库和 HEAD。若 HEAD 不是该 baseline 或用户明确批准的 descendant，不要擅自 reset，先报告。
+
+本轮只实现 V2.0 Current Price & Valuation Foundation：Home Asset、CoinGecko Crypto/USD、ECB fiat reference/cross FX、manual exact-pair override、provider mapping、current cache/fresh-stale-error state、Quote Resolver、current Portfolio Valuation、Dashboard/Settings UI、Backup v2 + V1 backup compatibility。
+
+V1 Ledger 语义冻结。禁止改写 ledger entries/snapshots，禁止 USDT/USDC=USD 固定假设，禁止 historical valuation、cron、WebSocket、P&L、cost basis、交易所/钱包同步。
+
+默认测试不得调用真实外网；Provider 使用 injectable HTTP + fixtures。API key 必须 server-only。SSR 打开账本不得等待外部行情。
+
+实现完成后，实际运行并报告 format:check、lint、typecheck、db:check、unit、integration、build、e2e；不得伪造结果。不要 push 或 deploy，除非我另行明确要求。

@@ -10,6 +10,9 @@ importers:
       better-sqlite3:
         specifier: 13.0.3
         version: 13.0.3
+      csv-parse:
+        specifier: 7.0.2
+        version: 7.0.2
       decimal.js:
         specifier: 10.6.0
         version: 10.6.0
@@ -25,6 +28,9 @@ importers:
       react-dom:
         specifier: 19.2.8
         version: 19.2.8(react@19.2.8)
+      server-only:
+        specifier: 0.0.1
+        version: 0.0.1
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -2439,6 +2445,12 @@ packages:
       supports-color:
         optional: true
 
+  csv-parse@7.0.2:
+    resolution:
+      {
+        integrity: sha512-uKZghv9UmPkMVLYy//KZ9HFAIJsl7wkhoEdIL0+rhuSY9pZQlhaeGEDPIe+/w7eh81MOql8Q/9+inAGWG6ZHYA==,
+      }
+
   decimal.js@10.6.0:
     resolution:
       {
@@ -4227,6 +4239,12 @@ packages:
         integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==,
       }
 
+  server-only@0.0.1:
+    resolution:
+      {
+        integrity: sha512-qepMx2JxAa5jjfzxG79yPPq+8BuFToHd1hm7kI+Z4zAq1ftQiP7HcxMhDDItrbtwVeLg/cY2JnKnrcFkmiswNA==,
+      }
+
   semver@6.3.1:
     resolution:
       {
@@ -5986,6 +6004,8 @@ snapshots:
     dependencies:
       ms: 2.1.3
 
+  csv-parse@7.0.2: {}
+
   decimal.js@10.6.0: {}
 
   deep-is@0.1.4: {}
@@ -7202,6 +7222,8 @@ snapshots:
       is-regex: 1.2.1
 
   scheduler@0.27.0: {}
+
+  server-only@0.0.1: {}
 
   semver@6.3.1: {}
 

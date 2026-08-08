@@ -6,11 +6,13 @@ import {
   buildIncomeEntries,
   buildTransferEntries,
 } from "./ledger";
+import { normalizePositiveDecimalText } from "./price-decimal";
 import { assertIanaTimeZone, canonicalUtcInstantValue } from "./time";
 import type { LedgerEntryDraft } from "./types";
 
 export const BACKUP_FORMAT = "multi-asset-ledger-backup";
-export const BACKUP_SCHEMA_VERSION = 1;
+export const BACKUP_LEGACY_SCHEMA_VERSION = 1;
+export const BACKUP_SCHEMA_VERSION = 2;
 
 export class BackupValidationError extends Error {
   constructor(
@@ -162,30 +164,97 @@ const settingSchema = z
   .object({ key: id, valueJson: jsonText, updatedAt: canonicalInstant })
   .strict();
 
+const bookValuationSettingSchema = z
+  .object({
+    bookId: id,
+    homeAssetId: id,
+    createdAt: canonicalInstant,
+    updatedAt: canonicalInstant,
+  })
+  .strict();
+
+const priceProviderMappingSchema = z
+  .object({
+    assetId: id,
+    provider: z.enum(["coingecko", "ecb"]),
+    providerAssetKey: z.string().trim().min(1).max(128),
+    isEnabled: z.boolean(),
+    priority: z.number().int(),
+    createdAt: canonicalInstant,
+    updatedAt: canonicalInstant,
+  })
+  .strict();
+
+const positiveDecimalText = z.string().transform((value, context) => {
+  try {
+    return normalizePositiveDecimalText(value);
+  } catch {
+    context.addIssue({
+      code: "custom",
+      message: "Rate must be positive plain decimal text.",
+    });
+    return z.NEVER;
+  }
+});
+
+const manualPriceQuoteSchema = z
+  .object({
+    id,
+    baseAssetId: id,
+    quoteAssetId: id,
+    rateText: positiveDecimalText,
+    observedAt: canonicalInstant,
+    note: nullableText,
+    isActive: z.boolean(),
+    createdAt: canonicalInstant,
+    updatedAt: canonicalInstant,
+  })
+  .strict();
+
+const v1DataSchema = z
+  .object({
+    books: z.array(bookSchema),
+    assets: z.array(assetSchema),
+    accounts: z.array(accountSchema),
+    categories: z.array(categorySchema),
+    tags: z.array(tagSchema),
+    ledgerEvents: z.array(ledgerEventSchema),
+    ledgerEntries: z.array(ledgerEntrySchema),
+    eventTags: z.array(eventTagSchema),
+    balanceSnapshots: z.array(snapshotSchema),
+    settings: z.array(settingSchema),
+  })
+  .strict();
+
+const v2DataSchema = v1DataSchema
+  .extend({
+    bookValuationSettings: z.array(bookValuationSettingSchema),
+    priceProviderMappings: z.array(priceProviderMappingSchema),
+    manualPriceQuotes: z.array(manualPriceQuoteSchema),
+  })
+  .strict();
+
+const legacyBackupPayloadSchema = z
+  .object({
+    format: z.literal(BACKUP_FORMAT),
+    schemaVersion: z.literal(BACKUP_LEGACY_SCHEMA_VERSION),
+    exportedAt: canonicalInstant,
+    data: v1DataSchema,
+  })
+  .strict();
+
 export const backupPayloadSchema = z
   .object({
     format: z.literal(BACKUP_FORMAT),
     schemaVersion: z.literal(BACKUP_SCHEMA_VERSION),
     exportedAt: canonicalInstant,
-    data: z
-      .object({
-        books: z.array(bookSchema),
-        assets: z.array(assetSchema),
-        accounts: z.array(accountSchema),
-        categories: z.array(categorySchema),
-        tags: z.array(tagSchema),
-        ledgerEvents: z.array(ledgerEventSchema),
-        ledgerEntries: z.array(ledgerEntrySchema),
-        eventTags: z.array(eventTagSchema),
-        balanceSnapshots: z.array(snapshotSchema),
-        settings: z.array(settingSchema),
-      })
-      .strict(),
+    data: v2DataSchema,
   })
   .strict();
 
 export type BackupPayload = z.infer<typeof backupPayloadSchema>;
 export type BackupData = BackupPayload["data"];
+type LegacyBackupPayload = z.infer<typeof legacyBackupPayloadSchema>;
 
 function fail(code: string, message: string): never {
   throw new BackupValidationError(code, message);
@@ -361,6 +430,22 @@ function validateRelations(data: BackupData): void {
     "account snapshot time",
   );
   uniqueBy(data.settings, (row) => row.key, "setting key");
+  uniqueBy(
+    data.bookValuationSettings,
+    (row) => row.bookId,
+    "book valuation setting",
+  );
+  uniqueBy(
+    data.priceProviderMappings,
+    (row) => `${row.assetId}\u0000${row.provider}`,
+    "provider mapping",
+  );
+  uniqueBy(data.manualPriceQuotes, (row) => row.id, "manual quote id");
+  uniqueBy(
+    data.manualPriceQuotes.filter((row) => row.isActive),
+    (row) => `${row.baseAssetId}\u0000${row.quoteAssetId}`,
+    "active manual quote pair",
+  );
 
   if (data.books.filter((book) => book.isDefault).length !== 1) {
     fail(
@@ -502,19 +587,169 @@ function validateRelations(data: BackupData): void {
       }
     }
   }
+  for (const setting of data.bookValuationSettings) {
+    const homeAsset = assets.get(setting.homeAssetId);
+    if (!books.has(setting.bookId) || !homeAsset) {
+      fail(
+        "BACKUP_VALUATION_RELATION",
+        `Book valuation setting ${setting.bookId} has a missing book or Home Asset.`,
+      );
+    }
+    if (homeAsset.assetType !== "fiat" || homeAsset.isArchived) {
+      fail(
+        "BACKUP_HOME_ASSET_INVALID",
+        `Home Asset ${homeAsset.id} must be an active fiat asset.`,
+      );
+    }
+  }
+  for (const mapping of data.priceProviderMappings) {
+    const asset = assets.get(mapping.assetId);
+    if (!asset) {
+      fail(
+        "BACKUP_VALUATION_RELATION",
+        `Provider mapping references missing asset ${mapping.assetId}.`,
+      );
+    }
+    if (
+      (mapping.provider === "coingecko" && asset.assetType !== "crypto") ||
+      (mapping.provider === "ecb" && asset.assetType !== "fiat")
+    ) {
+      fail(
+        "BACKUP_PROVIDER_MAPPING_INVALID",
+        `Provider mapping for ${asset.code} does not match its asset type.`,
+      );
+    }
+    if (
+      mapping.provider === "ecb" &&
+      !/^[A-Z]{3}$/.test(mapping.providerAssetKey)
+    ) {
+      fail(
+        "BACKUP_PROVIDER_MAPPING_INVALID",
+        `ECB provider mapping for ${asset.code} must use a three-letter currency code.`,
+      );
+    }
+  }
+  for (const quote of data.manualPriceQuotes) {
+    if (
+      !assets.has(quote.baseAssetId) ||
+      !assets.has(quote.quoteAssetId) ||
+      quote.baseAssetId === quote.quoteAssetId
+    ) {
+      fail(
+        "BACKUP_MANUAL_QUOTE_INVALID",
+        `Manual quote ${quote.id} has an invalid asset pair.`,
+      );
+    }
+    try {
+      normalizePositiveDecimalText(quote.rateText);
+    } catch {
+      fail(
+        "BACKUP_MANUAL_QUOTE_INVALID",
+        `Manual quote ${quote.id} has an invalid rate.`,
+      );
+    }
+  }
   validateEventEntries(data);
 }
 
-export function parseBackupPayload(value: unknown): BackupPayload {
-  const result = backupPayloadSchema.safeParse(value);
-  if (!result.success) {
-    const issue = result.error.issues[0];
-    throw new BackupValidationError(
-      "BACKUP_SCHEMA_INVALID",
-      `Backup schema is invalid at ${issue?.path.join(".") || "root"}: ${
-        issue?.message ?? "unknown error"
-      }`,
+const LEGACY_PROVIDER_MAPPINGS = [
+  ["CNY", "fiat", "ecb", "CNY"],
+  ["USD", "fiat", "ecb", "USD"],
+  ["EUR", "fiat", "ecb", "EUR"],
+  ["HKD", "fiat", "ecb", "HKD"],
+  ["USDT", "crypto", "coingecko", "tether"],
+  ["USDC", "crypto", "coingecko", "usd-coin"],
+  ["BTC", "crypto", "coingecko", "bitcoin"],
+  ["ETH", "crypto", "coingecko", "ethereum"],
+  ["SOL", "crypto", "coingecko", "solana"],
+] as const;
+
+function upgradeLegacyBackup(payload: LegacyBackupPayload): BackupPayload {
+  const defaultBook = payload.data.books.find((book) => book.isDefault);
+  const activeFiat = payload.data.assets
+    .filter((asset) => asset.assetType === "fiat" && !asset.isArchived)
+    .sort(
+      (left, right) =>
+        left.sortOrder - right.sortOrder ||
+        left.code.localeCompare(right.code) ||
+        left.id.localeCompare(right.id),
     );
+  const homeAsset =
+    activeFiat.find((asset) => asset.code.toUpperCase() === "CNY") ??
+    activeFiat.find((asset) => asset.code.toUpperCase() === "USD") ??
+    activeFiat[0];
+  const inferredMappings: BackupData["priceProviderMappings"] = [];
+  for (const [
+    code,
+    expectedType,
+    provider,
+    providerAssetKey,
+  ] of LEGACY_PROVIDER_MAPPINGS) {
+    const asset = payload.data.assets.find(
+      (candidate) =>
+        candidate.code.toUpperCase() === code &&
+        candidate.assetType === expectedType,
+    );
+    if (asset) {
+      inferredMappings.push({
+        assetId: asset.id,
+        provider,
+        providerAssetKey,
+        isEnabled: true,
+        priority: 100,
+        createdAt: payload.exportedAt,
+        updatedAt: payload.exportedAt,
+      });
+    }
+  }
+  return {
+    format: BACKUP_FORMAT,
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    exportedAt: payload.exportedAt,
+    data: {
+      ...payload.data,
+      bookValuationSettings:
+        defaultBook && homeAsset
+          ? [
+              {
+                bookId: defaultBook.id,
+                homeAssetId: homeAsset.id,
+                createdAt: payload.exportedAt,
+                updatedAt: payload.exportedAt,
+              },
+            ]
+          : [],
+      priceProviderMappings: inferredMappings,
+      manualPriceQuotes: [],
+    },
+  };
+}
+
+function schemaFailure(result: z.ZodSafeParseError<unknown>): never {
+  const issue = result.error.issues[0];
+  throw new BackupValidationError(
+    "BACKUP_SCHEMA_INVALID",
+    `Backup schema is invalid at ${issue?.path.join(".") || "root"}: ${
+      issue?.message ?? "unknown error"
+    }`,
+  );
+}
+
+export function parseBackupPayload(value: unknown): BackupPayload {
+  const schemaVersion =
+    value && typeof value === "object" && "schemaVersion" in value
+      ? (value as { schemaVersion?: unknown }).schemaVersion
+      : undefined;
+  let result: ReturnType<typeof backupPayloadSchema.safeParse>;
+  if (schemaVersion === BACKUP_LEGACY_SCHEMA_VERSION) {
+    const legacy = legacyBackupPayloadSchema.safeParse(value);
+    if (!legacy.success) schemaFailure(legacy);
+    result = backupPayloadSchema.safeParse(upgradeLegacyBackup(legacy.data));
+  } else {
+    result = backupPayloadSchema.safeParse(value);
+  }
+  if (!result.success) {
+    schemaFailure(result);
   }
   validateRelations(result.data.data);
   return result.data;

@@ -24,7 +24,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <p className="sidebar-note">
           原生数量独立记账
           <br />
-          无行情 · 无统一估值
+          可选当前估值 · 明确来源
         </p>
       </aside>
 

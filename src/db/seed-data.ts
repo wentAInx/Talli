@@ -1,8 +1,9 @@
 import type { AssetRow, CategoryRow } from "./schema";
 
-export const SEED_SCHEMA_VERSION = 1;
+export const SEED_SCHEMA_VERSION = 2;
 export const SEED_TIMESTAMP = "2026-08-07T00:00:00.000Z";
 export const SEED_BOOK_ID = "seed-book-default";
+export const SEED_DEFAULT_HOME_ASSET_CODE = "CNY";
 
 type SeedAsset = Pick<
   AssetRow,
@@ -178,6 +179,81 @@ export const SEED_CATEGORIES = [
     sortOrder: 130,
   },
 ] as const satisfies readonly SeedCategory[];
+
+export const SEED_PROVIDER_MAPPINGS = [
+  {
+    assetCode: "CNY",
+    expectedAssetType: "fiat",
+    provider: "ecb",
+    providerAssetKey: "CNY",
+    priority: 100,
+    isEnabled: true,
+  },
+  {
+    assetCode: "USD",
+    expectedAssetType: "fiat",
+    provider: "ecb",
+    providerAssetKey: "USD",
+    priority: 100,
+    isEnabled: true,
+  },
+  {
+    assetCode: "EUR",
+    expectedAssetType: "fiat",
+    provider: "ecb",
+    providerAssetKey: "EUR",
+    priority: 100,
+    isEnabled: true,
+  },
+  {
+    assetCode: "HKD",
+    expectedAssetType: "fiat",
+    provider: "ecb",
+    providerAssetKey: "HKD",
+    priority: 100,
+    isEnabled: true,
+  },
+  {
+    assetCode: "USDT",
+    expectedAssetType: "crypto",
+    provider: "coingecko",
+    providerAssetKey: "tether",
+    priority: 100,
+    isEnabled: true,
+  },
+  {
+    assetCode: "USDC",
+    expectedAssetType: "crypto",
+    provider: "coingecko",
+    providerAssetKey: "usd-coin",
+    priority: 100,
+    isEnabled: true,
+  },
+  {
+    assetCode: "BTC",
+    expectedAssetType: "crypto",
+    provider: "coingecko",
+    providerAssetKey: "bitcoin",
+    priority: 100,
+    isEnabled: true,
+  },
+  {
+    assetCode: "ETH",
+    expectedAssetType: "crypto",
+    provider: "coingecko",
+    providerAssetKey: "ethereum",
+    priority: 100,
+    isEnabled: true,
+  },
+  {
+    assetCode: "SOL",
+    expectedAssetType: "crypto",
+    provider: "coingecko",
+    providerAssetKey: "solana",
+    priority: 100,
+    isEnabled: true,
+  },
+] as const;
 
 export function seedAssetId(code: string): string {
   const definition = SEED_ASSETS.find((asset) => asset.code === code);

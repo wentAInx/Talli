@@ -15,7 +15,13 @@ import {
 import { ConfirmActionForm } from "@/components/forms/confirm-action-form";
 import { SettingsActionForm } from "@/components/forms/settings-action-form";
 import { RestorePanel } from "@/components/settings/restore-panel";
-import { ReferenceDataService, SettingsService } from "@/services";
+import { ValuationSettings } from "@/components/settings/valuation-settings";
+import { safeProviderConfigurationViews } from "@/providers/server-factory";
+import {
+  readValuationConfiguration,
+  ReferenceDataService,
+  SettingsService,
+} from "@/services";
 
 import { withDatabase } from "../server-runtime";
 
@@ -68,11 +74,15 @@ function ArchiveControl({
 }
 
 export default async function SettingsPage() {
+  const now = new Date().toISOString();
   const data = await withDatabase((context) => {
-    const references = new ReferenceDataService(context).getSettingsData();
+    const referenceService = new ReferenceDataService(context);
+    const references = referenceService.getSettingsData();
     return {
       ...references,
+      bookId: referenceService.getDefaultBookId(),
       timeZone: new SettingsService(context).getTimeZoneOrDefault(),
+      valuation: readValuationConfiguration(context),
     };
   });
 
@@ -87,6 +97,7 @@ export default async function SettingsPage() {
       </header>
 
       <nav className="settings-jump" aria-label="设置分区">
+        <a href="#valuation">估值</a>
         <a href="#assets">资产</a>
         <a href="#categories">分类</a>
         <a href="#tags">标签</a>
@@ -94,6 +105,14 @@ export default async function SettingsPage() {
         <a href="#data">数据</a>
         <a href="#about">关于</a>
       </nav>
+
+      <ValuationSettings
+        bookId={data.bookId}
+        configuration={data.valuation}
+        now={now}
+        providerConfiguration={safeProviderConfigurationViews()}
+        timeZone={data.timeZone}
+      />
 
       <section className="content-section" id="assets">
         <div className="section-heading">
@@ -154,8 +173,32 @@ export default async function SettingsPage() {
               asset.id,
               !asset.isArchived,
             );
+            const isHomeAsset = data.valuation.settings.some(
+              (setting) => setting.homeAssetId === asset.id,
+            );
+            const hasProviderMapping = data.valuation.mappings.some(
+              (mapping) => mapping.assetId === asset.id,
+            );
+            const assetTypeLocked =
+              asset.factsLocked ||
+              asset.seedDefinitionLocked ||
+              isHomeAsset ||
+              hasProviderMapping;
+            const archiveDisabled =
+              !asset.isArchived && (asset.hasActiveAccounts || isHomeAsset);
+            const assetHint = isHomeAsset
+              ? "当前 Home Asset：请先在估值区切换后再修改类型或归档。"
+              : asset.seedDefinitionLocked
+                ? "内置资产的类型与小数精度固定；名称、符号和排序仍可修改。"
+                : hasProviderMapping
+                  ? "已有价格源映射，资产类型必须与映射保持兼容。"
+                  : "已有账户引用后，类型与小数精度会锁定。";
             return (
-              <details key={asset.id} className="settings-record">
+              <details
+                key={asset.id}
+                className="settings-record"
+                data-testid={`asset-setting-${asset.code}`}
+              >
                 <summary>
                   <span>
                     <strong>{asset.code}</strong> · {asset.name}
@@ -182,7 +225,7 @@ export default async function SettingsPage() {
                     </label>
                     <label className="field">
                       <span>类型</span>
-                      {asset.factsLocked ? (
+                      {assetTypeLocked ? (
                         <input
                           name="assetType"
                           type="hidden"
@@ -191,8 +234,8 @@ export default async function SettingsPage() {
                       ) : null}
                       <select
                         defaultValue={asset.assetType}
-                        disabled={asset.factsLocked}
-                        name={asset.factsLocked ? undefined : "assetType"}
+                        disabled={assetTypeLocked}
+                        name={assetTypeLocked ? undefined : "assetType"}
                       >
                         {Object.entries(ASSET_TYPE_LABELS).map(
                           ([value, label]) => (
@@ -210,7 +253,9 @@ export default async function SettingsPage() {
                         max="30"
                         min="0"
                         name="scale"
-                        readOnly={asset.factsLocked}
+                        readOnly={
+                          asset.factsLocked || asset.seedDefinitionLocked
+                        }
                         type="number"
                       />
                     </label>
@@ -223,15 +268,19 @@ export default async function SettingsPage() {
                       />
                     </label>
                   </div>
-                  <small className="settings-hint">
-                    已有账户引用后，类型与小数精度会锁定。
-                  </small>
+                  <small className="settings-hint">{assetHint}</small>
                 </SettingsActionForm>
                 <ArchiveControl
                   action={archive}
                   archived={asset.isArchived}
-                  disabled={!asset.isArchived && asset.hasActiveAccounts}
-                  disabledReason="请先归档该资产下的所有活跃账户。"
+                  disabled={archiveDisabled}
+                  disabledReason={
+                    isHomeAsset
+                      ? asset.hasActiveAccounts
+                        ? "请先在估值区切换 Home Asset。请先归档该资产下的所有活跃账户。"
+                        : "请先在估值区切换 Home Asset。"
+                      : "请先归档该资产下的所有活跃账户。"
+                  }
                   label={`资产 ${asset.code}`}
                 />
               </details>
@@ -453,11 +502,12 @@ export default async function SettingsPage() {
 
       <section className="content-section" id="about">
         <div className="section-heading">
-          <h2>关于 Talli V1</h2>
+          <h2>关于 Talli V2.0</h2>
         </div>
         <p className="settings-copy">
-          单用户、自托管、多资产原生数量账本。V1 不接行情、不把 USDT 当作
-          USD，也不提供跨资产总估值。
+          单用户、自托管、多资产原生数量账本。V2.0 在不改变 V1 事实的前提下，
+          增加 CoinGecko 当前市场价格、ECB 参考汇率与可明确停用的手动价格。
+          USDT/USDC 始终走市场价格，不固定等于 USD。
         </p>
       </section>
     </div>

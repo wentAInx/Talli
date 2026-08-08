@@ -29,6 +29,8 @@ export const eventTypes = [
   "exchange",
 ] as const;
 export const entryRoles = ["main", "source", "destination", "fee"] as const;
+export const priceProviderIds = ["coingecko", "ecb"] as const;
+export const externalQuoteKinds = ["spot", "reference"] as const;
 
 export const books = sqliteTable(
   "books",
@@ -275,6 +277,163 @@ export const appMeta = sqliteTable("app_meta", {
   value: text("value").notNull(),
 });
 
+export const bookValuationSettings = sqliteTable(
+  "book_valuation_settings",
+  {
+    bookId: text("book_id")
+      .primaryKey()
+      .references(() => books.id, { onDelete: "cascade" }),
+    homeAssetId: text("home_asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [index("idx_book_valuation_home_asset").on(table.homeAssetId)],
+);
+
+export const priceProviderMappings = sqliteTable(
+  "price_provider_mappings",
+  {
+    assetId: text("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: priceProviderIds }).notNull(),
+    providerAssetKey: text("provider_asset_key").notNull(),
+    isEnabled: integer("is_enabled", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    priority: integer("priority").notNull().default(100),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.assetId, table.provider] }),
+    index("idx_price_provider_mappings_provider_enabled").on(
+      table.provider,
+      table.isEnabled,
+      table.priority,
+    ),
+    check(
+      "price_provider_mapping_provider_check",
+      sql`${table.provider} in ('coingecko', 'ecb')`,
+    ),
+    check(
+      "price_provider_mapping_enabled_check",
+      sql`${table.isEnabled} in (0, 1)`,
+    ),
+    check(
+      "price_provider_mapping_key_nonempty_check",
+      sql`length(${table.providerAssetKey}) > 0`,
+    ),
+  ],
+);
+
+export const manualPriceQuotes = sqliteTable(
+  "manual_price_quotes",
+  {
+    id: text("id").primaryKey(),
+    baseAssetId: text("base_asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    quoteAssetId: text("quote_asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    rateText: text("rate_text").notNull(),
+    observedAt: text("observed_at").notNull(),
+    note: text("note"),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check(
+      "manual_quote_distinct_assets_check",
+      sql`${table.baseAssetId} <> ${table.quoteAssetId}`,
+    ),
+    check(
+      "manual_quote_rate_nonempty_check",
+      sql`length(${table.rateText}) > 0`,
+    ),
+    check("manual_quote_active_check", sql`${table.isActive} in (0, 1)`),
+    uniqueIndex("manual_price_quotes_one_active_pair")
+      .on(table.baseAssetId, table.quoteAssetId)
+      .where(sql`${table.isActive} = 1`),
+    index("idx_manual_price_quotes_pair_observed").on(
+      table.baseAssetId,
+      table.quoteAssetId,
+      desc(table.observedAt),
+    ),
+  ],
+);
+
+export const latestPriceQuotes = sqliteTable(
+  "latest_price_quotes",
+  {
+    baseAssetId: text("base_asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "cascade" }),
+    quoteAssetId: text("quote_asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: priceProviderIds }).notNull(),
+    quoteKind: text("quote_kind", { enum: externalQuoteKinds }).notNull(),
+    rateText: text("rate_text").notNull(),
+    providerObservedAt: text("provider_observed_at"),
+    providerObservationDate: text("provider_observation_date"),
+    fetchedAt: text("fetched_at").notNull(),
+    sourceMetadataJson: text("source_metadata_json"),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.baseAssetId, table.quoteAssetId, table.provider],
+    }),
+    index("idx_latest_price_quotes_provider_fetched").on(
+      table.provider,
+      desc(table.fetchedAt),
+    ),
+    check(
+      "latest_quote_distinct_assets_check",
+      sql`${table.baseAssetId} <> ${table.quoteAssetId}`,
+    ),
+    check(
+      "latest_quote_provider_check",
+      sql`${table.provider} in ('coingecko', 'ecb')`,
+    ),
+    check(
+      "latest_quote_kind_check",
+      sql`${table.quoteKind} in ('spot', 'reference')`,
+    ),
+    check(
+      "latest_quote_rate_nonempty_check",
+      sql`length(${table.rateText}) > 0`,
+    ),
+    check(
+      "latest_quote_observation_check",
+      sql`${table.providerObservedAt} is not null or ${table.providerObservationDate} is not null`,
+    ),
+  ],
+);
+
+export const priceProviderState = sqliteTable(
+  "price_provider_state",
+  {
+    provider: text("provider", { enum: priceProviderIds }).primaryKey(),
+    lastAttemptAt: text("last_attempt_at"),
+    lastSuccessAt: text("last_success_at"),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    cooldownUntil: text("cooldown_until"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check(
+      "price_provider_state_provider_check",
+      sql`${table.provider} in ('coingecko', 'ecb')`,
+    ),
+  ],
+);
+
 export type BookRow = typeof books.$inferSelect;
 export type AssetRow = typeof assets.$inferSelect;
 export type AccountRow = typeof accounts.$inferSelect;
@@ -283,3 +442,8 @@ export type TagRow = typeof tags.$inferSelect;
 export type LedgerEventRow = typeof ledgerEvents.$inferSelect;
 export type LedgerEntryRow = typeof ledgerEntries.$inferSelect;
 export type BalanceSnapshotRow = typeof balanceSnapshots.$inferSelect;
+export type BookValuationSettingRow = typeof bookValuationSettings.$inferSelect;
+export type PriceProviderMappingRow = typeof priceProviderMappings.$inferSelect;
+export type ManualPriceQuoteRow = typeof manualPriceQuotes.$inferSelect;
+export type LatestPriceQuoteRow = typeof latestPriceQuotes.$inferSelect;
+export type PriceProviderStateRow = typeof priceProviderState.$inferSelect;

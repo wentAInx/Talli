@@ -10,10 +10,13 @@ import { localDateTimeToUtc } from "@/domain/time";
 import {
   AccountService,
   LedgerCommandService,
+  ManualPriceService,
+  ProviderMappingService,
   ReferenceDataService,
   ReconciliationService,
   ServiceError,
   SettingsService,
+  ValuationSettingsService,
 } from "@/services";
 
 import { withDatabase } from "./server-runtime";
@@ -30,7 +33,11 @@ const ERROR_MESSAGES: Record<string, string> = {
   ASSET_NAME_REQUIRED: "资产名称不能为空。",
   ASSET_FACTS_LOCKED: "资产已有账户引用，类型和小数精度不能再修改。",
   ASSET_HAS_ACTIVE_ACCOUNTS: "请先归档该资产下的所有账户。",
+  ASSET_PROVIDER_MAPPING_LOCKED:
+    "该资产已有价格源映射，资产类型必须与映射保持兼容。",
   ASSET_SCALE_INVALID: "资产小数精度必须是 0 到 30 的整数。",
+  ASSET_SEED_DEFINITION_LOCKED:
+    "内置资产的类型与小数精度固定；名称、符号和排序仍可修改。",
   CATEGORY_ARCHIVED: "该分类已归档。",
   CATEGORY_BOOK_MISMATCH: "该分类不属于默认账本。",
   CATEGORY_NAME_REQUIRED: "分类名称不能为空。",
@@ -44,6 +51,22 @@ const ERROR_MESSAGES: Record<string, string> = {
   INVALID_DECIMAL: "金额必须是普通十进制文本，不能包含逗号或科学计数法。",
   INVALID_LOCAL_DATE_TIME: "日期与时间格式无效。",
   INVALID_TIME_ZONE: "App 时区设置无效，请先在设置中修正。",
+  HOME_ASSET_INVALID: "Home Asset 必须是未归档的法币。",
+  HOME_ASSET_ARCHIVE_BLOCKED:
+    "该资产当前是 Home Asset，请先切换估值币种再归档。",
+  HOME_ASSET_NOT_FOUND: "没有找到 Home Asset。",
+  HOME_ASSET_TYPE_LOCKED:
+    "该资产当前是 Home Asset，请先切换估值币种再修改资产类型。",
+  PRICE_PROVIDER_INVALID: "价格源无效。",
+  PROVIDER_ASSET_TYPE_INVALID: "价格源与资产类型不匹配。",
+  PROVIDER_KEY_INVALID: "价格源映射 key 格式无效。",
+  PROVIDER_PRIORITY_INVALID: "价格源优先级必须是整数。",
+  MANUAL_QUOTE_IDENTITY: "手动价格的基础资产和报价资产必须不同。",
+  MANUAL_QUOTE_NOT_FOUND: "没有找到该手动价格。",
+  BASE_ASSET_NOT_FOUND: "没有找到基础资产。",
+  QUOTE_ASSET_NOT_FOUND: "没有找到报价资产。",
+  INVALID_PRICE_DECIMAL:
+    "价格必须是大于 0 的普通十进制文本，不能使用科学计数法。",
   NONEXISTENT_LOCAL_DATE_TIME:
     "该本地时间因夏令时切换而不存在，请选择另一个时间。",
   AMOUNT_NOT_POSITIVE: "金额必须大于 0。",
@@ -625,4 +648,87 @@ export async function updateTimeZoneSettingsAction(
   }
   revalidatePath("/", "layout");
   return { error: null };
+}
+
+export async function updateHomeAssetSettingsAction(
+  _previous: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  try {
+    await withDatabase((context) => {
+      const bookId = new ReferenceDataService(context).getDefaultBookId();
+      return new ValuationSettingsService(context).setHomeAsset(
+        bookId,
+        requiredFormText(formData, "homeAssetId", "Home Asset"),
+      );
+    });
+  } catch (error) {
+    return actionError(error);
+  }
+  revalidateSettingsViews();
+  return { error: null };
+}
+
+export async function updateProviderMappingSettingsAction(
+  assetId: string,
+  provider: string,
+  _previous: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  try {
+    await withDatabase((context) =>
+      new ProviderMappingService(context).update({
+        assetId,
+        provider,
+        providerAssetKey: requiredFormText(
+          formData,
+          "providerAssetKey",
+          "Provider key",
+        ),
+        isEnabled: formData.get("isEnabled") === "on",
+        priority: integerFormValue(formData, "priority", "优先级"),
+      }),
+    );
+  } catch (error) {
+    return actionError(error);
+  }
+  revalidateSettingsViews();
+  return { error: null };
+}
+
+export async function createManualPriceSettingsAction(
+  _previous: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  try {
+    await withDatabase((context) => {
+      const timeZone = new SettingsService(context).getTimeZoneOrDefault();
+      return new ManualPriceService(context).create({
+        baseAssetId: requiredFormText(formData, "baseAssetId", "基础资产"),
+        quoteAssetId: requiredFormText(formData, "quoteAssetId", "报价资产"),
+        rateText: requiredFormText(formData, "rateText", "价格"),
+        observedAt: formInstant(
+          formData,
+          "observedAtLocal",
+          "observedAt",
+          "观察时间",
+          timeZone,
+        ),
+        note: optionalFormText(formData, "note"),
+      });
+    });
+  } catch (error) {
+    return actionError(error);
+  }
+  revalidateSettingsViews();
+  return { error: null };
+}
+
+export async function deactivateManualPriceSettingsAction(
+  id: string,
+): Promise<void> {
+  await withDatabase((context) =>
+    new ManualPriceService(context).deactivate(id),
+  );
+  revalidateSettingsViews();
 }

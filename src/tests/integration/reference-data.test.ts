@@ -130,8 +130,20 @@ describe("reference data settings service", () => {
       .assets.find((asset) => asset.id === cnyId);
     expect(before).toMatchObject({
       factsLocked: false,
+      seedDefinitionLocked: true,
       hasActiveAccounts: false,
     });
+
+    await expect(
+      references.updateAsset(cnyId, {
+        code: "CNY",
+        name: "Chinese Yuan",
+        symbol: "¥",
+        assetType: "fiat",
+        scale: 3,
+        sortOrder: 10,
+      }),
+    ).rejects.toMatchObject({ code: "ASSET_SEED_DEFINITION_LOCKED" });
 
     const accountId = await accounts.createAccount({
       bookId: SEED_BOOK_ID,
