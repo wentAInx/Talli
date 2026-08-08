@@ -1,8 +1,8 @@
 services:
-  asset-ledger:
+  talli:
     build:
       context: .
-    image: asset-ledger:local
+    image: talli:local
     restart: unless-stopped
     environment:
       DATABASE_PATH: /data/finance.db
@@ -21,7 +21,7 @@ services:
       retries: 3
       start_period: 20s
     volumes:
-      - asset-ledger-data:/data
+      - talli-data:/data
 
 volumes:
-  asset-ledger-data:
+  talli-data:

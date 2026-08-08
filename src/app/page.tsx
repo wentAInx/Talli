@@ -8,7 +8,7 @@ import { LedgerReadService, SettingsService } from "@/services";
 import { withDatabase } from "./server-runtime";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "资产总览 | Asset Ledger" };
+export const metadata: Metadata = { title: "资产总览 | Talli" };
 
 export default async function DashboardPage() {
   const queryTime = new Date().toISOString();

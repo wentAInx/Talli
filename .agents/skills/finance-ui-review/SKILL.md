@@ -3,7 +3,7 @@ name: finance-ui-review
 description: Design, implement, or audit UI/UX for this multi-asset ledger: dashboard, transaction entry, accounts, reports, settings, backup, responsive/mobile flows, and exact financial number presentation. Use alongside installed frontend-design/react/web-design skills.
 ---
 
-# Finance UI Review — Multi-Asset Ledger V1
+# Finance UI Review — Talli (Multi-Asset Ledger V1)
 
 Read `06_UI_UX_SPEC_CN.md` before designing a screen. UI must express the domain correctly; visual polish never overrides financial semantics.
 

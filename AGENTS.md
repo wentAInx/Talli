@@ -1,4 +1,4 @@
-# AGENTS.md — Multi-Asset Ledger V1
+# AGENTS.md — Talli (Multi-Asset Ledger V1)
 
 ## Project identity
 

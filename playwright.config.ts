@@ -6,7 +6,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 const e2eDirectory = process.env.E2E_DATABASE_PATH
   ? null
-  : mkdtempSync(join(tmpdir(), "asset-ledger-e2e-"));
+  : mkdtempSync(join(tmpdir(), "talli-e2e-"));
 const e2eDatabasePath =
   process.env.E2E_DATABASE_PATH ?? join(e2eDirectory!, "ledger.sqlite");
 

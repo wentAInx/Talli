@@ -1,6 +1,6 @@
-# Asset Ledger
+# Talli
 
-Asset Ledger is a single-user, self-hosted, multi-asset personal ledger. V1
+Talli is a single-user, self-hosted, multi-asset personal ledger. V1
 stores exact asset quantities and deliberately does not perform market pricing,
 FX conversion, stablecoin assumptions, or cross-asset totals.
 
@@ -60,6 +60,8 @@ All persisted timestamps remain canonical UTC.
   `balanceAtomic` are preserved exactly.
 - `GET /api/data/export.csv` emits one human-readable row per ledger entry.
   CSV is not a restore format.
+- The backup wire identifier remains `multi-asset-ledger-backup` after the
+  Talli rename so existing V1 backups stay compatible.
 - `POST /api/data/restore` supports preview and commit. The complete payload,
   foreign keys, category tree, event roles/signs, and atomic strings are
   validated before any write.

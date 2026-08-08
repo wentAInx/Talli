@@ -14,7 +14,7 @@ export interface TestDatabase {
 }
 
 export function createTestDatabase(): TestDatabase {
-  const directory = mkdtempSync(join(tmpdir(), "asset-ledger-test-"));
+  const directory = mkdtempSync(join(tmpdir(), "talli-test-"));
   const context = openDatabase(join(directory, "ledger.sqlite"));
   migrateDatabase(context);
 

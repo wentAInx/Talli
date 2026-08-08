@@ -37,7 +37,7 @@ test("account, expense, dashboard, edit, and delete stay exact", async ({
   await expect(page.getByTestId("account-balance")).toHaveText("¥1,000.00 CNY");
 
   await page.goto("/transactions/new");
-  await expect(page).toHaveTitle("记一笔 | Asset Ledger");
+  await expect(page).toHaveTitle("记一笔 | Talli");
   for (const label of ["支出", "收入", "转账", "兑换", "调整余额"]) {
     await expect(page.getByRole("tab", { name: label })).toBeVisible();
   }

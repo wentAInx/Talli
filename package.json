@@ -1,9 +1,9 @@
 {
-  "name": "asset-ledger",
+  "name": "talli",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Single-user, self-hosted multi-asset personal ledger.",
+  "description": "Talli is a single-user, self-hosted multi-asset personal ledger.",
   "packageManager": "pnpm@10.11.0",
   "engines": {
     "node": ">=20.9.0"

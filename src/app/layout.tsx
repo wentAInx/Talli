@@ -6,10 +6,10 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "Asset Ledger",
-    template: "%s | Asset Ledger",
+    default: "Talli",
+    template: "%s | Talli",
   },
-  description: "A precise, self-hosted multi-asset personal ledger.",
+  description: "Talli is a precise, self-hosted multi-asset personal ledger.",
 };
 
 export const viewport: Viewport = {

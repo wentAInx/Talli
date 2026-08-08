@@ -1,9 +1,9 @@
 ---
 name: backend-architecture
-description: Design or review backend modules, services, server actions/route handlers, dependency boundaries, transactions, validation, and repository/query structure for this Multi-Asset Ledger V1. Use for backend architecture decisions and refactors; do not use to introduce microservices or generic architecture frameworks.
+description: Design or review backend modules, services, server actions/route handlers, dependency boundaries, transactions, validation, and repository/query structure for Talli, a Multi-Asset Ledger V1. Use for backend architecture decisions and refactors; do not use to introduce microservices or generic architecture frameworks.
 ---
 
-# Backend Architecture — Multi-Asset Ledger V1
+# Backend Architecture — Talli (Multi-Asset Ledger V1)
 
 ## Goal
 

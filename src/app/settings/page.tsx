@@ -453,7 +453,7 @@ export default async function SettingsPage() {
 
       <section className="content-section" id="about">
         <div className="section-heading">
-          <h2>关于 Asset Ledger V1</h2>
+          <h2>关于 Talli V1</h2>
         </div>
         <p className="settings-copy">
           单用户、自托管、多资产原生数量账本。V1 不接行情、不把 USDT 当作

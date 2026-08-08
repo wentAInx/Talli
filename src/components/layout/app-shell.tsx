@@ -11,12 +11,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         跳到主要内容
       </a>
       <aside className="sidebar">
-        <Link className="brand" href="/" aria-label="Asset Ledger 首页">
+        <Link className="brand" href="/" aria-label="Talli 首页">
           <span className="brand-seal" aria-hidden="true">
-            AL
+            T
           </span>
           <span>
-            <strong>Asset Ledger</strong>
+            <strong>Talli</strong>
             <small>原生资产账本</small>
           </span>
         </Link>
