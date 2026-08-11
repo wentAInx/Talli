@@ -19,7 +19,8 @@ export default defineConfig({
   globalTeardown: "./e2e/global-teardown.ts",
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
-  retries: process.env.CI ? 2 : 0,
+  // Tests share one deterministic SQLite fixture, so retries would reuse mutated state.
+  retries: 0,
   workers: 1,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {

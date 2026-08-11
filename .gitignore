@@ -9,7 +9,7 @@ coverage/
 playwright-report/
 test-results/
 *.tsbuildinfo
-data/
+/data/
 *.db
 *.db-shm
 *.db-wal

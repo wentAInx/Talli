@@ -1,4 +1,41 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function expectRestorePreviewToBeReadOnly(page: Page) {
+  const unsupportedMethod = await page.request.get("/api/data/restore");
+  expect(unsupportedMethod.status()).toBe(405);
+
+  const beforeResponse = await page.request.get("/api/data/backup");
+  expect(beforeResponse.ok()).toBe(true);
+  const before = (await beforeResponse.json()) as {
+    schemaVersion: number;
+    data: unknown;
+  };
+
+  const previewResponse = await page.request.post("/api/data/restore", {
+    multipart: {
+      mode: "preview",
+      file: {
+        name: "talli-backup.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(JSON.stringify(before)),
+      },
+    },
+  });
+  expect(previewResponse.status()).toBe(200);
+  expect(await previewResponse.json()).toMatchObject({
+    ok: true,
+    mode: "preview",
+    result: {
+      schemaVersion: 2,
+      target: "seed-only",
+    },
+  });
+
+  const afterResponse = await page.request.get("/api/data/backup");
+  expect(afterResponse.ok()).toBe(true);
+  const after = (await afterResponse.json()) as { data: unknown };
+  expect(after.data).toEqual(before.data);
+}
 
 async function createAccount(
   page: import("@playwright/test").Page,
@@ -19,6 +56,10 @@ test("account, expense, dashboard, edit, and delete stay exact", async ({
   page,
 }, testInfo) => {
   const accountName = `${testInfo.project.name}-支付宝`;
+
+  if (testInfo.project.name === "desktop-chromium") {
+    await expectRestorePreviewToBeReadOnly(page);
+  }
 
   await page.goto("/accounts");
   await expect(page.getByRole("link", { name: "+ 添加账户" })).toBeVisible();
@@ -386,6 +427,12 @@ test("V2 current valuation, manual override, missing state, and refresh UX stay 
   await page.getByLabel("报价资产").selectOption("seed-asset-cny");
   await page.getByLabel("价格（1 BASE = ? QUOTE）").fill("500000");
   await page.getByRole("button", { name: "保存并启用" }).click();
+  const activeManualQuote = page
+    .locator(".manual-quote-row")
+    .filter({ hasText: "1 BTC = 500000 CNY" })
+    .filter({ hasText: "Active · 覆盖自动路径" });
+  await expect(activeManualQuote).toContainText("1 BTC = 500000 CNY");
+  await expect(activeManualQuote).toContainText("Active · 覆盖自动路径");
 
   await page.goto("/");
   await expect(page.getByTestId("asset-group-BTC")).toContainText("手动价格");
@@ -395,11 +442,13 @@ test("V2 current valuation, manual override, missing state, and refresh UX stay 
 
   await page.goto("/settings#valuation");
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "停用" }).first().click();
+  await activeManualQuote.getByRole("button", { name: "停用" }).click();
+  await expect(activeManualQuote).toHaveCount(0);
   const btcMapping = page.getByTestId("mapping-BTC-coingecko");
   await btcMapping.locator("summary").click();
   await btcMapping.getByLabel("启用该映射").uncheck();
   await btcMapping.getByRole("button", { name: "保存映射" }).click();
+  await expect(btcMapping.locator("summary")).toContainText("已停用");
 
   await page.goto("/");
   await expect(page.getByTestId("valuation-card")).toContainText("估值不完整");
@@ -410,6 +459,7 @@ test("V2 current valuation, manual override, missing state, and refresh UX stay 
   await disabledBtcMapping.locator("summary").click();
   await disabledBtcMapping.getByLabel("启用该映射").check();
   await disabledBtcMapping.getByRole("button", { name: "保存映射" }).click();
+  await expect(disabledBtcMapping.locator("summary")).toContainText("已启用");
 
   await page.goto("/");
   await expect(page.getByTestId("asset-group-BTC")).toContainText(
