@@ -8,6 +8,7 @@ const items = [
   { href: "/transactions", label: "流水", mark: "流" },
   { href: "/reports", label: "报表", mark: "报" },
   { href: "/accounts", label: "账户", mark: "账" },
+  { href: "/sync", label: "同步", mark: "同" },
   { href: "/settings", label: "设置", mark: "设" },
 ] as const;
 
@@ -48,13 +49,15 @@ export function MobileHeader() {
         ? "编辑流水"
         : pathname.startsWith("/reports")
           ? "报表"
-          : pathname.startsWith("/settings")
-            ? "设置"
-            : pathname.startsWith("/accounts")
-              ? "账户"
-              : pathname.startsWith("/transactions")
-                ? "流水"
-                : "资产总览";
+          : pathname.startsWith("/sync")
+            ? "外部同步"
+            : pathname.startsWith("/settings")
+              ? "设置"
+              : pathname.startsWith("/accounts")
+                ? "账户"
+                : pathname.startsWith("/transactions")
+                  ? "流水"
+                  : "资产总览";
   return (
     <>
       <span>{title}</span>

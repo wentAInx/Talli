@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "provider": "kraken",
+  "apiKeyInfo": {
+    "permissions": [
+      "query-funds",
+      "query-ledger",
+      "query-closed-trades"
+    ]
+  },
+  "referenceData": {
+    "rawToDisplay": {
+      "XXBT": "BTC",
+      "ZUSD": "USD",
+      "USDT": "USDT",
+      "USDT.F": "USDT.F"
+    },
+    "assetPairsDisplay": {
+      "BTC/USD": {
+        "base": "BTC",
+        "quote": "USD",
+        "fee_volume_currency": "USD"
+      }
+    }
+  },
+  "balances": {
+    "XXBT": "0.50200000",
+    "ZUSD": "1250.1000",
+    "USDT": "100.00000000",
+    "USDT.F": "5.00000000"
+  },
+  "ledgers": {
+    "L-TRADE-1": {
+      "refid": "T-TRADE-1",
+      "time": "1786440000.1000",
+      "type": "trade",
+      "subtype": "",
+      "asset": "ZUSD",
+      "amount": "-100.0000",
+      "fee": "0.2500",
+      "balance": "1150.1000"
+    },
+    "L-DEPOSIT-1": {
+      "refid": "D-DEPOSIT-1",
+      "time": "1786430000.0000",
+      "type": "deposit",
+      "subtype": "",
+      "asset": "USDT",
+      "amount": "50.00000000",
+      "fee": "0.00000000",
+      "balance": "100.00000000"
+    }
+  },
+  "trades": {
+    "T-TRADE-1": {
+      "ordertxid": "O-ORDER-1",
+      "postxid": "P-POS-1",
+      "pair": "BTC/USD",
+      "time": "1786440000.1000",
+      "type": "buy",
+      "price": "68965.517241",
+      "cost": "100.0000",
+      "fee": "0.2500",
+      "vol": "0.00145000"
+    }
+  }
+}

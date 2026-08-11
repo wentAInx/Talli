@@ -53,6 +53,12 @@ export interface BackupSummary {
   valuationSettings: number;
   providerMappings: number;
   manualQuotes: number;
+  externalConnections: number;
+  externalMappings: number;
+  externalObservations: number;
+  externalSources: number;
+  externalCandidates: number;
+  externalImportLinks: number;
 }
 
 export interface RestorePreview {
@@ -76,6 +82,13 @@ function summary(data: BackupData): BackupSummary {
     valuationSettings: data.bookValuationSettings.length,
     providerMappings: data.priceProviderMappings.length,
     manualQuotes: data.manualPriceQuotes.length,
+    externalConnections: data.externalConnections.length,
+    externalMappings:
+      data.externalAssetMappings.length + data.externalAccountMappings.length,
+    externalObservations: data.externalBalanceObservations.length,
+    externalSources: data.externalSourceObjects.length,
+    externalCandidates: data.externalTransactionCandidates.length,
+    externalImportLinks: data.externalImportLinks.length,
   };
 }
 
@@ -120,6 +133,15 @@ function targetKind(executor: DatabaseExecutor): "empty" | "seed-only" {
     data.eventTags.length === 0 &&
     data.balanceSnapshots.length === 0 &&
     data.manualPriceQuotes.length === 0 &&
+    data.externalConnections.length === 0 &&
+    data.externalAssetMappings.length === 0 &&
+    data.externalAccountMappings.length === 0 &&
+    data.externalBalanceObservations.length === 0 &&
+    data.externalSourceObjects.length === 0 &&
+    data.externalTransactionCandidates.length === 0 &&
+    data.externalCandidateSourceObjects.length === 0 &&
+    data.externalTransactionLegs.length === 0 &&
+    data.externalImportLinks.length === 0 &&
     targetTimeZoneOnly(data);
 
   if (

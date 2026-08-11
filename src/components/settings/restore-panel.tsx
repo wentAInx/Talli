@@ -20,6 +20,12 @@ interface RestoreResult {
     valuationSettings: number;
     providerMappings: number;
     manualQuotes: number;
+    externalConnections: number;
+    externalMappings: number;
+    externalObservations: number;
+    externalSources: number;
+    externalCandidates: number;
+    externalImportLinks: number;
   };
 }
 
@@ -98,7 +104,9 @@ export function RestorePanel() {
             required
             type="file"
           />
-          <small>最大 50 MB。兼容 V1 备份；预览不会写入数据库。</small>
+          <small>
+            最大 50 MB。兼容 V1 / V2 / V3 备份；预览不会写入数据库。
+          </small>
         </label>
         <button className="secondary-button" disabled={pending} type="submit">
           {pending ? "正在校验…" : "校验并预览"}
@@ -146,6 +154,17 @@ export function RestorePanel() {
             <div>
               <dt>手动价格</dt>
               <dd>{preview.summary.manualQuotes}</dd>
+            </div>
+            <div>
+              <dt>外部连接 / 候选</dt>
+              <dd>
+                {preview.summary.externalConnections} /{" "}
+                {preview.summary.externalCandidates}
+              </dd>
+            </div>
+            <div>
+              <dt>已导入候选</dt>
+              <dd>{preview.summary.externalImportLinks}</dd>
             </div>
           </dl>
           {complete ? (

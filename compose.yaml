@@ -8,6 +8,8 @@ services:
       DATABASE_PATH: /data/finance.db
       COINGECKO_MODE: ${COINGECKO_MODE:-demo}
       COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
+      KRAKEN_API_KEY: ${KRAKEN_API_KEY:-}
+      KRAKEN_API_SECRET: ${KRAKEN_API_SECRET:-}
     ports:
       - "${PORT:-3000}:3000"
     healthcheck:

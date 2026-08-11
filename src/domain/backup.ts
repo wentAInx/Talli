@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { z } from "zod";
 
 import {
@@ -7,12 +9,17 @@ import {
   buildTransferEntries,
 } from "./ledger";
 import { normalizePositiveDecimalText } from "./price-decimal";
+import {
+  externalDecimalToAtomic,
+  validatedExternalDecimalText,
+} from "./external-sync";
 import { assertIanaTimeZone, canonicalUtcInstantValue } from "./time";
 import type { LedgerEntryDraft } from "./types";
 
 export const BACKUP_FORMAT = "multi-asset-ledger-backup";
 export const BACKUP_LEGACY_SCHEMA_VERSION = 1;
-export const BACKUP_SCHEMA_VERSION = 2;
+export const BACKUP_V2_SCHEMA_VERSION = 2;
+export const BACKUP_SCHEMA_VERSION = 3;
 
 export class BackupValidationError extends Error {
   constructor(
@@ -45,6 +52,29 @@ const jsonText = z.string().refine((value) => {
     return false;
   }
 }, "Setting valueJson must contain valid JSON.");
+const optionalJsonText = z
+  .string()
+  .nullable()
+  .refine((value) => {
+    if (value === null) return true;
+    try {
+      JSON.parse(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }, "Provider metadata must contain valid JSON.");
+const externalDecimalText = z.string().refine((value) => {
+  try {
+    validatedExternalDecimalText(value);
+    return true;
+  } catch {
+    return false;
+  }
+}, "External amount must be plain decimal text.");
+const sha256Text = z
+  .string()
+  .regex(/^[0-9a-f]{64}$/, "Fingerprint must be lowercase SHA-256 hex text.");
 
 const bookSchema = z
   .object({
@@ -211,6 +241,146 @@ const manualPriceQuoteSchema = z
   })
   .strict();
 
+const externalConnectionSchema = z
+  .object({
+    id,
+    bookId: id,
+    provider: z.literal("kraken"),
+    name: z.string(),
+    credentialRef: z
+      .string()
+      .refine(
+        (value): boolean => value === "env:kraken.primary",
+        "Only the opaque Kraken environment credential reference is allowed.",
+      ),
+    isEnabled: z.boolean(),
+    createdAt: canonicalInstant,
+    updatedAt: canonicalInstant,
+  })
+  .strict();
+
+const externalAssetMappingSchema = z
+  .object({
+    connectionId: id,
+    providerAssetKey: id,
+    providerDisplayCode: nullableText,
+    talliAssetId: id.nullable(),
+    mappingStatus: z.enum(["mapped", "unmapped", "ignored"]),
+    providerMetadataJson: optionalJsonText,
+    createdAt: canonicalInstant,
+    updatedAt: canonicalInstant,
+  })
+  .strict();
+
+const externalAccountMappingSchema = z
+  .object({
+    connectionId: id,
+    providerAssetKey: id,
+    talliAccountId: id,
+    isEnabled: z.boolean(),
+    createdAt: canonicalInstant,
+    updatedAt: canonicalInstant,
+  })
+  .strict();
+
+const externalBalanceObservationSchema = z
+  .object({
+    id,
+    connectionId: id,
+    providerAssetKey: id,
+    talliAssetId: id.nullable(),
+    providerAmountText: externalDecimalText,
+    mappedAmountAtomic: atomicText.nullable(),
+    precisionStatus: z.enum(["exact", "excess_precision", "unmapped"]),
+    observedAt: canonicalInstant,
+    payloadHash: sha256Text,
+    createdAt: canonicalInstant,
+  })
+  .strict();
+
+const externalSourceObjectSchema = z
+  .object({
+    id,
+    connectionId: id,
+    objectType: z.enum(["kraken_ledger", "kraken_trade"]),
+    externalId: id,
+    occurredAt: canonicalInstant,
+    payloadJson: jsonText,
+    payloadHash: sha256Text,
+    firstSeenAt: canonicalInstant,
+    lastSeenAt: canonicalInstant,
+  })
+  .strict();
+
+const externalTransactionCandidateSchema = z
+  .object({
+    id,
+    connectionId: id,
+    stableKey: id,
+    suggestedEventType: z.enum([
+      "exchange",
+      "transfer",
+      "income",
+      "expense",
+      "unknown",
+    ]),
+    status: z.enum([
+      "pending",
+      "needs_mapping",
+      "ignored",
+      "imported",
+      "unsupported",
+      "source_changed",
+    ]),
+    occurredAt: canonicalInstant,
+    title: z.string(),
+    normalizationVersion: z.number().int().positive(),
+    sourceFingerprint: sha256Text,
+    createdAt: canonicalInstant,
+    updatedAt: canonicalInstant,
+    lastSeenAt: canonicalInstant,
+  })
+  .strict();
+
+const externalCandidateSourceObjectSchema = z
+  .object({
+    candidateId: id,
+    sourceObjectId: id,
+    relation: z.enum(["primary", "cross_check"]),
+  })
+  .strict();
+
+const externalTransactionLegSchema = z
+  .object({
+    id,
+    candidateId: id,
+    legIndex: z.number().int().nonnegative(),
+    role: z.enum([
+      "source",
+      "destination",
+      "fee",
+      "external_in",
+      "external_out",
+      "unknown",
+    ]),
+    providerAssetKey: id,
+    talliAssetId: id.nullable(),
+    amountText: externalDecimalText,
+    amountAtomic: atomicText.nullable(),
+    precisionStatus: z.enum(["exact", "excess_precision", "unmapped"]),
+    note: nullableText,
+  })
+  .strict();
+
+const externalImportLinkSchema = z
+  .object({
+    candidateId: id,
+    ledgerEventId: id,
+    importedAt: canonicalInstant,
+    importFingerprint: sha256Text,
+  })
+  .strict();
+
 const v1DataSchema = z
   .object({
     books: z.array(bookSchema),
@@ -234,6 +404,22 @@ const v2DataSchema = v1DataSchema
   })
   .strict();
 
+const v3DataSchema = v2DataSchema
+  .extend({
+    externalConnections: z.array(externalConnectionSchema),
+    externalAssetMappings: z.array(externalAssetMappingSchema),
+    externalAccountMappings: z.array(externalAccountMappingSchema),
+    externalBalanceObservations: z.array(externalBalanceObservationSchema),
+    externalSourceObjects: z.array(externalSourceObjectSchema),
+    externalTransactionCandidates: z.array(externalTransactionCandidateSchema),
+    externalCandidateSourceObjects: z.array(
+      externalCandidateSourceObjectSchema,
+    ),
+    externalTransactionLegs: z.array(externalTransactionLegSchema),
+    externalImportLinks: z.array(externalImportLinkSchema),
+  })
+  .strict();
+
 const legacyBackupPayloadSchema = z
   .object({
     format: z.literal(BACKUP_FORMAT),
@@ -243,18 +429,28 @@ const legacyBackupPayloadSchema = z
   })
   .strict();
 
+const v2BackupPayloadSchema = z
+  .object({
+    format: z.literal(BACKUP_FORMAT),
+    schemaVersion: z.literal(BACKUP_V2_SCHEMA_VERSION),
+    exportedAt: canonicalInstant,
+    data: v2DataSchema,
+  })
+  .strict();
+
 export const backupPayloadSchema = z
   .object({
     format: z.literal(BACKUP_FORMAT),
     schemaVersion: z.literal(BACKUP_SCHEMA_VERSION),
     exportedAt: canonicalInstant,
-    data: v2DataSchema,
+    data: v3DataSchema,
   })
   .strict();
 
 export type BackupPayload = z.infer<typeof backupPayloadSchema>;
 export type BackupData = BackupPayload["data"];
 type LegacyBackupPayload = z.infer<typeof legacyBackupPayloadSchema>;
+type V2BackupPayload = z.infer<typeof v2BackupPayloadSchema>;
 
 function fail(code: string, message: string): never {
   throw new BackupValidationError(code, message);
@@ -399,6 +595,326 @@ function validateEventEntries(data: BackupData): void {
       fail(
         "BACKUP_EVENT_INVARIANT",
         `Event ${event.id} entries do not match its ledger invariants.`,
+      );
+    }
+  }
+}
+
+function validateExternalAmount(input: {
+  amountText: string;
+  amountAtomic: string | null;
+  precisionStatus: "exact" | "excess_precision" | "unmapped";
+  talliAssetId: string | null;
+  assets: ReadonlyMap<string, BackupData["assets"][number]>;
+  label: string;
+}): void {
+  const asset = input.talliAssetId
+    ? input.assets.get(input.talliAssetId)
+    : undefined;
+  if (input.talliAssetId && !asset) {
+    fail(
+      "BACKUP_EXTERNAL_RELATION",
+      `${input.label} references a missing Talli asset.`,
+    );
+  }
+  const conversion = externalDecimalToAtomic(
+    input.amountText,
+    asset?.scale ?? null,
+  );
+  if (
+    conversion.precisionStatus !== input.precisionStatus ||
+    (conversion.amountAtomic === null
+      ? input.amountAtomic !== null
+      : input.amountAtomic === null ||
+        conversion.amountAtomic !== BigInt(input.amountAtomic))
+  ) {
+    fail(
+      "BACKUP_EXTERNAL_AMOUNT_INVALID",
+      `${input.label} has inconsistent decimal, atomic, asset, or precision data.`,
+    );
+  }
+}
+
+function validateExternalRelations(data: BackupData): void {
+  uniqueBy(data.externalConnections, (row) => row.id, "external connection id");
+  uniqueBy(
+    data.externalConnections,
+    (row) => `${row.bookId}\u0000${row.provider}\u0000${row.credentialRef}`,
+    "external connection identity",
+  );
+  uniqueBy(
+    data.externalAssetMappings,
+    (row) => `${row.connectionId}\u0000${row.providerAssetKey}`,
+    "external asset mapping",
+  );
+  uniqueBy(
+    data.externalAccountMappings,
+    (row) => `${row.connectionId}\u0000${row.providerAssetKey}`,
+    "external account mapping",
+  );
+  uniqueBy(
+    data.externalAccountMappings,
+    (row) => row.talliAccountId,
+    "externally mapped Talli account",
+  );
+  uniqueBy(
+    data.externalBalanceObservations,
+    (row) => row.id,
+    "external balance observation id",
+  );
+  uniqueBy(data.externalSourceObjects, (row) => row.id, "external source id");
+  uniqueBy(
+    data.externalSourceObjects,
+    (row) =>
+      `${row.connectionId}\u0000${row.objectType}\u0000${row.externalId}`,
+    "external source identity",
+  );
+  uniqueBy(
+    data.externalTransactionCandidates,
+    (row) => row.id,
+    "external candidate id",
+  );
+  uniqueBy(
+    data.externalTransactionCandidates,
+    (row) => `${row.connectionId}\u0000${row.stableKey}`,
+    "external candidate stable key",
+  );
+  uniqueBy(
+    data.externalCandidateSourceObjects,
+    (row) => `${row.candidateId}\u0000${row.sourceObjectId}`,
+    "candidate source link",
+  );
+  uniqueBy(data.externalTransactionLegs, (row) => row.id, "candidate leg id");
+  uniqueBy(
+    data.externalTransactionLegs,
+    (row) => `${row.candidateId}\u0000${row.legIndex}`,
+    "candidate leg index",
+  );
+  uniqueBy(
+    data.externalImportLinks,
+    (row) => row.candidateId,
+    "candidate import link",
+  );
+  uniqueBy(
+    data.externalImportLinks,
+    (row) => row.ledgerEventId,
+    "imported ledger event",
+  );
+
+  const books = new Map(data.books.map((row) => [row.id, row]));
+  const assets = new Map(data.assets.map((row) => [row.id, row]));
+  const accounts = new Map(data.accounts.map((row) => [row.id, row]));
+  const events = new Map(data.ledgerEvents.map((row) => [row.id, row]));
+  const connections = new Map(
+    data.externalConnections.map((row) => [row.id, row]),
+  );
+  const mappingKey = (connectionId: string, providerAssetKey: string) =>
+    `${connectionId}\u0000${providerAssetKey}`;
+  const mappings = new Map(
+    data.externalAssetMappings.map((row) => [
+      mappingKey(row.connectionId, row.providerAssetKey),
+      row,
+    ]),
+  );
+  const sources = new Map(
+    data.externalSourceObjects.map((row) => [row.id, row]),
+  );
+  const candidates = new Map(
+    data.externalTransactionCandidates.map((row) => [row.id, row]),
+  );
+  const importLinks = new Map(
+    data.externalImportLinks.map((row) => [row.candidateId, row]),
+  );
+
+  for (const connection of data.externalConnections) {
+    if (!books.has(connection.bookId)) {
+      fail(
+        "BACKUP_EXTERNAL_RELATION",
+        `External connection ${connection.id} references a missing book.`,
+      );
+    }
+  }
+  for (const mapping of data.externalAssetMappings) {
+    if (!connections.has(mapping.connectionId)) {
+      fail(
+        "BACKUP_EXTERNAL_RELATION",
+        `External asset mapping ${mapping.providerAssetKey} references a missing connection.`,
+      );
+    }
+    if (
+      (mapping.mappingStatus === "mapped" &&
+        (!mapping.talliAssetId || !assets.has(mapping.talliAssetId))) ||
+      (mapping.mappingStatus !== "mapped" && mapping.talliAssetId !== null)
+    ) {
+      fail(
+        "BACKUP_EXTERNAL_MAPPING_INVALID",
+        `External asset mapping ${mapping.providerAssetKey} has inconsistent status or asset.`,
+      );
+    }
+  }
+  for (const mapping of data.externalAccountMappings) {
+    const assetMapping = mappings.get(
+      mappingKey(mapping.connectionId, mapping.providerAssetKey),
+    );
+    const connection = connections.get(mapping.connectionId);
+    const account = accounts.get(mapping.talliAccountId);
+    if (
+      !assetMapping ||
+      assetMapping.mappingStatus !== "mapped" ||
+      !assetMapping.talliAssetId ||
+      !connection ||
+      !account ||
+      account.bookId !== connection.bookId ||
+      account.assetId !== assetMapping.talliAssetId
+    ) {
+      fail(
+        "BACKUP_EXTERNAL_ACCOUNT_MAPPING_INVALID",
+        `External account mapping ${mapping.providerAssetKey} is incompatible.`,
+      );
+    }
+  }
+  for (const observation of data.externalBalanceObservations) {
+    if (
+      !mappings.has(
+        mappingKey(observation.connectionId, observation.providerAssetKey),
+      )
+    ) {
+      fail(
+        "BACKUP_EXTERNAL_RELATION",
+        `External observation ${observation.id} references a missing mapping.`,
+      );
+    }
+    validateExternalAmount({
+      amountText: observation.providerAmountText,
+      amountAtomic: observation.mappedAmountAtomic,
+      precisionStatus: observation.precisionStatus,
+      talliAssetId: observation.talliAssetId,
+      assets,
+      label: `External observation ${observation.id}`,
+    });
+  }
+  for (const source of data.externalSourceObjects) {
+    if (!connections.has(source.connectionId)) {
+      fail(
+        "BACKUP_EXTERNAL_RELATION",
+        `External source ${source.id} references a missing connection.`,
+      );
+    }
+    const hash = createHash("sha256").update(source.payloadJson).digest("hex");
+    if (hash !== source.payloadHash) {
+      fail(
+        "BACKUP_EXTERNAL_SOURCE_HASH_INVALID",
+        `External source ${source.id} payload hash does not match.`,
+      );
+    }
+  }
+  for (const candidate of data.externalTransactionCandidates) {
+    if (!connections.has(candidate.connectionId)) {
+      fail(
+        "BACKUP_EXTERNAL_RELATION",
+        `External candidate ${candidate.id} references a missing connection.`,
+      );
+    }
+    const linked = data.externalCandidateSourceObjects.filter(
+      (link) => link.candidateId === candidate.id,
+    );
+    if (linked.filter((link) => link.relation === "primary").length !== 1) {
+      fail(
+        "BACKUP_EXTERNAL_CANDIDATE_INVALID",
+        `External candidate ${candidate.id} must have exactly one primary source.`,
+      );
+    }
+    const linkedSources = linked.map((link) =>
+      sources.get(link.sourceObjectId),
+    );
+    if (
+      linkedSources.some(
+        (source) => !source || source.connectionId !== candidate.connectionId,
+      )
+    ) {
+      fail(
+        "BACKUP_EXTERNAL_RELATION",
+        `External candidate ${candidate.id} has a missing or cross-connection source.`,
+      );
+    }
+    const fingerprint = createHash("sha256")
+      .update(
+        linkedSources
+          .map((source) => source!)
+          .map(
+            (source) =>
+              `${source.objectType}:${source.externalId}:${source.payloadHash}`,
+          )
+          .sort()
+          .join("\n"),
+      )
+      .digest("hex");
+    if (fingerprint !== candidate.sourceFingerprint) {
+      fail(
+        "BACKUP_EXTERNAL_CANDIDATE_FINGERPRINT_INVALID",
+        `External candidate ${candidate.id} source fingerprint does not match.`,
+      );
+    }
+    const hasImport = importLinks.has(candidate.id);
+    if (
+      (candidate.status === "imported" ||
+        candidate.status === "source_changed") !== hasImport
+    ) {
+      fail(
+        "BACKUP_EXTERNAL_IMPORT_STATE_INVALID",
+        `External candidate ${candidate.id} import status and provenance disagree.`,
+      );
+    }
+  }
+  for (const link of data.externalCandidateSourceObjects) {
+    const candidate = candidates.get(link.candidateId);
+    const source = sources.get(link.sourceObjectId);
+    if (
+      !candidate ||
+      !source ||
+      candidate.connectionId !== source.connectionId
+    ) {
+      fail(
+        "BACKUP_EXTERNAL_RELATION",
+        "External candidate source link is missing or crosses connections.",
+      );
+    }
+  }
+  for (const leg of data.externalTransactionLegs) {
+    const candidate = candidates.get(leg.candidateId);
+    if (
+      !candidate ||
+      !mappings.has(mappingKey(candidate.connectionId, leg.providerAssetKey))
+    ) {
+      fail(
+        "BACKUP_EXTERNAL_RELATION",
+        `External candidate leg ${leg.id} references a missing candidate or mapping.`,
+      );
+    }
+    validateExternalAmount({
+      amountText: leg.amountText,
+      amountAtomic: leg.amountAtomic,
+      precisionStatus: leg.precisionStatus,
+      talliAssetId: leg.talliAssetId,
+      assets,
+      label: `External candidate leg ${leg.id}`,
+    });
+  }
+  for (const link of data.externalImportLinks) {
+    const candidate = candidates.get(link.candidateId);
+    const event = events.get(link.ledgerEventId);
+    const connection = candidate
+      ? connections.get(candidate.connectionId)
+      : undefined;
+    if (
+      !candidate ||
+      !event ||
+      !connection ||
+      event.bookId !== connection.bookId
+    ) {
+      fail(
+        "BACKUP_EXTERNAL_IMPORT_INVALID",
+        `External import link for candidate ${link.candidateId} is invalid.`,
       );
     }
   }
@@ -650,6 +1166,7 @@ function validateRelations(data: BackupData): void {
     }
   }
   validateEventEntries(data);
+  validateExternalRelations(data);
 }
 
 const LEGACY_PROVIDER_MAPPINGS = [
@@ -664,7 +1181,7 @@ const LEGACY_PROVIDER_MAPPINGS = [
   ["SOL", "crypto", "coingecko", "solana"],
 ] as const;
 
-function upgradeLegacyBackup(payload: LegacyBackupPayload): BackupPayload {
+function upgradeLegacyBackup(payload: LegacyBackupPayload): V2BackupPayload {
   const defaultBook = payload.data.books.find((book) => book.isDefault);
   const activeFiat = payload.data.assets
     .filter((asset) => asset.assetType === "fiat" && !asset.isArchived)
@@ -704,7 +1221,7 @@ function upgradeLegacyBackup(payload: LegacyBackupPayload): BackupPayload {
   }
   return {
     format: BACKUP_FORMAT,
-    schemaVersion: BACKUP_SCHEMA_VERSION,
+    schemaVersion: BACKUP_V2_SCHEMA_VERSION,
     exportedAt: payload.exportedAt,
     data: {
       ...payload.data,
@@ -725,6 +1242,25 @@ function upgradeLegacyBackup(payload: LegacyBackupPayload): BackupPayload {
   };
 }
 
+function upgradeV2Backup(payload: V2BackupPayload): BackupPayload {
+  return {
+    ...payload,
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    data: {
+      ...payload.data,
+      externalConnections: [],
+      externalAssetMappings: [],
+      externalAccountMappings: [],
+      externalBalanceObservations: [],
+      externalSourceObjects: [],
+      externalTransactionCandidates: [],
+      externalCandidateSourceObjects: [],
+      externalTransactionLegs: [],
+      externalImportLinks: [],
+    },
+  };
+}
+
 function schemaFailure(result: z.ZodSafeParseError<unknown>): never {
   const issue = result.error.issues[0];
   throw new BackupValidationError(
@@ -740,19 +1276,22 @@ export function parseBackupPayload(value: unknown): BackupPayload {
     value && typeof value === "object" && "schemaVersion" in value
       ? (value as { schemaVersion?: unknown }).schemaVersion
       : undefined;
-  let result: ReturnType<typeof backupPayloadSchema.safeParse>;
+  let normalized: BackupPayload;
   if (schemaVersion === BACKUP_LEGACY_SCHEMA_VERSION) {
     const legacy = legacyBackupPayloadSchema.safeParse(value);
     if (!legacy.success) schemaFailure(legacy);
-    result = backupPayloadSchema.safeParse(upgradeLegacyBackup(legacy.data));
+    normalized = upgradeV2Backup(upgradeLegacyBackup(legacy.data));
+  } else if (schemaVersion === BACKUP_V2_SCHEMA_VERSION) {
+    const v2 = v2BackupPayloadSchema.safeParse(value);
+    if (!v2.success) schemaFailure(v2);
+    normalized = upgradeV2Backup(v2.data);
   } else {
-    result = backupPayloadSchema.safeParse(value);
+    const v3 = backupPayloadSchema.safeParse(value);
+    if (!v3.success) schemaFailure(v3);
+    normalized = v3.data;
   }
-  if (!result.success) {
-    schemaFailure(result);
-  }
-  validateRelations(result.data.data);
-  return result.data;
+  validateRelations(normalized.data);
+  return normalized;
 }
 
 export function categoriesParentFirst(

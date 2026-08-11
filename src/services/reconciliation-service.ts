@@ -1,6 +1,6 @@
 import { parseDecimalToAtomic } from "../domain/money";
 import { atomicToDb } from "../db/atomic";
-import type { DatabaseContext } from "../db/connection";
+import type { DatabaseContext, DatabaseExecutor } from "../db/connection";
 import {
   deleteSnapshot,
   findAccountWithAsset,
@@ -19,6 +19,46 @@ import {
 } from "./runtime";
 import { canonicalTimestamp, optionalText } from "./validation";
 
+export function createSnapshotIn(
+  executor: DatabaseExecutor,
+  runtime: ServiceRuntime,
+  input: ReconcileInput,
+): string {
+  const account = findAccountWithAsset(executor, input.accountId);
+  assertService(account, "ACCOUNT_NOT_FOUND", "Account was not found.");
+  assertService(
+    !account.account.isArchived,
+    "ACCOUNT_ARCHIVED",
+    "Archived account cannot be reconciled.",
+  );
+  assertService(
+    !account.asset.isArchived,
+    "ASSET_ARCHIVED",
+    "Archived asset cannot be reconciled.",
+  );
+
+  const asOf = canonicalTimestamp(input.asOf);
+  assertService(
+    !findSnapshotAtTime(executor, input.accountId, asOf),
+    "SNAPSHOT_TIME_CONFLICT",
+    "A snapshot already exists for this account at the same instant.",
+  );
+  const now = runtimeNow(runtime);
+  const snapshotId = runtime.id();
+  insertSnapshot(executor, {
+    id: snapshotId,
+    accountId: input.accountId,
+    asOf,
+    balanceAtomic: atomicToDb(
+      parseDecimalToAtomic(input.actualBalance, account.asset.scale),
+    ),
+    note: optionalText(input.note),
+    createdAt: now,
+    updatedAt: now,
+  });
+  return snapshotId;
+}
+
 export class ReconciliationService {
   constructor(
     private readonly context: DatabaseContext,
@@ -27,41 +67,7 @@ export class ReconciliationService {
 
   async reconcile(input: ReconcileInput): Promise<string> {
     const id = this.context.db.transaction(
-      (transaction) => {
-        const account = findAccountWithAsset(transaction, input.accountId);
-        assertService(account, "ACCOUNT_NOT_FOUND", "Account was not found.");
-        assertService(
-          !account.account.isArchived,
-          "ACCOUNT_ARCHIVED",
-          "Archived account cannot be reconciled.",
-        );
-        assertService(
-          !account.asset.isArchived,
-          "ASSET_ARCHIVED",
-          "Archived asset cannot be reconciled.",
-        );
-
-        const asOf = canonicalTimestamp(input.asOf);
-        assertService(
-          !findSnapshotAtTime(transaction, input.accountId, asOf),
-          "SNAPSHOT_TIME_CONFLICT",
-          "A snapshot already exists for this account at the same instant.",
-        );
-        const now = runtimeNow(this.runtime);
-        const snapshotId = this.runtime.id();
-        insertSnapshot(transaction, {
-          id: snapshotId,
-          accountId: input.accountId,
-          asOf,
-          balanceAtomic: atomicToDb(
-            parseDecimalToAtomic(input.actualBalance, account.asset.scale),
-          ),
-          note: optionalText(input.note),
-          createdAt: now,
-          updatedAt: now,
-        });
-        return snapshotId;
-      },
+      (transaction) => createSnapshotIn(transaction, this.runtime, input),
       { behavior: "immediate" },
     );
 

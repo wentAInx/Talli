@@ -13,7 +13,7 @@ export async function GET() {
   return new Response(`${JSON.stringify(payload, null, 2)}\n`, {
     headers: {
       "Cache-Control": "no-store",
-      "Content-Disposition": `attachment; filename="talli-backup-v2-${date}.json"`,
+      "Content-Disposition": `attachment; filename="talli-backup-v3-${date}.json"`,
       "Content-Type": "application/json; charset=utf-8",
     },
   });

@@ -23,6 +23,8 @@ env:
   CI: "true"
   COINGECKO_MODE: demo
   COINGECKO_API_KEY: ""
+  KRAKEN_API_KEY: ""
+  KRAKEN_API_SECRET: ""
 
 jobs:
   quality:
@@ -68,6 +70,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Check external sync security boundaries
+        run: pnpm security:check
+
   e2e:
     name: Playwright E2E
     needs: quality
@@ -104,6 +109,7 @@ jobs:
           name: playwright-failure-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             playwright-report/
+            playwright-report-sync/
             test-results/
           if-no-files-found: ignore
           retention-days: 7

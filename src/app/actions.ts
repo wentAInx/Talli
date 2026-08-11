@@ -9,6 +9,7 @@ import { DomainValidationError } from "@/domain/errors";
 import { localDateTimeToUtc } from "@/domain/time";
 import {
   AccountService,
+  ExternalMappingService,
   LedgerCommandService,
   ManualPriceService,
   ProviderMappingService,
@@ -72,6 +73,13 @@ const ERROR_MESSAGES: Record<string, string> = {
   AMOUNT_NOT_POSITIVE: "金额必须大于 0。",
   EXCHANGE_ASSET_MATCH: "兑换必须发生在两种不同资产之间。",
   EXCHANGE_SAME_ACCOUNT: "兑换的卖出与买入账户必须不同。",
+  EXTERNAL_ACCOUNT_ALREADY_MAPPED: "该 Talli 账户已用于另一个外部映射。",
+  EXTERNAL_ACCOUNT_ASSET_MISMATCH: "Talli 账户资产必须与所选资产一致。",
+  EXTERNAL_ACCOUNT_BOOK_MISMATCH: "Talli 账户必须属于当前外部连接的账本。",
+  EXTERNAL_ACCOUNT_REQUIRED: "映射时必须选择一个 Talli 账户。",
+  EXTERNAL_ASSET_REQUIRED: "映射时必须选择一个 Talli 资产。",
+  EXTERNAL_ASSET_MAPPING_NOT_FOUND: "请先同步 Kraken 资产再设置映射。",
+  EXTERNAL_CONNECTION_NOT_FOUND: "没有找到 Kraken 外部连接。",
   SNAPSHOT_TIME_CONFLICT: "该账户在同一时刻已经存在余额锚点。",
   TAG_ARCHIVED: "选择的标签已归档。",
   TAG_NAME_REQUIRED: "标签名称不能为空。",
@@ -731,4 +739,53 @@ export async function deactivateManualPriceSettingsAction(
     new ManualPriceService(context).deactivate(id),
   );
   revalidateSettingsViews();
+}
+
+export async function createKrakenConnectionAction(
+  _previous: ActionState,
+  _formData: FormData,
+): Promise<ActionState> {
+  void _previous;
+  void _formData;
+  try {
+    await withDatabase((context) => {
+      const bookId = new ReferenceDataService(context).getDefaultBookId();
+      return new ExternalMappingService(context).createKrakenConnection({
+        bookId,
+      });
+    });
+  } catch (error) {
+    return actionError(error);
+  }
+  revalidatePath("/sync");
+  return { error: null };
+}
+
+export async function updateExternalMappingAction(
+  connectionId: string,
+  providerAssetKey: string,
+  _previous: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  try {
+    const mappingStatus = z
+      .enum(["mapped", "unmapped", "ignored"], {
+        error: "请选择映射状态。",
+      })
+      .parse(formData.get("mappingStatus"));
+    await withDatabase((context) =>
+      new ExternalMappingService(context).updateMapping({
+        connectionId,
+        providerAssetKey,
+        mappingStatus,
+        talliAssetId: optionalFormText(formData, "talliAssetId"),
+        talliAccountId: optionalFormText(formData, "talliAccountId"),
+      }),
+    );
+  } catch (error) {
+    return actionError(error);
+  }
+  revalidatePath("/sync");
+  revalidatePath("/sync/candidates");
+  return { error: null };
 }

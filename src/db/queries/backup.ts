@@ -12,6 +12,15 @@ import {
   books,
   categories,
   eventTags,
+  externalAccountMappings,
+  externalAssetMappings,
+  externalBalanceObservations,
+  externalCandidateSourceObjects,
+  externalConnections,
+  externalImportLinks,
+  externalSourceObjects,
+  externalTransactionCandidates,
+  externalTransactionLegs,
   ledgerEntries,
   ledgerEvents,
   latestPriceQuotes,
@@ -76,6 +85,60 @@ export function readBackupData(executor: DatabaseExecutor): BackupData {
       .from(manualPriceQuotes)
       .orderBy(asc(manualPriceQuotes.id))
       .all(),
+    externalConnections: executor
+      .select()
+      .from(externalConnections)
+      .orderBy(asc(externalConnections.id))
+      .all(),
+    externalAssetMappings: executor
+      .select()
+      .from(externalAssetMappings)
+      .orderBy(
+        asc(externalAssetMappings.connectionId),
+        asc(externalAssetMappings.providerAssetKey),
+      )
+      .all(),
+    externalAccountMappings: executor
+      .select()
+      .from(externalAccountMappings)
+      .orderBy(
+        asc(externalAccountMappings.connectionId),
+        asc(externalAccountMappings.providerAssetKey),
+      )
+      .all(),
+    externalBalanceObservations: executor
+      .select()
+      .from(externalBalanceObservations)
+      .orderBy(asc(externalBalanceObservations.id))
+      .all(),
+    externalSourceObjects: executor
+      .select()
+      .from(externalSourceObjects)
+      .orderBy(asc(externalSourceObjects.id))
+      .all(),
+    externalTransactionCandidates: executor
+      .select()
+      .from(externalTransactionCandidates)
+      .orderBy(asc(externalTransactionCandidates.id))
+      .all(),
+    externalCandidateSourceObjects: executor
+      .select()
+      .from(externalCandidateSourceObjects)
+      .orderBy(
+        asc(externalCandidateSourceObjects.candidateId),
+        asc(externalCandidateSourceObjects.sourceObjectId),
+      )
+      .all(),
+    externalTransactionLegs: executor
+      .select()
+      .from(externalTransactionLegs)
+      .orderBy(asc(externalTransactionLegs.id))
+      .all(),
+    externalImportLinks: executor
+      .select()
+      .from(externalImportLinks)
+      .orderBy(asc(externalImportLinks.candidateId))
+      .all(),
   };
 }
 
@@ -96,6 +159,15 @@ export function upsertAppMetaValue(
 }
 
 export function clearRestoreTarget(executor: DatabaseExecutor): void {
+  executor.delete(externalImportLinks).run();
+  executor.delete(externalCandidateSourceObjects).run();
+  executor.delete(externalTransactionLegs).run();
+  executor.delete(externalTransactionCandidates).run();
+  executor.delete(externalBalanceObservations).run();
+  executor.delete(externalSourceObjects).run();
+  executor.delete(externalAccountMappings).run();
+  executor.delete(externalAssetMappings).run();
+  executor.delete(externalConnections).run();
   executor.delete(latestPriceQuotes).run();
   executor.delete(priceProviderState).run();
   executor.delete(manualPriceQuotes).run();
@@ -162,5 +234,53 @@ export function insertBackupData(
   }
   if (data.manualPriceQuotes.length > 0) {
     executor.insert(manualPriceQuotes).values(data.manualPriceQuotes).run();
+  }
+  if (data.externalConnections.length > 0) {
+    executor.insert(externalConnections).values(data.externalConnections).run();
+  }
+  if (data.externalAssetMappings.length > 0) {
+    executor
+      .insert(externalAssetMappings)
+      .values(data.externalAssetMappings)
+      .run();
+  }
+  if (data.externalAccountMappings.length > 0) {
+    executor
+      .insert(externalAccountMappings)
+      .values(data.externalAccountMappings)
+      .run();
+  }
+  if (data.externalBalanceObservations.length > 0) {
+    executor
+      .insert(externalBalanceObservations)
+      .values(data.externalBalanceObservations)
+      .run();
+  }
+  if (data.externalSourceObjects.length > 0) {
+    executor
+      .insert(externalSourceObjects)
+      .values(data.externalSourceObjects)
+      .run();
+  }
+  if (data.externalTransactionCandidates.length > 0) {
+    executor
+      .insert(externalTransactionCandidates)
+      .values(data.externalTransactionCandidates)
+      .run();
+  }
+  if (data.externalCandidateSourceObjects.length > 0) {
+    executor
+      .insert(externalCandidateSourceObjects)
+      .values(data.externalCandidateSourceObjects)
+      .run();
+  }
+  if (data.externalTransactionLegs.length > 0) {
+    executor
+      .insert(externalTransactionLegs)
+      .values(data.externalTransactionLegs)
+      .run();
+  }
+  if (data.externalImportLinks.length > 0) {
+    executor.insert(externalImportLinks).values(data.externalImportLinks).run();
   }
 }

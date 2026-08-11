@@ -2,9 +2,11 @@
 
 Talli is a single-user, self-hosted, multi-asset personal ledger. Its V1 core
 stores exact native-asset quantities; V2.0 adds an optional, current-only price
-and valuation layer without changing ledger facts.
+and valuation layer without changing ledger facts. V3 adds an external-sync
+observation and review layer with Kraken Spot read-only integration; it still
+cannot post ledger facts without an explicit Import or Reconcile confirmation.
 
-## V2.0 implementation status
+## V3 implementation status
 
 The frozen V1 ledger remains intact, and the V2.0 task-package phases are implemented:
 
@@ -42,6 +44,22 @@ The frozen V1 ledger remains intact, and the V2.0 task-package phases are implem
   derived quote cache/provider state and API credentials are excluded.
 - Loading/error/404 states, keyboard tab navigation, mobile layouts, indexed
   event pages, and desktop/mobile Playwright coverage.
+- V3 external connection, operational state, raw source, append-only balance
+  observation, mapping, candidate, normalized-leg, and import-provenance tables.
+- Kraken Spot read-only authentication, persisted monotonic nonce, permission
+  deny-list, Assets/AssetPairs metadata, Balance, paginated Ledgers, and
+  paginated Trades History through an injectable transport.
+- `/sync` connection status, asset/account mapping, observed-vs-ledger balance,
+  explicit snapshot reconciliation, candidate queues, candidate review, and
+  imported-event provenance UI on desktop and mobile.
+- Same-origin mutation routes for sync, candidate import/ignore, and observation
+  reconciliation. Provider errors are categorized without returning signed
+  request details or credentials.
+- Atomic explicit Import through the same executor-scoped V1 writer, with a
+  unique candidate/event provenance link and no duplicate posting on re-sync.
+- Lossless `schemaVersion=3` backup of V1/V2 user facts and V3 fetched/provenance
+  data, with V1/V2 in-memory upgrade compatibility. Nonce, cursor, permission
+  state, sync runs, provider cache, and credentials remain excluded.
 
 ## Local development
 
@@ -72,6 +90,19 @@ COINGECKO_API_KEY=your-server-only-demo-key
 `COINGECKO_MODE=keyless` is an explicit local-development option. Talli never
 falls back from failed demo-key authentication to keyless mode.
 
+Kraken sync requires a separate, dedicated Spot API key in the server runtime:
+
+```bash
+KRAKEN_API_KEY=your-dedicated-read-only-key
+KRAKEN_API_SECRET=your-dedicated-read-only-secret
+```
+
+Grant only `query-funds`, `query-ledger`, and `query-closed-trades`. Talli
+rejects missing required permissions and known write permissions. The key and
+secret never enter SQLite, backup JSON, React props, HTML, client bundles,
+logs, or source fixtures. Tests use an injected deterministic transport and do
+not call Kraken.
+
 ## Current valuation semantics
 
 - Home Asset must be an active fiat asset.
@@ -84,7 +115,9 @@ falls back from failed demo-key authentication to keyless mode.
   asset makes the estimate incomplete; it is never silently treated as zero.
 - The dashboard keeps native quantities primary and marks Home values with `≈`.
 - Valuation is current-only. V2.0 has no historical chart, cost basis, P&L,
-  background collector, external account sync, or stablecoin shortcut.
+  background price collector, or stablecoin shortcut. V3 external sync remains
+  a separate native-asset observation/review layer and never supplies valuation
+  prices.
 
 ## Backup, CSV, and restore
 
@@ -95,11 +128,14 @@ falls back from failed demo-key authentication to keyless mode.
   CSV is not a restore format.
 - The backup wire identifier remains `multi-asset-ledger-backup` after the
   Talli rename so existing V1 backups stay compatible.
-- V2 exports use `schemaVersion=2` and include Home settings, provider mappings,
-  and manual quotes. V1 `schemaVersion=1` backups are upgraded and fully
+- V3 exports use `schemaVersion=3`. They retain V2 Home settings, provider
+  mappings, and manual quotes, and add external connections, mappings,
+  observations, source objects, candidates, legs, and import links. V1
+  `schemaVersion=1` and V2 `schemaVersion=2` backups are upgraded and fully
   validated before any write.
 - `latest_price_quotes`, `price_provider_state`, and API keys are intentionally
-  excluded because they are derived or operational data.
+  excluded because they are derived or operational data. V3 also excludes
+  `external_connection_state` and `external_sync_runs`.
 - `POST /api/data/restore` supports preview and commit. The complete payload,
   foreign keys, category tree, event roles/signs, and atomic strings are
   validated before any write.
@@ -144,6 +180,8 @@ Runtime configuration:
 | `AUTO_SETUP_DATABASE` | `1` | Run checked migrations and idempotent seed at startup. |
 | `COINGECKO_MODE` | `demo` | `demo` sends the server-only Demo key; `keyless` is explicit. |
 | `COINGECKO_API_KEY` | empty | Server-only CoinGecko Demo key; never stored in SQLite or backup. |
+| `KRAKEN_API_KEY` | empty | Dedicated server-only Kraken Spot read-only API key. |
+| `KRAKEN_API_SECRET` | empty | Dedicated server-only Kraken signing secret. |
 
 Before upgrading, download and verify a JSON backup. For an additional raw
 volume snapshot, stop writes (normally stop the container) before copying the
@@ -172,3 +210,7 @@ file.
   columns are positive plain-decimal `TEXT` plus `decimal.js`, never `REAL`.
 - Provider HTTP is server-only and outside SQLite write transactions. Resolver,
   portfolio valuation, SSR, backup, and native reports never perform HTTP.
+- External API data is not Ledger data. Sync writes only V3 source,
+  observation, candidate, mapping, and operational rows. Only an explicit
+  Import may call the V1 ledger writer, and only an explicit Reconcile may call
+  the V1 snapshot writer.

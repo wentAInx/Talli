@@ -16,6 +16,7 @@ if (e2eDirectory) {
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: "**/sync-flow.spec.ts",
   globalTeardown: "./e2e/global-teardown.ts",
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),

@@ -5,6 +5,7 @@ export * from "./backup";
 export * from "./books";
 export * from "./categories";
 export * from "./events";
+export * from "./external-sync";
 export * from "./read-models";
 export * from "./reports";
 export * from "./settings";

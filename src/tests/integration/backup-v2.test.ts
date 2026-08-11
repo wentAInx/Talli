@@ -62,6 +62,28 @@ describe("Backup v2 valuation compatibility", () => {
     return { database, accountId };
   }
 
+  function asV2Payload(payload: ReturnType<BackupService["exportBackup"]>) {
+    return {
+      ...payload,
+      schemaVersion: 2,
+      data: {
+        books: payload.data.books,
+        assets: payload.data.assets,
+        accounts: payload.data.accounts,
+        categories: payload.data.categories,
+        tags: payload.data.tags,
+        ledgerEvents: payload.data.ledgerEvents,
+        ledgerEntries: payload.data.ledgerEntries,
+        eventTags: payload.data.eventTags,
+        balanceSnapshots: payload.data.balanceSnapshots,
+        settings: payload.data.settings,
+        bookValuationSettings: payload.data.bookValuationSettings,
+        priceProviderMappings: payload.data.priceProviderMappings,
+        manualPriceQuotes: payload.data.manualPriceQuotes,
+      },
+    };
+  }
+
   it("B2-001..003 exports user valuation facts but excludes cache and state", async () => {
     const source = await sourceWithFactsAndConfiguration();
     upsertLatestPriceQuotes(source.database.context.db, [
@@ -90,7 +112,7 @@ describe("Backup v2 valuation compatibility", () => {
     const payload = new BackupService(source.database.context).exportBackup();
     const json = JSON.stringify(payload);
 
-    expect(payload.schemaVersion).toBe(2);
+    expect(payload.schemaVersion).toBe(3);
     expect(payload.data.bookValuationSettings).toMatchObject([
       { bookId: SEED_BOOK_ID, homeAssetId: seedAssetId("USD") },
     ]);
@@ -131,7 +153,7 @@ describe("Backup v2 valuation compatibility", () => {
     const preview = new BackupService(target.context).restore(legacy);
     const restored = readBackupData(target.context.db);
 
-    expect(preview.schemaVersion).toBe(2);
+    expect(preview.schemaVersion).toBe(3);
     expect(restored.accounts).toEqual(v1Data.accounts);
     expect(restored.balanceSnapshots).toEqual(v1Data.balanceSnapshots);
     expect(restored.ledgerEvents).toEqual(v1Data.ledgerEvents);
@@ -150,7 +172,9 @@ describe("Backup v2 valuation compatibility", () => {
 
   it("B2-005 round-trips Home, mappings, and manual quotes exactly", async () => {
     const source = await sourceWithFactsAndConfiguration();
-    const payload = new BackupService(source.database.context).exportBackup();
+    const payload = asV2Payload(
+      new BackupService(source.database.context).exportBackup(),
+    );
     const target = createTestDatabase();
     databases.push(target);
 

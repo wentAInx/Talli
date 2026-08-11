@@ -14,6 +14,7 @@ import {
   deleteTagsForEvent,
   findAccountWithAsset,
   findCategoryById,
+  findExternalImportLinkByLedgerEvent,
   findLedgerEventById,
   findTagIdsForEvent,
   findTagsByIds,
@@ -317,6 +318,54 @@ function prepareCommand(
   }
 }
 
+function writeRelations(
+  executor: DatabaseExecutor,
+  runtime: ServiceRuntime,
+  eventId: string,
+  prepared: PreparedCommand,
+  createdAt: string,
+): void {
+  insertLedgerEntries(
+    executor,
+    prepared.entries.map((entry) => ({
+      id: runtime.id(),
+      eventId,
+      accountId: entry.accountId,
+      entryRole: entry.role,
+      amountAtomic: atomicToDb(entry.amountAtomic),
+      createdAt,
+    })),
+  );
+  insertEventTags(
+    executor,
+    prepared.tagIds.map((tagId) => ({ eventId, tagId })),
+  );
+}
+
+export function createLedgerEventIn(
+  executor: DatabaseExecutor,
+  runtime: ServiceRuntime,
+  command: LedgerMutationInput,
+): string {
+  const prepared = prepareCommand(executor, command);
+  const eventId = runtime.id();
+  const now = runtimeNow(runtime);
+
+  insertLedgerEvent(executor, {
+    id: eventId,
+    bookId: prepared.bookId,
+    eventType: prepared.eventType,
+    occurredAt: prepared.occurredAt,
+    categoryId: prepared.categoryId,
+    payee: prepared.payee,
+    note: prepared.note,
+    createdAt: now,
+    updatedAt: now,
+  });
+  writeRelations(executor, runtime, eventId, prepared, now);
+  return eventId;
+}
+
 export class LedgerCommandService {
   constructor(
     private readonly context: DatabaseContext,
@@ -374,7 +423,7 @@ export class LedgerCommandService {
         });
         deleteEntriesForEvent(transaction, eventId);
         deleteTagsForEvent(transaction, eventId);
-        this.writeRelations(transaction, eventId, prepared, now);
+        writeRelations(transaction, this.runtime, eventId, prepared, now);
       },
       { behavior: "immediate" },
     );
@@ -389,6 +438,11 @@ export class LedgerCommandService {
             `Event ${eventId} was not found.`,
           );
         }
+        assertService(
+          !findExternalImportLinkByLedgerEvent(transaction, eventId),
+          "IMPORTED_EVENT_DELETE_FORBIDDEN",
+          "Imported events retain provenance and cannot be deleted in V3.",
+        );
         deleteLedgerEvent(transaction, eventId);
       },
       { behavior: "immediate" },
@@ -397,50 +451,8 @@ export class LedgerCommandService {
 
   private create(command: LedgerMutationInput): string {
     return this.context.db.transaction(
-      (transaction) => {
-        const prepared = prepareCommand(transaction, command);
-        const eventId = this.runtime.id();
-        const now = runtimeNow(this.runtime);
-
-        insertLedgerEvent(transaction, {
-          id: eventId,
-          bookId: prepared.bookId,
-          eventType: prepared.eventType,
-          occurredAt: prepared.occurredAt,
-          categoryId: prepared.categoryId,
-          payee: prepared.payee,
-          note: prepared.note,
-          createdAt: now,
-          updatedAt: now,
-        });
-        this.writeRelations(transaction, eventId, prepared, now);
-
-        return eventId;
-      },
+      (transaction) => createLedgerEventIn(transaction, this.runtime, command),
       { behavior: "immediate" },
-    );
-  }
-
-  private writeRelations(
-    executor: DatabaseExecutor,
-    eventId: string,
-    prepared: PreparedCommand,
-    createdAt: string,
-  ): void {
-    insertLedgerEntries(
-      executor,
-      prepared.entries.map((entry) => ({
-        id: this.runtime.id(),
-        eventId,
-        accountId: entry.accountId,
-        entryRole: entry.role,
-        amountAtomic: atomicToDb(entry.amountAtomic),
-        createdAt,
-      })),
-    );
-    insertEventTags(
-      executor,
-      prepared.tagIds.map((tagId) => ({ eventId, tagId })),
     );
   }
 }

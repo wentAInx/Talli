@@ -2,6 +2,7 @@ import { desc, sql } from "drizzle-orm";
 import {
   type AnySQLiteColumn,
   check,
+  foreignKey,
   index,
   integer,
   primaryKey,
@@ -31,6 +32,51 @@ export const eventTypes = [
 export const entryRoles = ["main", "source", "destination", "fee"] as const;
 export const priceProviderIds = ["coingecko", "ecb"] as const;
 export const externalQuoteKinds = ["spot", "reference"] as const;
+export const externalProviderIds = ["kraken"] as const;
+export const externalObjectTypes = ["kraken_ledger", "kraken_trade"] as const;
+export const externalMappingStatuses = [
+  "mapped",
+  "unmapped",
+  "ignored",
+] as const;
+export const externalSyncRunStatuses = [
+  "running",
+  "success",
+  "partial",
+  "error",
+] as const;
+export const externalCandidateEventTypes = [
+  "exchange",
+  "transfer",
+  "income",
+  "expense",
+  "unknown",
+] as const;
+export const externalCandidateStatuses = [
+  "pending",
+  "needs_mapping",
+  "ignored",
+  "imported",
+  "unsupported",
+  "source_changed",
+] as const;
+export const externalPrecisionStatuses = [
+  "exact",
+  "excess_precision",
+  "unmapped",
+] as const;
+export const externalCandidateSourceRelations = [
+  "primary",
+  "cross_check",
+] as const;
+export const externalTransactionLegRoles = [
+  "source",
+  "destination",
+  "fee",
+  "external_in",
+  "external_out",
+  "unknown",
+] as const;
 
 export const books = sqliteTable(
   "books",
@@ -434,6 +480,354 @@ export const priceProviderState = sqliteTable(
   ],
 );
 
+export const externalConnections = sqliteTable(
+  "external_connections",
+  {
+    id: text("id").primaryKey(),
+    bookId: text("book_id")
+      .notNull()
+      .references(() => books.id, { onDelete: "restrict" }),
+    provider: text("provider", { enum: externalProviderIds }).notNull(),
+    name: text("name").notNull(),
+    credentialRef: text("credential_ref").notNull(),
+    isEnabled: integer("is_enabled", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("external_connections_book_provider_credential_unique").on(
+      table.bookId,
+      table.provider,
+      table.credentialRef,
+    ),
+    check(
+      "external_connections_provider_check",
+      sql`${table.provider} in ('kraken')`,
+    ),
+    check(
+      "external_connections_enabled_check",
+      sql`${table.isEnabled} in (0, 1)`,
+    ),
+  ],
+);
+
+export const externalConnectionState = sqliteTable(
+  "external_connection_state",
+  {
+    connectionId: text("connection_id")
+      .primaryKey()
+      .references(() => externalConnections.id, { onDelete: "cascade" }),
+    lastAttemptAt: text("last_attempt_at"),
+    lastSuccessAt: text("last_success_at"),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    permissionCheckedAt: text("permission_checked_at"),
+    permissionSummaryJson: text("permission_summary_json"),
+    cooldownUntil: text("cooldown_until"),
+    lastNonceText: text("last_nonce_text").notNull().default("0"),
+    lastLedgerSyncAt: text("last_ledger_sync_at"),
+    lastTradeSyncAt: text("last_trade_sync_at"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check(
+      "external_connection_state_nonce_check",
+      sql`length(${table.lastNonceText}) > 0 and ${table.lastNonceText} not glob '*[^0-9]*'`,
+    ),
+  ],
+);
+
+export const externalAssetMappings = sqliteTable(
+  "external_asset_mappings",
+  {
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => externalConnections.id, { onDelete: "cascade" }),
+    providerAssetKey: text("provider_asset_key").notNull(),
+    providerDisplayCode: text("provider_display_code"),
+    talliAssetId: text("talli_asset_id").references(() => assets.id, {
+      onDelete: "restrict",
+    }),
+    mappingStatus: text("mapping_status", {
+      enum: externalMappingStatuses,
+    })
+      .notNull()
+      .default("unmapped"),
+    providerMetadataJson: text("provider_metadata_json"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.connectionId, table.providerAssetKey] }),
+    index("external_asset_mappings_talli_asset_idx").on(table.talliAssetId),
+    check(
+      "external_asset_mappings_status_check",
+      sql`${table.mappingStatus} in ('mapped', 'unmapped', 'ignored')`,
+    ),
+  ],
+);
+
+export const externalAccountMappings = sqliteTable(
+  "external_account_mappings",
+  {
+    connectionId: text("connection_id").notNull(),
+    providerAssetKey: text("provider_asset_key").notNull(),
+    talliAccountId: text("talli_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    isEnabled: integer("is_enabled", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.connectionId, table.providerAssetKey] }),
+    foreignKey({
+      columns: [table.connectionId, table.providerAssetKey],
+      foreignColumns: [
+        externalAssetMappings.connectionId,
+        externalAssetMappings.providerAssetKey,
+      ],
+      name: "external_account_mappings_asset_mapping_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("external_account_mappings_talli_account_unique").on(
+      table.talliAccountId,
+    ),
+    check(
+      "external_account_mappings_enabled_check",
+      sql`${table.isEnabled} in (0, 1)`,
+    ),
+  ],
+);
+
+export const externalSyncRuns = sqliteTable(
+  "external_sync_runs",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => externalConnections.id, { onDelete: "cascade" }),
+    startedAt: text("started_at").notNull(),
+    finishedAt: text("finished_at"),
+    status: text("status", { enum: externalSyncRunStatuses }).notNull(),
+    balancesSeen: integer("balances_seen").notNull().default(0),
+    sourceObjectsSeen: integer("source_objects_seen").notNull().default(0),
+    candidatesCreated: integer("candidates_created").notNull().default(0),
+    candidatesUpdated: integer("candidates_updated").notNull().default(0),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+  },
+  (table) => [
+    index("external_sync_runs_connection_started_idx").on(
+      table.connectionId,
+      desc(table.startedAt),
+    ),
+    check(
+      "external_sync_runs_status_check",
+      sql`${table.status} in ('running', 'success', 'partial', 'error')`,
+    ),
+  ],
+);
+
+export const externalSourceObjects = sqliteTable(
+  "external_source_objects",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => externalConnections.id, { onDelete: "cascade" }),
+    objectType: text("object_type", { enum: externalObjectTypes }).notNull(),
+    externalId: text("external_id").notNull(),
+    occurredAt: text("occurred_at").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    firstSeenAt: text("first_seen_at").notNull(),
+    lastSeenAt: text("last_seen_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("external_source_objects_identity_unique").on(
+      table.connectionId,
+      table.objectType,
+      table.externalId,
+    ),
+    index("external_source_objects_time_idx").on(
+      table.connectionId,
+      desc(table.occurredAt),
+    ),
+    check(
+      "external_source_objects_type_check",
+      sql`${table.objectType} in ('kraken_ledger', 'kraken_trade')`,
+    ),
+  ],
+);
+
+export const externalBalanceObservations = sqliteTable(
+  "external_balance_observations",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id").notNull(),
+    providerAssetKey: text("provider_asset_key").notNull(),
+    talliAssetId: text("talli_asset_id").references(() => assets.id, {
+      onDelete: "restrict",
+    }),
+    providerAmountText: text("provider_amount_text").notNull(),
+    mappedAmountAtomic: text("mapped_amount_atomic"),
+    precisionStatus: text("precision_status", {
+      enum: externalPrecisionStatuses,
+    }).notNull(),
+    observedAt: text("observed_at").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.connectionId, table.providerAssetKey],
+      foreignColumns: [
+        externalAssetMappings.connectionId,
+        externalAssetMappings.providerAssetKey,
+      ],
+      name: "external_balance_observations_asset_mapping_fk",
+    }).onDelete("restrict"),
+    index("external_balance_latest_idx").on(
+      table.connectionId,
+      table.providerAssetKey,
+      desc(table.observedAt),
+    ),
+    check(
+      "external_balance_observations_precision_check",
+      sql`${table.precisionStatus} in ('exact', 'excess_precision', 'unmapped')`,
+    ),
+  ],
+);
+
+export const externalTransactionCandidates = sqliteTable(
+  "external_transaction_candidates",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => externalConnections.id, { onDelete: "cascade" }),
+    stableKey: text("stable_key").notNull(),
+    suggestedEventType: text("suggested_event_type", {
+      enum: externalCandidateEventTypes,
+    }).notNull(),
+    status: text("status", { enum: externalCandidateStatuses }).notNull(),
+    occurredAt: text("occurred_at").notNull(),
+    title: text("title").notNull(),
+    normalizationVersion: integer("normalization_version").notNull(),
+    sourceFingerprint: text("source_fingerprint").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    lastSeenAt: text("last_seen_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("external_candidates_stable_key_unique").on(
+      table.connectionId,
+      table.stableKey,
+    ),
+    index("external_candidates_status_time_idx").on(
+      table.connectionId,
+      table.status,
+      desc(table.occurredAt),
+    ),
+    check(
+      "external_candidates_event_type_check",
+      sql`${table.suggestedEventType} in ('exchange', 'transfer', 'income', 'expense', 'unknown')`,
+    ),
+    check(
+      "external_candidates_status_check",
+      sql`${table.status} in ('pending', 'needs_mapping', 'ignored', 'imported', 'unsupported', 'source_changed')`,
+    ),
+  ],
+);
+
+export const externalCandidateSourceObjects = sqliteTable(
+  "external_candidate_source_objects",
+  {
+    candidateId: text("candidate_id")
+      .notNull()
+      .references(() => externalTransactionCandidates.id, {
+        onDelete: "cascade",
+      }),
+    sourceObjectId: text("source_object_id")
+      .notNull()
+      .references(() => externalSourceObjects.id, { onDelete: "restrict" }),
+    relation: text("relation", {
+      enum: externalCandidateSourceRelations,
+    }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.candidateId, table.sourceObjectId] }),
+    check(
+      "external_candidate_source_relation_check",
+      sql`${table.relation} in ('primary', 'cross_check')`,
+    ),
+  ],
+);
+
+export const externalTransactionLegs = sqliteTable(
+  "external_transaction_legs",
+  {
+    id: text("id").primaryKey(),
+    candidateId: text("candidate_id")
+      .notNull()
+      .references(() => externalTransactionCandidates.id, {
+        onDelete: "cascade",
+      }),
+    legIndex: integer("leg_index").notNull(),
+    role: text("role", { enum: externalTransactionLegRoles }).notNull(),
+    providerAssetKey: text("provider_asset_key").notNull(),
+    talliAssetId: text("talli_asset_id").references(() => assets.id, {
+      onDelete: "restrict",
+    }),
+    amountText: text("amount_text").notNull(),
+    amountAtomic: text("amount_atomic"),
+    precisionStatus: text("precision_status", {
+      enum: externalPrecisionStatuses,
+    }).notNull(),
+    note: text("note"),
+  },
+  (table) => [
+    uniqueIndex("external_transaction_legs_candidate_index_unique").on(
+      table.candidateId,
+      table.legIndex,
+    ),
+    check("external_transaction_legs_index_check", sql`${table.legIndex} >= 0`),
+    check(
+      "external_transaction_legs_role_check",
+      sql`${table.role} in ('source', 'destination', 'fee', 'external_in', 'external_out', 'unknown')`,
+    ),
+    check(
+      "external_transaction_legs_precision_check",
+      sql`${table.precisionStatus} in ('exact', 'excess_precision', 'unmapped')`,
+    ),
+  ],
+);
+
+export const externalImportLinks = sqliteTable(
+  "external_import_links",
+  {
+    candidateId: text("candidate_id")
+      .primaryKey()
+      .references(() => externalTransactionCandidates.id, {
+        onDelete: "restrict",
+      }),
+    ledgerEventId: text("ledger_event_id")
+      .notNull()
+      .references(() => ledgerEvents.id, { onDelete: "restrict" }),
+    importedAt: text("imported_at").notNull(),
+    importFingerprint: text("import_fingerprint").notNull(),
+  },
+  (table) => [
+    uniqueIndex("external_import_links_ledger_event_unique").on(
+      table.ledgerEventId,
+    ),
+  ],
+);
+
 export type BookRow = typeof books.$inferSelect;
 export type AssetRow = typeof assets.$inferSelect;
 export type AccountRow = typeof accounts.$inferSelect;
@@ -447,3 +841,18 @@ export type PriceProviderMappingRow = typeof priceProviderMappings.$inferSelect;
 export type ManualPriceQuoteRow = typeof manualPriceQuotes.$inferSelect;
 export type LatestPriceQuoteRow = typeof latestPriceQuotes.$inferSelect;
 export type PriceProviderStateRow = typeof priceProviderState.$inferSelect;
+export type ExternalConnectionRow = typeof externalConnections.$inferSelect;
+export type ExternalConnectionStateRow =
+  typeof externalConnectionState.$inferSelect;
+export type ExternalAssetMappingRow = typeof externalAssetMappings.$inferSelect;
+export type ExternalAccountMappingRow =
+  typeof externalAccountMappings.$inferSelect;
+export type ExternalSyncRunRow = typeof externalSyncRuns.$inferSelect;
+export type ExternalSourceObjectRow = typeof externalSourceObjects.$inferSelect;
+export type ExternalBalanceObservationRow =
+  typeof externalBalanceObservations.$inferSelect;
+export type ExternalTransactionCandidateRow =
+  typeof externalTransactionCandidates.$inferSelect;
+export type ExternalTransactionLegRow =
+  typeof externalTransactionLegs.$inferSelect;
+export type ExternalImportLinkRow = typeof externalImportLinks.$inferSelect;

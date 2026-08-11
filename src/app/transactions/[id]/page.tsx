@@ -8,6 +8,7 @@ import {
 } from "@/app/actions";
 import { ConfirmActionForm } from "@/components/forms/confirm-action-form";
 import { TransactionForm } from "@/components/forms/transaction-form";
+import { findExternalImportLinkByLedgerEvent } from "@/db/queries";
 import { LedgerReadService, SettingsService } from "@/services";
 
 import { withDatabase } from "../../server-runtime";
@@ -33,6 +34,7 @@ export default async function TransactionDetailPage({
         }),
         timeZone: new SettingsService(context).getTimeZoneOrDefault(),
         now: new Date().toISOString(),
+        provenance: findExternalImportLinkByLedgerEvent(context.db, id) ?? null,
       };
     } catch {
       return null;
@@ -68,18 +70,31 @@ export default async function TransactionDetailPage({
           defaultOccurredAt={view.now}
         />
       </section>
-      <section className="danger-zone">
-        <div>
-          <h2>删除这笔流水</h2>
-          <p>删除后将重新计算相关账户余额。此操作无法撤销。</p>
-        </div>
-        <ConfirmActionForm
-          action={deleteAction}
-          message="删除后将重新计算相关账户余额。此操作无法撤销。确认删除？"
-        >
-          删除交易
-        </ConfirmActionForm>
-      </section>
+      {view.provenance ? (
+        <section className="content-section imported-event-provenance">
+          <div>
+            <p className="eyebrow">External import provenance</p>
+            <h2>此事件来自明确导入</h2>
+            <p>为保留候选与账本事件的一对一来源关系，V3 不允许直接删除。</p>
+          </div>
+          <Link href={`/sync/candidates/${view.provenance.candidateId}`}>
+            查看 Kraken 候选
+          </Link>
+        </section>
+      ) : (
+        <section className="danger-zone">
+          <div>
+            <h2>删除这笔流水</h2>
+            <p>删除后将重新计算相关账户余额。此操作无法撤销。</p>
+          </div>
+          <ConfirmActionForm
+            action={deleteAction}
+            message="删除后将重新计算相关账户余额。此操作无法撤销。确认删除？"
+          >
+            删除交易
+          </ConfirmActionForm>
+        </section>
+      )}
     </div>
   );
 }
