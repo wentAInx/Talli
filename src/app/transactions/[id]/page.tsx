@@ -8,7 +8,11 @@ import {
 } from "@/app/actions";
 import { ConfirmActionForm } from "@/components/forms/confirm-action-form";
 import { TransactionForm } from "@/components/forms/transaction-form";
-import { findExternalImportLinkByLedgerEvent } from "@/db/queries";
+import {
+  findExternalCandidate,
+  findExternalConnection,
+  findExternalImportLinkByLedgerEvent,
+} from "@/db/queries";
 import { LedgerReadService, SettingsService } from "@/services";
 
 import { withDatabase } from "../../server-runtime";
@@ -26,6 +30,13 @@ export default async function TransactionDetailPage({
     const service = new LedgerReadService(context);
     try {
       const event = service.getEvent(id);
+      const importLink = findExternalImportLinkByLedgerEvent(context.db, id);
+      const candidate = importLink
+        ? findExternalCandidate(context.db, importLink.candidateId)
+        : null;
+      const connection = candidate
+        ? findExternalConnection(context.db, candidate.connectionId)
+        : null;
       return {
         event,
         reference: service.getReferenceData(new Date().toISOString(), {
@@ -34,7 +45,9 @@ export default async function TransactionDetailPage({
         }),
         timeZone: new SettingsService(context).getTimeZoneOrDefault(),
         now: new Date().toISOString(),
-        provenance: findExternalImportLinkByLedgerEvent(context.db, id) ?? null,
+        provenance: importLink
+          ? { ...importLink, provider: connection?.provider ?? null }
+          : null,
       };
     } catch {
       return null;
@@ -75,10 +88,14 @@ export default async function TransactionDetailPage({
           <div>
             <p className="eyebrow">External import provenance</p>
             <h2>此事件来自明确导入</h2>
-            <p>为保留候选与账本事件的一对一来源关系，V3 不允许直接删除。</p>
+            <p>
+              为保留候选与账本事件的一对一来源关系，已导入事件不允许直接删除。
+            </p>
           </div>
           <Link href={`/sync/candidates/${view.provenance.candidateId}`}>
-            查看 Kraken 候选
+            {view.provenance.provider === "evm_wallet"
+              ? "查看 Ethereum 候选"
+              : "查看 Kraken 候选"}
           </Link>
         </section>
       ) : (

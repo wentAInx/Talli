@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "chain": {
+    "chainId": 1,
+    "networkId": "eth-mainnet",
+    "chainIdHex": "0x1"
+  },
+  "wallet": "0x1111111111111111111111111111111111111111",
+  "balances": {
+    "eth": "0x112210f4768db400",
+    "erc20": [
+      {
+        "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        "tokenBalance": "0x3b9aca00",
+        "error": null
+      }
+    ],
+    "metadata": {
+      "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": {
+        "decimals": 6,
+        "name": "USD Coin",
+        "symbol": "USDC"
+      }
+    }
+  },
+  "tx": {
+    "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "from": "0x1111111111111111111111111111111111111111",
+    "to": "0x3333333333333333333333333333333333333333",
+    "type": "0x2",
+    "value": "0x0",
+    "blockNumber": "0x144ff00"
+  },
+  "receipt": {
+    "status": "0x1",
+    "gasUsed": "0x5208",
+    "effectiveGasPrice": "0x3b9aca00",
+    "blobGasUsed": null,
+    "blobGasPrice": null
+  },
+  "transfers": [
+    {
+      "uniqueId": "tx:erc20:0",
+      "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "category": "erc20",
+      "from": "0x1111111111111111111111111111111111111111",
+      "to": "0x3333333333333333333333333333333333333333",
+      "value": 999999999.0,
+      "asset": "USDC",
+      "rawContract": {
+        "value": "0x5f5e100",
+        "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        "decimal": "0x6"
+      }
+    },
+    {
+      "uniqueId": "tx:internal:0",
+      "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "category": "internal",
+      "from": "0x3333333333333333333333333333333333333333",
+      "to": "0x1111111111111111111111111111111111111111",
+      "value": 0.04,
+      "asset": "ETH",
+      "rawContract": {
+        "value": "0x8e1bc9bf040000",
+        "address": null,
+        "decimal": "0x12"
+      }
+    }
+  ],
+  "expected": {
+    "movement": "-100 USDC +0.04 ETH simple_exchange",
+    "gas": "separate expense candidate",
+    "moneySource": "rawContract.value, not value"
+  }
+}

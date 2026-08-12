@@ -61,7 +61,7 @@ describe("V3 additive migration", () => {
       );
     sqlite
       .prepare(
-        "insert into external_connections (id, book_id, provider, name, credential_ref, is_enabled, created_at, updated_at) values (?, ?, 'kraken', ?, 'env:kraken.primary', 1, ?, ?)",
+        "insert into external_connections (id, book_id, provider, source_key, name, credential_ref, is_enabled, created_at, updated_at) values (?, ?, 'kraken', 'kraken:primary', ?, 'env:kraken.primary', 1, ?, ?)",
       )
       .run(
         "connection-v3",

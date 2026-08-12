@@ -66,6 +66,7 @@ describe("Backup v3 external sync compatibility", () => {
       id: "external-connection-1",
       bookId: SEED_BOOK_ID,
       provider: "kraken",
+      sourceKey: "kraken:primary",
       name: "Kraken",
       credentialRef: "env:kraken.primary",
       isEnabled: true,
@@ -189,7 +190,7 @@ describe("Backup v3 external sync compatibility", () => {
     const payload = new BackupService(source.database.context).exportBackup();
     const json = JSON.stringify(payload);
 
-    expect(payload.schemaVersion).toBe(3);
+    expect(payload.schemaVersion).toBe(4);
     expect(payload.data.externalConnections).toHaveLength(1);
     expect(payload.data.externalBalanceObservations).toHaveLength(1);
     expect(payload.data.externalSourceObjects).toHaveLength(1);
@@ -302,6 +303,7 @@ describe("Backup v3 external sync compatibility", () => {
       id: "existing-external-connection",
       bookId: SEED_BOOK_ID,
       provider: "kraken",
+      sourceKey: "kraken:primary",
       name: "Existing Kraken",
       credentialRef: "env:kraken.primary",
       isEnabled: true,

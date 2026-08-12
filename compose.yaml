@@ -10,6 +10,7 @@ services:
       COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
       KRAKEN_API_KEY: ${KRAKEN_API_KEY:-}
       KRAKEN_API_SECRET: ${KRAKEN_API_SECRET:-}
+      ALCHEMY_API_KEY: ${ALCHEMY_API_KEY:-}
     ports:
       - "${PORT:-3000}:3000"
     healthcheck:

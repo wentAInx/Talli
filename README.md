@@ -5,10 +5,13 @@ stores exact native-asset quantities; V2.0 adds an optional, current-only price
 and valuation layer without changing ledger facts. V3 adds an external-sync
 observation and review layer with Kraken Spot read-only integration; it still
 cannot post ledger facts without an explicit Import or Reconcile confirmation.
+V4 adds Ethereum Mainnet public-address wallet observations, finalized on-chain
+activity, and separate movement/gas review candidates under the same boundary.
 
-## V3 implementation status
+## V4 implementation status
 
-The frozen V1 ledger remains intact, and the V2.0 task-package phases are implemented:
+The frozen V1 ledger and additive V2/V3 baselines remain intact; the V4.0
+task-package phases are implemented:
 
 - Next.js 16, strict TypeScript, Tailwind CSS, ESLint, Prettier, Vitest, and
   Playwright tooling.
@@ -60,6 +63,23 @@ The frozen V1 ledger remains intact, and the V2.0 task-package phases are implem
 - Lossless `schemaVersion=3` backup of V1/V2 user facts and V3 fetched/provenance
   data, with V1/V2 in-memory upgrade compatibility. Nonce, cursor, permission
   state, sync runs, provider cache, and credentials remain excluded.
+- Ethereum Mainnet (`chainId=1`) wallet connections accept public addresses
+  only. Address, native asset, and ERC-20 chain/contract identities are
+  canonical; symbol is display metadata and never an auto-mapping key.
+- Alchemy access uses a fixed server-only Mainnet origin and a read-method
+  allowlist through an injectable transport. Current native/ERC-20 balances,
+  finalized paginated transfers, transaction/receipt enrichment, and a 32-block
+  reorg overlap are supported without provider I/O inside SQLite transactions.
+- On-chain movement is netted per transaction from raw atomic values. Simple
+  in/out/exchange candidates require review; complex DeFi remains unsupported.
+  Exact execution/blob gas is a separate expense candidate, including gas from
+  failed transactions.
+- `/sync` groups movement and network fee by transaction hash, keeps contract
+  addresses visible, and compares append-only on-chain observations with Talli
+  Ledger balances. Sync itself never creates Ledger events or snapshots.
+- Lossless `schemaVersion=4` backup adds EVM wallet, raw balance-detail, and
+  candidate-detail user facts while continuing to restore versions 1/2/3/4.
+  Alchemy secrets, sync runs, and finalized cursors remain excluded.
 
 ## Local development
 
@@ -103,6 +123,17 @@ secret never enter SQLite, backup JSON, React props, HTML, client bundles,
 logs, or source fixtures. Tests use an injected deterministic transport and do
 not call Kraken.
 
+Ethereum wallet sync uses one server-only Alchemy key and a fixed Ethereum
+Mainnet endpoint:
+
+```bash
+ALCHEMY_API_KEY=your-server-only-alchemy-key
+```
+
+Only public wallet addresses are entered in Talli. Never enter a private key,
+mnemonic, or seed phrase. Talli has no signing, sending, or configurable write
+RPC path. Automated tests use an injected fixture and do not call Alchemy.
+
 ## Current valuation semantics
 
 - Home Asset must be an active fiat asset.
@@ -115,9 +146,9 @@ not call Kraken.
   asset makes the estimate incomplete; it is never silently treated as zero.
 - The dashboard keeps native quantities primary and marks Home values with `≈`.
 - Valuation is current-only. V2.0 has no historical chart, cost basis, P&L,
-  background price collector, or stablecoin shortcut. V3 external sync remains
-  a separate native-asset observation/review layer and never supplies valuation
-  prices.
+  background price collector, or stablecoin shortcut. V3/V4 external sync
+  remains a separate native-asset observation/review layer and never supplies
+  valuation prices.
 
 ## Backup, CSV, and restore
 
@@ -128,14 +159,14 @@ not call Kraken.
   CSV is not a restore format.
 - The backup wire identifier remains `multi-asset-ledger-backup` after the
   Talli rename so existing V1 backups stay compatible.
-- V3 exports use `schemaVersion=3`. They retain V2 Home settings, provider
-  mappings, and manual quotes, and add external connections, mappings,
-  observations, source objects, candidates, legs, and import links. V1
-  `schemaVersion=1` and V2 `schemaVersion=2` backups are upgraded and fully
-  validated before any write.
+- V4 exports use `schemaVersion=4`. They retain V2/V3 user facts and add
+  `externalConnections.sourceKey`, EVM wallet subtypes, raw on-chain balance
+  details, and EVM candidate details. V1/V2/V3 backups are upgraded in memory
+  and fully validated before any write.
 - `latest_price_quotes`, `price_provider_state`, and API keys are intentionally
-  excluded because they are derived or operational data. V3 also excludes
-  `external_connection_state` and `external_sync_runs`.
+  excluded because they are derived or operational data. V4 also excludes
+  `external_connection_state`, `external_sync_runs`, and
+  `evm_wallet_connection_state`.
 - `POST /api/data/restore` supports preview and commit. The complete payload,
   foreign keys, category tree, event roles/signs, and atomic strings are
   validated before any write.
@@ -156,6 +187,7 @@ pnpm db:check
 pnpm test:unit
 pnpm test:integration
 pnpm build
+pnpm security:check
 pnpm test:e2e
 ```
 
@@ -182,6 +214,7 @@ Runtime configuration:
 | `COINGECKO_API_KEY` | empty | Server-only CoinGecko Demo key; never stored in SQLite or backup. |
 | `KRAKEN_API_KEY` | empty | Dedicated server-only Kraken Spot read-only API key. |
 | `KRAKEN_API_SECRET` | empty | Dedicated server-only Kraken signing secret. |
+| `ALCHEMY_API_KEY` | empty | Server-only Ethereum Mainnet Alchemy API key. |
 
 Before upgrading, download and verify a JSON backup. For an additional raw
 volume snapshot, stop writes (normally stop the container) before copying the
@@ -210,7 +243,7 @@ file.
   columns are positive plain-decimal `TEXT` plus `decimal.js`, never `REAL`.
 - Provider HTTP is server-only and outside SQLite write transactions. Resolver,
   portfolio valuation, SSR, backup, and native reports never perform HTTP.
-- External API data is not Ledger data. Sync writes only V3 source,
-  observation, candidate, mapping, and operational rows. Only an explicit
+- External API and on-chain data are not Ledger data. Sync writes only external
+  source, observation, candidate, mapping, and operational rows. Only an explicit
   Import may call the V1 ledger writer, and only an explicit Reconcile may call
   the V1 snapshot writer.

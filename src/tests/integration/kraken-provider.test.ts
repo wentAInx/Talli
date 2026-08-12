@@ -86,6 +86,7 @@ describe("Kraken provider persistence boundaries", () => {
       id: "connection-kraken",
       bookId: "book-kraken",
       provider: "kraken",
+      sourceKey: "kraken:primary",
       name: "Kraken",
       credentialRef: "env:kraken.primary",
       isEnabled: true,

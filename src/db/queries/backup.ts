@@ -21,6 +21,10 @@ import {
   externalSourceObjects,
   externalTransactionCandidates,
   externalTransactionLegs,
+  evmBalanceObservationDetails,
+  evmCandidateDetails,
+  evmWalletConnectionState,
+  evmWalletConnections,
   ledgerEntries,
   ledgerEvents,
   latestPriceQuotes,
@@ -90,6 +94,11 @@ export function readBackupData(executor: DatabaseExecutor): BackupData {
       .from(externalConnections)
       .orderBy(asc(externalConnections.id))
       .all(),
+    evmWalletConnections: executor
+      .select()
+      .from(evmWalletConnections)
+      .orderBy(asc(evmWalletConnections.connectionId))
+      .all(),
     externalAssetMappings: executor
       .select()
       .from(externalAssetMappings)
@@ -111,6 +120,11 @@ export function readBackupData(executor: DatabaseExecutor): BackupData {
       .from(externalBalanceObservations)
       .orderBy(asc(externalBalanceObservations.id))
       .all(),
+    evmBalanceObservationDetails: executor
+      .select()
+      .from(evmBalanceObservationDetails)
+      .orderBy(asc(evmBalanceObservationDetails.observationId))
+      .all(),
     externalSourceObjects: executor
       .select()
       .from(externalSourceObjects)
@@ -120,6 +134,11 @@ export function readBackupData(executor: DatabaseExecutor): BackupData {
       .select()
       .from(externalTransactionCandidates)
       .orderBy(asc(externalTransactionCandidates.id))
+      .all(),
+    evmCandidateDetails: executor
+      .select()
+      .from(evmCandidateDetails)
+      .orderBy(asc(evmCandidateDetails.candidateId))
       .all(),
     externalCandidateSourceObjects: executor
       .select()
@@ -162,11 +181,15 @@ export function clearRestoreTarget(executor: DatabaseExecutor): void {
   executor.delete(externalImportLinks).run();
   executor.delete(externalCandidateSourceObjects).run();
   executor.delete(externalTransactionLegs).run();
+  executor.delete(evmCandidateDetails).run();
   executor.delete(externalTransactionCandidates).run();
+  executor.delete(evmBalanceObservationDetails).run();
   executor.delete(externalBalanceObservations).run();
   executor.delete(externalSourceObjects).run();
   executor.delete(externalAccountMappings).run();
   executor.delete(externalAssetMappings).run();
+  executor.delete(evmWalletConnectionState).run();
+  executor.delete(evmWalletConnections).run();
   executor.delete(externalConnections).run();
   executor.delete(latestPriceQuotes).run();
   executor.delete(priceProviderState).run();
@@ -238,6 +261,12 @@ export function insertBackupData(
   if (data.externalConnections.length > 0) {
     executor.insert(externalConnections).values(data.externalConnections).run();
   }
+  if (data.evmWalletConnections.length > 0) {
+    executor
+      .insert(evmWalletConnections)
+      .values(data.evmWalletConnections)
+      .run();
+  }
   if (data.externalAssetMappings.length > 0) {
     executor
       .insert(externalAssetMappings)
@@ -256,6 +285,12 @@ export function insertBackupData(
       .values(data.externalBalanceObservations)
       .run();
   }
+  if (data.evmBalanceObservationDetails.length > 0) {
+    executor
+      .insert(evmBalanceObservationDetails)
+      .values(data.evmBalanceObservationDetails)
+      .run();
+  }
   if (data.externalSourceObjects.length > 0) {
     executor
       .insert(externalSourceObjects)
@@ -267,6 +302,9 @@ export function insertBackupData(
       .insert(externalTransactionCandidates)
       .values(data.externalTransactionCandidates)
       .run();
+  }
+  if (data.evmCandidateDetails.length > 0) {
+    executor.insert(evmCandidateDetails).values(data.evmCandidateDetails).run();
   }
   if (data.externalCandidateSourceObjects.length > 0) {
     executor

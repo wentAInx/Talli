@@ -179,6 +179,7 @@ describe("external sync persistence", () => {
       id: "connection-kraken",
       bookId: "seed-book-default",
       provider: "kraken",
+      sourceKey: "kraken:primary",
       name: "Kraken",
       credentialRef: "env:kraken.primary",
       isEnabled: true,

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import {
+  createEvmWalletAction,
   createKrakenConnectionAction,
   updateExternalMappingAction,
 } from "@/app/actions";
@@ -11,6 +12,7 @@ import {
   SyncRunButton,
 } from "@/components/sync/mutation-controls";
 import { safeKrakenConfigurationView } from "@/providers/kraken/server-factory";
+import { safeAlchemyConfigurationView } from "@/providers/evm/server-factory";
 import { ExternalSyncReadService } from "@/services/external-sync-read-service";
 
 import { withDatabase } from "../server-runtime";
@@ -59,6 +61,10 @@ function eventTypeLabel(value: string): string {
   );
 }
 
+function compactAddress(value: string): string {
+  return `${value.slice(0, 8)}…${value.slice(-6)}`;
+}
+
 function connectionStatus(connection: {
   state: {
     lastSuccessAt: string | null;
@@ -94,15 +100,25 @@ export default async function SyncPage({
   const queue: Queue = QUEUES.some((item) => item.value === query.queue)
     ? (query.queue as Queue)
     : "pending";
-  const credentials = safeKrakenConfigurationView();
+  const krakenCredentials = safeKrakenConfigurationView();
+  const alchemyCredentials = safeAlchemyConfigurationView();
   const overview = await withDatabase((context) =>
     new ExternalSyncReadService(context).overview(),
   );
-  const connections = overview.connections.map((connection) => ({
-    ...connection,
-    configured: credentials.configured,
-    credentialRef: credentials.credentialRef,
-  }));
+  const connections = overview.connections.map((connection) => {
+    const credentials =
+      connection.provider === "evm_wallet"
+        ? alchemyCredentials
+        : krakenCredentials;
+    return {
+      ...connection,
+      configured: credentials.configured,
+      credentialRef: credentials.credentialRef,
+    };
+  });
+  const hasKraken = connections.some(
+    (connection) => connection.provider === "kraken",
+  );
 
   return (
     <div className="page-stack sync-page">
@@ -110,66 +126,169 @@ export default async function SyncPage({
         <div>
           <p className="eyebrow">External observations · Explicit writes</p>
           <h1>外部同步</h1>
-          <p>Kraken 数据先进入审核区；只读同步不会自动修改 Talli 账本。</p>
+          <p>
+            Kraken 与链上数据先进入审核区；任何同步都不会自动修改 Talli 账本。
+          </p>
         </div>
         <span className="sync-boundary-seal">External ≠ Ledger</span>
       </header>
 
-      {connections.length === 0 ? (
-        <section className="empty-state sync-empty-state">
-          <span className="empty-mark" aria-hidden="true">
-            K
-          </span>
-          <h2>还没有 Kraken 连接</h2>
-          <p>
-            创建连接只会保存 <code>env:kraken.primary</code> 引用；API key 与
-            secret 只从服务端环境读取。
+      <div className="sync-source-onboarding">
+        {!hasKraken ? (
+          <section className="empty-state sync-empty-state">
+            <span className="empty-mark" aria-hidden="true">
+              K
+            </span>
+            <h2>连接 Kraken</h2>
+            <p>
+              只保存 <code>env:kraken.primary</code> 引用；API key 与 secret
+              只从服务端环境读取。
+            </p>
+            <SettingsActionForm
+              action={createKrakenConnectionAction}
+              className="sync-connect-form"
+              submitLabel="创建 Kraken 只读连接"
+            >
+              <span className="sr-only">使用服务端环境凭据</span>
+            </SettingsActionForm>
+          </section>
+        ) : null}
+
+        <section className="content-section evm-add-wallet-card">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Ethereum Mainnet · Address only</p>
+              <h2>添加只读钱包</h2>
+            </div>
+            <span className="evm-chain-chip">chainId 1</span>
+          </div>
+          <p className="sync-safety-copy">
+            只接受公共地址。不要输入 private key、mnemonic 或 seed phrase；Talli
+            不签名，也不会调用 write RPC。
           </p>
           <SettingsActionForm
-            action={createKrakenConnectionAction}
-            className="sync-connect-form"
-            submitLabel="创建 Kraken 只读连接"
+            action={createEvmWalletAction}
+            className="sync-connect-form evm-wallet-form"
+            submitLabel="添加 Ethereum 只读钱包"
           >
-            <span className="sr-only">使用服务端环境凭据</span>
+            <label className="field">
+              <span>钱包名称</span>
+              <input name="name" placeholder="例如：Main wallet" required />
+            </label>
+            <label className="field">
+              <span>Public Ethereum address</span>
+              <input
+                autoComplete="off"
+                inputMode="text"
+                name="publicAddress"
+                pattern="0x[0-9a-fA-F]{40}"
+                placeholder="0x…"
+                required
+                spellCheck={false}
+              />
+            </label>
+            <label className="field">
+              <span>History start date · UTC</span>
+              <input
+                defaultValue="2026-01-01"
+                name="historyStartDate"
+                required
+                type="date"
+              />
+            </label>
           </SettingsActionForm>
         </section>
-      ) : (
-        connections.map((connection) => {
-          const status = connectionStatus(connection);
-          const candidates = connection.candidates.filter((candidate) =>
-            candidateMatchesQueue(candidate.status, queue),
-          );
-          return (
-            <div className="sync-workbench" key={connection.id}>
-              <section className="content-section sync-connection-card">
-                <div className="sync-connection-heading">
-                  <div>
-                    <p className="eyebrow">Kraken Spot · Read only</p>
-                    <h2>{connection.name}</h2>
-                    <span className={"sync-status sync-status-" + status.tone}>
-                      {status.label}
-                    </span>
-                  </div>
-                  <SyncRunButton connectionId={connection.id} />
+      </div>
+
+      {connections.map((connection) => {
+        const isEvm = connection.provider === "evm_wallet";
+        const status = connectionStatus(connection);
+        const candidates = connection.candidates.filter((candidate) =>
+          candidateMatchesQueue(candidate.status, queue),
+        );
+        const candidateGroups = isEvm
+          ? [
+              ...new Set(
+                candidates.map(
+                  (candidate) => candidate.evmDetail?.txHash ?? candidate.id,
+                ),
+              ),
+            ].map((key) => ({
+              key,
+              label: key.startsWith("0x")
+                ? `Tx ${compactAddress(key)}`
+                : "Unresolved transaction",
+              candidates: candidates.filter(
+                (candidate) =>
+                  (candidate.evmDetail?.txHash ?? candidate.id) === key,
+              ),
+            }))
+          : candidates.map((candidate) => ({
+              key: candidate.id,
+              label: null,
+              candidates: [candidate],
+            }));
+        return (
+          <div
+            className={"sync-workbench " + (isEvm ? "evm-workbench" : "")}
+            key={connection.id}
+          >
+            <section className="content-section sync-connection-card">
+              <div className="sync-connection-heading">
+                <div>
+                  <p className="eyebrow">
+                    {isEvm
+                      ? "Ethereum Mainnet · Read only"
+                      : "Kraken Spot · Read only"}
+                  </p>
+                  <h2>{connection.name}</h2>
+                  {connection.evmWallet ? (
+                    <code
+                      className="evm-wallet-address"
+                      title={connection.evmWallet.addressLower}
+                    >
+                      ◇ {compactAddress(connection.evmWallet.addressLower)}
+                    </code>
+                  ) : null}
+                  <span className={"sync-status sync-status-" + status.tone}>
+                    {status.label}
+                  </span>
                 </div>
-                <p className="sync-safety-copy">
-                  此按钮只抓取 Balance、Ledgers 与 Trades History；Import 或
-                  Reconcile 仍需单独确认。
-                </p>
-                <dl className="credential-facts">
+                <SyncRunButton
+                  connectionId={connection.id}
+                  provider={connection.provider}
+                />
+              </div>
+              <p className="sync-safety-copy">
+                {isEvm
+                  ? "当前余额读取 latest；transfer、transaction 与 receipt 历史只同步到 finalized block，movement 和 gas 分开审核。"
+                  : "此按钮只抓取 Balance、Ledgers 与 Trades History；Import 或 Reconcile 仍需单独确认。"}
+              </p>
+              <dl className="credential-facts">
+                <div>
+                  <dt>Credential</dt>
+                  <dd>{connection.credentialRef}</dd>
+                </div>
+                <div>
+                  <dt>{isEvm ? "Alchemy key" : "API key"}</dt>
+                  <dd>{connection.configured ? "已配置" : "未配置"}</dd>
+                </div>
+                <div>
+                  <dt>最近成功</dt>
+                  <dd>{connection.state?.lastSuccessAt ?? "尚未同步"}</dd>
+                </div>
+                {connection.evmWallet ? (
                   <div>
-                    <dt>Credential</dt>
-                    <dd>{connection.credentialRef}</dd>
+                    <dt>Finalized history</dt>
+                    <dd>
+                      {connection.evmWallet.historyStartAt.slice(0, 10)} →{" "}
+                      {connection.evmState?.lastFinalizedBlockText ??
+                        "等待同步"}
+                    </dd>
                   </div>
-                  <div>
-                    <dt>API key</dt>
-                    <dd>{connection.configured ? "已配置" : "未配置"}</dd>
-                  </div>
-                  <div>
-                    <dt>最近成功</dt>
-                    <dd>{connection.state?.lastSuccessAt ?? "尚未同步"}</dd>
-                  </div>
-                </dl>
+                ) : null}
+              </dl>
+              {!isEvm ? (
                 <div className="permission-checks" aria-label="Kraken 权限状态">
                   {["query-funds", "query-ledger", "query-closed-trades"].map(
                     (permission) => (
@@ -190,258 +309,309 @@ export default async function SyncPage({
                       : "✓ 未检测到危险写权限"}
                   </span>
                 </div>
-                {connection.state?.lastErrorCode ? (
-                  <p className="form-error" role="alert">
-                    {connection.state.lastErrorCode} ·{" "}
-                    {connection.state.lastErrorMessage}
-                  </p>
-                ) : null}
-              </section>
-
-              <section className="content-section sync-mapping-section">
-                <div className="section-heading">
-                  <div>
-                    <p className="eyebrow">Identity before amounts</p>
-                    <h2>资产与账户映射</h2>
-                  </div>
-                  <span>{connection.mappings.length} 个 raw asset</span>
+              ) : (
+                <div
+                  className="permission-checks"
+                  aria-label="Ethereum 安全边界"
+                >
+                  <span>✓ chainId 1 only</span>
+                  <span>✓ public address only</span>
+                  <span>✓ no sign / send / write RPC</span>
                 </div>
-                {connection.mappings.length > 0 ? (
-                  <div className="sync-table-scroll">
-                    <table className="sync-mapping-table">
-                      <thead>
-                        <tr>
-                          <th>Kraken raw</th>
-                          <th>Canonical</th>
-                          <th>Talli asset / account</th>
-                          <th>状态</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {connection.mappings.map((mapping) => {
-                          const action = updateExternalMappingAction.bind(
-                            null,
-                            connection.id,
-                            mapping.providerAssetKey,
-                          );
-                          return (
-                            <tr key={mapping.providerAssetKey}>
-                              <td data-label="Kraken raw">
-                                <code>{mapping.providerAssetKey}</code>
-                              </td>
-                              <td data-label="Canonical">
-                                {mapping.providerDisplayCode ?? "未解析"}
-                              </td>
-                              <td data-label="Talli mapping">
-                                <SettingsActionForm
-                                  action={action}
-                                  className="mapping-inline-form"
-                                  submitLabel="保存映射"
-                                >
-                                  <label className="field compact-field">
-                                    <span className="sr-only">映射状态</span>
-                                    <select
-                                      defaultValue={mapping.mappingStatus}
-                                      name="mappingStatus"
-                                    >
-                                      <option value="mapped">映射</option>
-                                      <option value="unmapped">未映射</option>
-                                      <option value="ignored">忽略</option>
-                                    </select>
-                                  </label>
-                                  <label className="field compact-field">
-                                    <span className="sr-only">Talli 资产</span>
-                                    <select
-                                      defaultValue={mapping.talliAssetId ?? ""}
-                                      name="talliAssetId"
-                                    >
-                                      <option value="">选择资产</option>
-                                      {connection.assets.map((asset) => (
-                                        <option key={asset.id} value={asset.id}>
-                                          {asset.code} · {asset.name}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </label>
-                                  <label className="field compact-field">
-                                    <span className="sr-only">Talli 账户</span>
-                                    <select
-                                      defaultValue={
-                                        mapping.talliAccountId ?? ""
-                                      }
-                                      name="talliAccountId"
-                                    >
-                                      <option value="">选择账户</option>
-                                      {connection.accounts.map((account) => (
-                                        <option
-                                          key={account.id}
-                                          value={account.id}
-                                        >
-                                          {account.name} · {account.assetCode}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </label>
-                                </SettingsActionForm>
-                              </td>
-                              <td data-label="状态">
-                                <span
-                                  className={
-                                    "mapping-state mapping-state-" +
-                                    mapping.mappingStatus
-                                  }
-                                >
-                                  {mapping.mappingStatus === "mapped"
-                                    ? mapping.talliAssetCode +
-                                      " · " +
-                                      mapping.talliAccountName
-                                    : mapping.mappingStatus === "ignored"
-                                      ? "已忽略"
-                                      : "待处理"}
-                                </span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <p className="empty-inline">
-                    首次同步后会显示 Kraken raw asset。
-                  </p>
-                )}
-              </section>
+              )}
+              {connection.state?.lastErrorCode ? (
+                <p className="form-error" role="alert">
+                  {connection.state.lastErrorCode} ·{" "}
+                  {connection.state.lastErrorMessage}
+                </p>
+              ) : null}
+            </section>
 
-              <section className="content-section sync-observations-section">
-                <div className="section-heading">
-                  <div>
-                    <p className="eyebrow">Observed, never auto-posted</p>
-                    <h2>余额观测</h2>
-                  </div>
-                  <span>{connection.observations.length} 个最新观测</span>
+            <section className="content-section sync-mapping-section">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Identity before amounts</p>
+                  <h2>资产与账户映射</h2>
                 </div>
-                {connection.observations.length > 0 ? (
-                  <div className="observation-grid">
-                    {connection.observations.map((observation) => (
-                      <article
-                        className="observation-card"
-                        key={observation.id}
-                      >
-                        <header>
-                          <div>
-                            <strong>Kraken {observation.assetCode}</strong>
-                            <small>
-                              {observation.accountName ?? "尚未映射账户"}
-                            </small>
-                          </div>
-                          <code>{observation.providerAssetKey}</code>
-                        </header>
-                        <dl>
-                          <div>
-                            <dt>外部观测</dt>
-                            <dd>{observation.externalDisplay}</dd>
-                          </div>
-                          <div>
-                            <dt>Talli 账本</dt>
-                            <dd>
-                              {observation.ledgerDisplay ?? "映射后可比较"}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>差异</dt>
-                            <dd
-                              className={
-                                "difference-" +
-                                (observation.differenceDirection ?? "unknown")
+                <span>{connection.mappings.length} 个 raw asset</span>
+              </div>
+              {connection.mappings.length > 0 ? (
+                <div className="sync-table-scroll">
+                  <table className="sync-mapping-table">
+                    <thead>
+                      <tr>
+                        <th>{isEvm ? "Chain identity" : "Kraken raw"}</th>
+                        <th>{isEvm ? "Metadata" : "Canonical"}</th>
+                        <th>Talli asset / account</th>
+                        <th>状态</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {connection.mappings.map((mapping) => {
+                        const action = updateExternalMappingAction.bind(
+                          null,
+                          connection.id,
+                          mapping.providerAssetKey,
+                        );
+                        return (
+                          <tr key={mapping.providerAssetKey}>
+                            <td
+                              data-label={
+                                isEvm ? "Chain identity" : "Kraken raw"
                               }
                             >
-                              {observation.differenceDisplay ??
-                                observation.precisionStatus}
-                            </dd>
-                          </div>
-                        </dl>
-                        <time dateTime={observation.observedAt}>
-                          观察时间 {observation.observedAt}
-                        </time>
-                        {observation.accountId &&
-                        observation.differenceDisplay ? (
-                          <ReconcileObservationButton
-                            accountId={observation.accountId}
-                            disabled={observation.reconciled}
-                            observationId={observation.id}
-                          />
-                        ) : null}
-                      </article>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="empty-inline">
-                    同步后才会生成 append-only 余额观测。
-                  </p>
-                )}
-              </section>
-
-              <section className="content-section candidate-queue-section">
-                <div className="section-heading">
-                  <div>
-                    <p className="eyebrow">Review before ledger</p>
-                    <h2>交易候选</h2>
-                  </div>
-                  <span>{connection.candidates.length} 个候选</span>
+                              <code>{mapping.providerAssetKey}</code>
+                            </td>
+                            <td data-label={isEvm ? "Metadata" : "Canonical"}>
+                              <span className="mapping-metadata">
+                                <strong>
+                                  {mapping.providerDisplayCode ?? "未解析"}
+                                </strong>
+                                {isEvm ? (
+                                  <small>
+                                    decimals{" "}
+                                    {mapping.providerMetadata.decimals ?? "?"}
+                                    {mapping.providerMetadata.contractAddress
+                                      ? ` · ${mapping.providerMetadata.contractAddress}`
+                                      : " · native"}
+                                  </small>
+                                ) : null}
+                              </span>
+                            </td>
+                            <td data-label="Talli mapping">
+                              <SettingsActionForm
+                                action={action}
+                                className="mapping-inline-form"
+                                submitLabel="保存映射"
+                              >
+                                <label className="field compact-field">
+                                  <span className="sr-only">映射状态</span>
+                                  <select
+                                    defaultValue={mapping.mappingStatus}
+                                    name="mappingStatus"
+                                  >
+                                    <option value="mapped">映射</option>
+                                    <option value="unmapped">未映射</option>
+                                    <option value="ignored">忽略</option>
+                                  </select>
+                                </label>
+                                <label className="field compact-field">
+                                  <span className="sr-only">Talli 资产</span>
+                                  <select
+                                    defaultValue={mapping.talliAssetId ?? ""}
+                                    name="talliAssetId"
+                                  >
+                                    <option value="">选择资产</option>
+                                    {connection.assets.map((asset) => (
+                                      <option key={asset.id} value={asset.id}>
+                                        {asset.code} · {asset.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="field compact-field">
+                                  <span className="sr-only">Talli 账户</span>
+                                  <select
+                                    defaultValue={mapping.talliAccountId ?? ""}
+                                    name="talliAccountId"
+                                  >
+                                    <option value="">选择账户</option>
+                                    {connection.accounts.map((account) => (
+                                      <option
+                                        key={account.id}
+                                        value={account.id}
+                                      >
+                                        {account.name} · {account.assetCode}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                              </SettingsActionForm>
+                            </td>
+                            <td data-label="状态">
+                              <span
+                                className={
+                                  "mapping-state mapping-state-" +
+                                  mapping.mappingStatus
+                                }
+                              >
+                                {mapping.mappingStatus === "mapped"
+                                  ? mapping.talliAssetCode +
+                                    " · " +
+                                    mapping.talliAccountName
+                                  : mapping.mappingStatus === "ignored"
+                                    ? "已忽略"
+                                    : "待处理"}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-                <nav className="candidate-tabs" aria-label="候选状态">
-                  {QUEUES.map((item) => (
-                    <Link
-                      aria-current={queue === item.value ? "page" : undefined}
-                      href={"/sync?queue=" + item.value}
-                      key={item.value}
-                    >
-                      {item.label}
-                    </Link>
+              ) : (
+                <p className="empty-inline">
+                  首次同步后会显示
+                  {isEvm ? "链上 asset identity" : " Kraken raw asset"}。
+                </p>
+              )}
+            </section>
+
+            <section className="content-section sync-observations-section">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Observed, never auto-posted</p>
+                  <h2>余额观测</h2>
+                </div>
+                <span>{connection.observations.length} 个最新观测</span>
+              </div>
+              {connection.observations.length > 0 ? (
+                <div className="observation-grid">
+                  {connection.observations.map((observation) => (
+                    <article className="observation-card" key={observation.id}>
+                      <header>
+                        <div>
+                          <strong>
+                            {isEvm ? "On-chain" : "Kraken"}{" "}
+                            {observation.assetCode}
+                          </strong>
+                          <small>
+                            {observation.accountName ?? "尚未映射账户"}
+                          </small>
+                        </div>
+                        <code>{observation.providerAssetKey}</code>
+                      </header>
+                      <dl>
+                        <div>
+                          <dt>外部观测</dt>
+                          <dd>{observation.externalDisplay}</dd>
+                        </div>
+                        <div>
+                          <dt>Talli 账本</dt>
+                          <dd>{observation.ledgerDisplay ?? "映射后可比较"}</dd>
+                        </div>
+                        <div>
+                          <dt>差异</dt>
+                          <dd
+                            className={
+                              "difference-" +
+                              (observation.differenceDirection ?? "unknown")
+                            }
+                          >
+                            {observation.differenceDisplay ??
+                              observation.precisionStatus}
+                          </dd>
+                        </div>
+                      </dl>
+                      <time dateTime={observation.observedAt}>
+                        观察时间 {observation.observedAt}
+                        {observation.evmDetail?.syncHeadBlockText
+                          ? ` · head ${observation.evmDetail.syncHeadBlockText}`
+                          : ""}
+                      </time>
+                      {observation.accountId &&
+                      observation.differenceDisplay ? (
+                        <ReconcileObservationButton
+                          accountId={observation.accountId}
+                          disabled={observation.reconciled}
+                          observationId={observation.id}
+                          providerName={isEvm ? "Ethereum on-chain" : "Kraken"}
+                        />
+                      ) : null}
+                    </article>
                   ))}
-                </nav>
-                {candidates.length > 0 ? (
-                  <ul className="candidate-list">
-                    {candidates.map((candidate) => (
-                      <li key={candidate.id}>
-                        <Link href={"/sync/candidates/" + candidate.id}>
-                          <span className="candidate-provider-mark">K</span>
-                          <span className="candidate-copy">
-                            <strong>{candidate.title}</strong>
-                            <small>
-                              {candidate.legs.length > 0
-                                ? candidate.legs
-                                    .map(
-                                      (leg) =>
-                                        leg.amountText +
-                                        " " +
-                                        (leg.assetCode ?? leg.providerAssetKey),
-                                    )
-                                    .join(" · ")
-                                : "没有可导入的标准化 legs"}
-                            </small>
-                            <code>{candidate.stableKey}</code>
-                          </span>
-                          <span className="candidate-state">
-                            <strong>{statusLabel(candidate.status)}</strong>
-                            <small>
-                              建议：
-                              {eventTypeLabel(candidate.suggestedEventType)}
-                            </small>
-                          </span>
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="empty-inline">这个队列目前为空。</p>
-                )}
-              </section>
-            </div>
-          );
-        })
-      )}
+                </div>
+              ) : (
+                <p className="empty-inline">
+                  同步后才会生成 append-only 余额观测。
+                </p>
+              )}
+            </section>
+
+            <section className="content-section candidate-queue-section">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Review before ledger</p>
+                  <h2>交易候选</h2>
+                </div>
+                <span>{connection.candidates.length} 个候选</span>
+              </div>
+              <nav className="candidate-tabs" aria-label="候选状态">
+                {QUEUES.map((item) => (
+                  <Link
+                    aria-current={queue === item.value ? "page" : undefined}
+                    href={"/sync?queue=" + item.value}
+                    key={item.value}
+                  >
+                    {item.label}
+                  </Link>
+                ))}
+              </nav>
+              {candidateGroups.length > 0 ? (
+                <div className="candidate-tx-groups">
+                  {candidateGroups.map((group) => (
+                    <article className="candidate-tx-group" key={group.key}>
+                      {group.label ? (
+                        <header>
+                          <strong>{group.label}</strong>
+                          <code title={group.key}>{group.key}</code>
+                        </header>
+                      ) : null}
+                      <ul className="candidate-list">
+                        {group.candidates.map((candidate) => (
+                          <li key={candidate.id}>
+                            <Link href={"/sync/candidates/" + candidate.id}>
+                              <span className="candidate-provider-mark">
+                                {isEvm ? "Ξ" : "K"}
+                              </span>
+                              <span className="candidate-copy">
+                                <strong>
+                                  {candidate.evmDetail?.candidateKind === "gas"
+                                    ? "Network fee"
+                                    : candidate.evmDetail?.candidateKind ===
+                                        "movement"
+                                      ? "Movement"
+                                      : candidate.title}
+                                </strong>
+                                <small>
+                                  {candidate.legs.length > 0
+                                    ? candidate.legs
+                                        .map(
+                                          (leg) =>
+                                            leg.amountText +
+                                            " " +
+                                            (leg.assetCode ??
+                                              leg.providerAssetKey),
+                                        )
+                                        .join(" · ")
+                                    : "没有可导入的标准化 legs"}
+                                </small>
+                                <code>{candidate.stableKey}</code>
+                              </span>
+                              <span className="candidate-state">
+                                <strong>{statusLabel(candidate.status)}</strong>
+                                <small>
+                                  {candidate.evmDetail?.classification ??
+                                    "建议"}{" "}
+                                  ·{" "}
+                                  {eventTypeLabel(candidate.suggestedEventType)}
+                                </small>
+                              </span>
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-inline">这个队列目前为空。</p>
+              )}
+            </section>
+          </div>
+        );
+      })}
     </div>
   );
 }

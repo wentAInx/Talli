@@ -10,6 +10,7 @@ import { localDateTimeToUtc } from "@/domain/time";
 import {
   AccountService,
   ExternalMappingService,
+  EvmWalletService,
   LedgerCommandService,
   ManualPriceService,
   ProviderMappingService,
@@ -78,8 +79,10 @@ const ERROR_MESSAGES: Record<string, string> = {
   EXTERNAL_ACCOUNT_BOOK_MISMATCH: "Talli 账户必须属于当前外部连接的账本。",
   EXTERNAL_ACCOUNT_REQUIRED: "映射时必须选择一个 Talli 账户。",
   EXTERNAL_ASSET_REQUIRED: "映射时必须选择一个 Talli 资产。",
-  EXTERNAL_ASSET_MAPPING_NOT_FOUND: "请先同步 Kraken 资产再设置映射。",
-  EXTERNAL_CONNECTION_NOT_FOUND: "没有找到 Kraken 外部连接。",
+  EXTERNAL_ASSET_MAPPING_NOT_FOUND: "请先同步外部资产再设置映射。",
+  EXTERNAL_CONNECTION_NOT_FOUND: "没有找到外部连接。",
+  EVM_WALLET_DUPLICATE: "这个 Ethereum Mainnet 公共地址已经存在。",
+  EVM_WALLET_NAME_REQUIRED: "钱包名称不能为空。",
   SNAPSHOT_TIME_CONFLICT: "该账户在同一时刻已经存在余额锚点。",
   TAG_ARCHIVED: "选择的标签已归档。",
   TAG_NAME_REQUIRED: "标签名称不能为空。",
@@ -753,6 +756,36 @@ export async function createKrakenConnectionAction(
       return new ExternalMappingService(context).createKrakenConnection({
         bookId,
       });
+    });
+  } catch (error) {
+    return actionError(error);
+  }
+  revalidatePath("/sync");
+  return { error: null };
+}
+
+export async function createEvmWalletAction(
+  _previous: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  void _previous;
+  try {
+    const name = requiredFormText(formData, "name", "钱包名称");
+    const publicAddress = requiredFormText(
+      formData,
+      "publicAddress",
+      "公共地址",
+    );
+    const historyStartDate = z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "历史起点日期无效。")
+      .parse(formData.get("historyStartDate"));
+    const historyStartAt = `${historyStartDate}T00:00:00.000Z`;
+    await withDatabase((context) => {
+      const bookId = new ReferenceDataService(context).getDefaultBookId();
+      return new EvmWalletService(context, () => {
+        throw new Error("Provider is not used while creating a wallet.");
+      }).createWallet({ bookId, name, publicAddress, historyStartAt });
     });
   } catch (error) {
     return actionError(error);

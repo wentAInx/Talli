@@ -7,6 +7,7 @@ import {
   findExternalAssetMapping,
   findExternalCandidate,
   findExternalConnection,
+  findEvmCandidateDetail,
   findExternalImportLink,
   findExternalSourceObjectById,
   insertExternalImportLink,
@@ -99,7 +100,16 @@ function explicitUnresolvedFeeAmount(
   const sources = listExternalCandidateSourceLinks(executor, candidateId)
     .filter((link) => link.relation === "primary")
     .map((link) => findExternalSourceObjectById(executor, link.sourceObjectId))
-    .filter((source) => source?.objectType === "kraken_trade");
+    .flatMap((source) =>
+      source?.objectType === "kraken_trade"
+        ? [
+            {
+              objectType: "kraken_trade" as const,
+              payloadJson: source.payloadJson,
+            },
+          ]
+        : [],
+    );
   if (sources.length !== 1) return null;
   return krakenReportedNonzeroTradeFee(sources[0]!);
 }
@@ -135,6 +145,34 @@ function prepareCommand(
     "EXTERNAL_CONNECTION_NOT_FOUND",
     "External connection was not found.",
   );
+  if (connection.provider === "evm_wallet") {
+    const detail = findEvmCandidateDetail(executor, candidate.id);
+    assertService(
+      detail,
+      "EXTERNAL_CANDIDATE_INTEGRITY_ERROR",
+      "Ethereum candidate details are missing.",
+    );
+    const choiceAllowed =
+      (detail.candidateKind === "gas" &&
+        detail.classification === "gas_only" &&
+        input.chosenEventType === "expense") ||
+      (detail.candidateKind === "movement" &&
+        detail.classification === "simple_exchange" &&
+        input.chosenEventType === "exchange") ||
+      (detail.candidateKind === "movement" &&
+        detail.classification === "simple_in" &&
+        (input.chosenEventType === "income" ||
+          input.chosenEventType === "transfer")) ||
+      (detail.candidateKind === "movement" &&
+        detail.classification === "simple_out" &&
+        (input.chosenEventType === "expense" ||
+          input.chosenEventType === "transfer"));
+    assertService(
+      choiceAllowed,
+      "EVM_IMPORT_EVENT_TYPE_INVALID",
+      "The selected Ledger event type is not supported for this Ethereum candidate.",
+    );
+  }
   const legs = listExternalCandidateLegs(executor, candidate.id);
   const source = legs.find((leg) => leg.role === "source");
   const destination = legs.find((leg) => leg.role === "destination");
@@ -293,7 +331,12 @@ function prepareCommand(
         accountId: input.mainAccountId!,
         amount: magnitudeText(main.amountText),
         categoryId: input.categoryId ?? null,
-        payee: "Kraken",
+        payee:
+          connection.provider === "evm_wallet"
+            ? candidate.stableKey.includes(":gas:")
+              ? "Ethereum Network"
+              : "Ethereum Wallet"
+            : "Kraken",
       },
     };
   }

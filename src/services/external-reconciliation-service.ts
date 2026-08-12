@@ -114,7 +114,11 @@ export class ExternalReconciliationService {
           asOf: observation.observedAt,
           note:
             input.note?.trim() ||
-            `Explicit reconciliation from Kraken observation ${observation.id}`,
+            `Explicit reconciliation from ${
+              connection.provider === "evm_wallet"
+                ? "Ethereum wallet"
+                : "Kraken"
+            } observation ${observation.id}`,
         });
         return {
           snapshotId,

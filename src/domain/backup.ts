@@ -13,13 +13,23 @@ import {
   externalDecimalToAtomic,
   validatedExternalDecimalText,
 } from "./external-sync";
+import {
+  EVM_ALCHEMY_CREDENTIAL_REF,
+  evmGasStableKey,
+  evmMovementStableKey,
+  evmWalletSourceKey,
+  normalizeEvmAddress,
+  normalizeEvmTxHash,
+  parseEvmAssetKey,
+} from "./evm";
 import { assertIanaTimeZone, canonicalUtcInstantValue } from "./time";
 import type { LedgerEntryDraft } from "./types";
 
 export const BACKUP_FORMAT = "multi-asset-ledger-backup";
 export const BACKUP_LEGACY_SCHEMA_VERSION = 1;
 export const BACKUP_V2_SCHEMA_VERSION = 2;
-export const BACKUP_SCHEMA_VERSION = 3;
+export const BACKUP_V3_SCHEMA_VERSION = 3;
+export const BACKUP_SCHEMA_VERSION = 4;
 
 export class BackupValidationError extends Error {
   constructor(
@@ -241,7 +251,7 @@ const manualPriceQuoteSchema = z
   })
   .strict();
 
-const externalConnectionSchema = z
+const v3ExternalConnectionSchema = z
   .object({
     id,
     bookId: id,
@@ -258,6 +268,41 @@ const externalConnectionSchema = z
     updatedAt: canonicalInstant,
   })
   .strict();
+
+const externalConnectionSchema = z.discriminatedUnion("provider", [
+  z
+    .object({
+      id,
+      bookId: id,
+      provider: z.literal("kraken"),
+      sourceKey: z
+        .string()
+        .refine((value): boolean => value === "kraken:primary"),
+      name: z.string(),
+      credentialRef: z
+        .string()
+        .refine((value): boolean => value === "env:kraken.primary"),
+      isEnabled: z.boolean(),
+      createdAt: canonicalInstant,
+      updatedAt: canonicalInstant,
+    })
+    .strict(),
+  z
+    .object({
+      id,
+      bookId: id,
+      provider: z.literal("evm_wallet"),
+      sourceKey: id,
+      name: z.string(),
+      credentialRef: z
+        .string()
+        .refine((value): boolean => value === EVM_ALCHEMY_CREDENTIAL_REF),
+      isEnabled: z.boolean(),
+      createdAt: canonicalInstant,
+      updatedAt: canonicalInstant,
+    })
+    .strict(),
+]);
 
 const externalAssetMappingSchema = z
   .object({
@@ -298,7 +343,7 @@ const externalBalanceObservationSchema = z
   })
   .strict();
 
-const externalSourceObjectSchema = z
+const v3ExternalSourceObjectSchema = z
   .object({
     id,
     connectionId: id,
@@ -309,6 +354,74 @@ const externalSourceObjectSchema = z
     payloadHash: sha256Text,
     firstSeenAt: canonicalInstant,
     lastSeenAt: canonicalInstant,
+  })
+  .strict();
+
+const externalSourceObjectSchema = v3ExternalSourceObjectSchema.extend({
+  objectType: z.enum([
+    "kraken_ledger",
+    "kraken_trade",
+    "evm_transaction",
+    "evm_transfer",
+  ]),
+});
+
+const evmWalletConnectionSchema = z
+  .object({
+    connectionId: id,
+    chainId: z
+      .number()
+      .int()
+      .refine((value): boolean => value === 1),
+    networkId: z.string().refine((value): boolean => value === "eth-mainnet"),
+    addressLower: z.string(),
+    addressDisplay: z.string(),
+    dataProvider: z.string().refine((value): boolean => value === "alchemy"),
+    historyStartAt: canonicalInstant,
+    createdAt: canonicalInstant,
+    updatedAt: canonicalInstant,
+  })
+  .strict();
+
+const evmBalanceObservationDetailSchema = z
+  .object({
+    observationId: id,
+    chainId: z
+      .number()
+      .int()
+      .refine((value): boolean => value === 1),
+    assetKind: z.enum(["native", "erc20"]),
+    contractAddressLower: z.string().nullable(),
+    rawAmountAtomicText: z.string().regex(/^\d+$/),
+    tokenDecimals: z.number().int().min(0).max(255),
+    syncHeadBlockText: z.string().regex(/^\d+$/).nullable(),
+  })
+  .strict();
+
+const evmCandidateDetailSchema = z
+  .object({
+    candidateId: id,
+    chainId: z
+      .number()
+      .int()
+      .refine((value): boolean => value === 1),
+    txHash: z.string(),
+    candidateKind: z.enum(["movement", "gas"]),
+    classification: z.enum([
+      "simple_in",
+      "simple_out",
+      "simple_exchange",
+      "gas_only",
+      "complex",
+      "unsupported",
+    ]),
+    txStatus: z.enum(["success", "failed", "unknown"]),
+    blockNumberText: z.string().regex(/^\d+$/).nullable(),
+    blockTimestamp: canonicalInstant.nullable(),
+    fromAddressLower: z.string(),
+    toAddressLower: z.string().nullable(),
+    gasFeeAtomicText: z.string().regex(/^\d+$/).nullable(),
+    gasFeeStatus: z.enum(["exact", "not_applicable", "unresolved"]),
   })
   .strict();
 
@@ -406,17 +519,27 @@ const v2DataSchema = v1DataSchema
 
 const v3DataSchema = v2DataSchema
   .extend({
-    externalConnections: z.array(externalConnectionSchema),
+    externalConnections: z.array(v3ExternalConnectionSchema),
     externalAssetMappings: z.array(externalAssetMappingSchema),
     externalAccountMappings: z.array(externalAccountMappingSchema),
     externalBalanceObservations: z.array(externalBalanceObservationSchema),
-    externalSourceObjects: z.array(externalSourceObjectSchema),
+    externalSourceObjects: z.array(v3ExternalSourceObjectSchema),
     externalTransactionCandidates: z.array(externalTransactionCandidateSchema),
     externalCandidateSourceObjects: z.array(
       externalCandidateSourceObjectSchema,
     ),
     externalTransactionLegs: z.array(externalTransactionLegSchema),
     externalImportLinks: z.array(externalImportLinkSchema),
+  })
+  .strict();
+
+const v4DataSchema = v3DataSchema
+  .extend({
+    externalConnections: z.array(externalConnectionSchema),
+    externalSourceObjects: z.array(externalSourceObjectSchema),
+    evmWalletConnections: z.array(evmWalletConnectionSchema),
+    evmBalanceObservationDetails: z.array(evmBalanceObservationDetailSchema),
+    evmCandidateDetails: z.array(evmCandidateDetailSchema),
   })
   .strict();
 
@@ -438,12 +561,21 @@ const v2BackupPayloadSchema = z
   })
   .strict();
 
+const v3BackupPayloadSchema = z
+  .object({
+    format: z.literal(BACKUP_FORMAT),
+    schemaVersion: z.literal(BACKUP_V3_SCHEMA_VERSION),
+    exportedAt: canonicalInstant,
+    data: v3DataSchema,
+  })
+  .strict();
+
 export const backupPayloadSchema = z
   .object({
     format: z.literal(BACKUP_FORMAT),
     schemaVersion: z.literal(BACKUP_SCHEMA_VERSION),
     exportedAt: canonicalInstant,
-    data: v3DataSchema,
+    data: v4DataSchema,
   })
   .strict();
 
@@ -451,6 +583,7 @@ export type BackupPayload = z.infer<typeof backupPayloadSchema>;
 export type BackupData = BackupPayload["data"];
 type LegacyBackupPayload = z.infer<typeof legacyBackupPayloadSchema>;
 type V2BackupPayload = z.infer<typeof v2BackupPayloadSchema>;
+type V3BackupPayload = z.infer<typeof v3BackupPayloadSchema>;
 
 function fail(code: string, message: string): never {
   throw new BackupValidationError(code, message);
@@ -639,8 +772,33 @@ function validateExternalRelations(data: BackupData): void {
   uniqueBy(data.externalConnections, (row) => row.id, "external connection id");
   uniqueBy(
     data.externalConnections,
-    (row) => `${row.bookId}\u0000${row.provider}\u0000${row.credentialRef}`,
+    (row) => `${row.bookId}\u0000${row.provider}\u0000${row.sourceKey}`,
     "external connection identity",
+  );
+  uniqueBy(
+    data.evmWalletConnections,
+    (row) => row.connectionId,
+    "EVM wallet connection id",
+  );
+  uniqueBy(
+    data.evmWalletConnections,
+    (row) => `${row.chainId}\u0000${row.addressLower}`,
+    "EVM wallet chain and address",
+  );
+  uniqueBy(
+    data.evmBalanceObservationDetails,
+    (row) => row.observationId,
+    "EVM balance observation detail",
+  );
+  uniqueBy(
+    data.evmCandidateDetails,
+    (row) => row.candidateId,
+    "EVM candidate detail",
+  );
+  uniqueBy(
+    data.evmCandidateDetails,
+    (row) => `${row.chainId}\u0000${row.txHash}\u0000${row.candidateKind}`,
+    "EVM transaction candidate identity",
   );
   uniqueBy(
     data.externalAssetMappings,
@@ -708,6 +866,15 @@ function validateExternalRelations(data: BackupData): void {
   const connections = new Map(
     data.externalConnections.map((row) => [row.id, row]),
   );
+  const evmWallets = new Map(
+    data.evmWalletConnections.map((row) => [row.connectionId, row]),
+  );
+  const evmObservationDetails = new Map(
+    data.evmBalanceObservationDetails.map((row) => [row.observationId, row]),
+  );
+  const evmCandidateDetails = new Map(
+    data.evmCandidateDetails.map((row) => [row.candidateId, row]),
+  );
   const mappingKey = (connectionId: string, providerAssetKey: string) =>
     `${connectionId}\u0000${providerAssetKey}`;
   const mappings = new Map(
@@ -733,13 +900,66 @@ function validateExternalRelations(data: BackupData): void {
         `External connection ${connection.id} references a missing book.`,
       );
     }
+    if (connection.provider === "kraken") {
+      if (
+        connection.sourceKey !== "kraken:primary" ||
+        connection.credentialRef !== "env:kraken.primary" ||
+        evmWallets.has(connection.id)
+      ) {
+        fail(
+          "BACKUP_EXTERNAL_IDENTITY_INVALID",
+          `Kraken connection ${connection.id} has inconsistent identity.`,
+        );
+      }
+    } else {
+      const wallet = evmWallets.get(connection.id);
+      if (!wallet) {
+        fail(
+          "BACKUP_EVM_RELATION",
+          `EVM connection ${connection.id} is missing its wallet subtype.`,
+        );
+      }
+      try {
+        if (
+          wallet.addressLower !== normalizeEvmAddress(wallet.addressLower) ||
+          normalizeEvmAddress(wallet.addressDisplay) !== wallet.addressLower ||
+          connection.sourceKey !== evmWalletSourceKey(wallet.addressLower)
+        ) {
+          throw new Error("identity mismatch");
+        }
+      } catch {
+        fail(
+          "BACKUP_EVM_IDENTITY_INVALID",
+          `EVM connection ${connection.id} has inconsistent mainnet identity.`,
+        );
+      }
+    }
+  }
+  for (const wallet of data.evmWalletConnections) {
+    if (connections.get(wallet.connectionId)?.provider !== "evm_wallet") {
+      fail(
+        "BACKUP_EVM_RELATION",
+        `EVM wallet ${wallet.connectionId} references a non-EVM connection.`,
+      );
+    }
   }
   for (const mapping of data.externalAssetMappings) {
-    if (!connections.has(mapping.connectionId)) {
+    const connection = connections.get(mapping.connectionId);
+    if (!connection) {
       fail(
         "BACKUP_EXTERNAL_RELATION",
         `External asset mapping ${mapping.providerAssetKey} references a missing connection.`,
       );
+    }
+    if (connection.provider === "evm_wallet") {
+      try {
+        parseEvmAssetKey(mapping.providerAssetKey);
+      } catch {
+        fail(
+          "BACKUP_EVM_ASSET_KEY_INVALID",
+          `EVM mapping ${mapping.providerAssetKey} has an invalid asset identity.`,
+        );
+      }
     }
     if (
       (mapping.mappingStatus === "mapped" &&
@@ -774,6 +994,7 @@ function validateExternalRelations(data: BackupData): void {
     }
   }
   for (const observation of data.externalBalanceObservations) {
+    const connection = connections.get(observation.connectionId);
     if (
       !mappings.has(
         mappingKey(observation.connectionId, observation.providerAssetKey),
@@ -782,6 +1003,34 @@ function validateExternalRelations(data: BackupData): void {
       fail(
         "BACKUP_EXTERNAL_RELATION",
         `External observation ${observation.id} references a missing mapping.`,
+      );
+    }
+    if (connection?.provider === "evm_wallet") {
+      const detail = evmObservationDetails.get(observation.id);
+      if (!detail) {
+        fail(
+          "BACKUP_EVM_RELATION",
+          `EVM observation ${observation.id} is missing raw on-chain details.`,
+        );
+      }
+      try {
+        const asset = parseEvmAssetKey(observation.providerAssetKey);
+        if (
+          asset.kind !== detail.assetKind ||
+          asset.contractAddressLower !== detail.contractAddressLower
+        ) {
+          throw new Error("asset mismatch");
+        }
+      } catch {
+        fail(
+          "BACKUP_EVM_ASSET_KEY_INVALID",
+          `EVM observation ${observation.id} has inconsistent asset identity.`,
+        );
+      }
+    } else if (evmObservationDetails.has(observation.id)) {
+      fail(
+        "BACKUP_EVM_RELATION",
+        `Non-EVM observation ${observation.id} contains EVM details.`,
       );
     }
     validateExternalAmount({
@@ -793,11 +1042,35 @@ function validateExternalRelations(data: BackupData): void {
       label: `External observation ${observation.id}`,
     });
   }
+  for (const detail of data.evmBalanceObservationDetails) {
+    const observation = data.externalBalanceObservations.find(
+      (row) => row.id === detail.observationId,
+    );
+    if (
+      !observation ||
+      connections.get(observation.connectionId)?.provider !== "evm_wallet"
+    ) {
+      fail(
+        "BACKUP_EVM_RELATION",
+        `EVM observation detail ${detail.observationId} is orphaned.`,
+      );
+    }
+  }
   for (const source of data.externalSourceObjects) {
-    if (!connections.has(source.connectionId)) {
+    const connection = connections.get(source.connectionId);
+    if (!connection) {
       fail(
         "BACKUP_EXTERNAL_RELATION",
         `External source ${source.id} references a missing connection.`,
+      );
+    }
+    const isKrakenSource =
+      source.objectType === "kraken_ledger" ||
+      source.objectType === "kraken_trade";
+    if ((connection.provider === "kraken") !== isKrakenSource) {
+      fail(
+        "BACKUP_EXTERNAL_SOURCE_PROVIDER_INVALID",
+        `External source ${source.id} is incompatible with its provider.`,
       );
     }
     const hash = createHash("sha256").update(source.payloadJson).digest("hex");
@@ -809,10 +1082,48 @@ function validateExternalRelations(data: BackupData): void {
     }
   }
   for (const candidate of data.externalTransactionCandidates) {
-    if (!connections.has(candidate.connectionId)) {
+    const connection = connections.get(candidate.connectionId);
+    if (!connection) {
       fail(
         "BACKUP_EXTERNAL_RELATION",
         `External candidate ${candidate.id} references a missing connection.`,
+      );
+    }
+    const evmDetail = evmCandidateDetails.get(candidate.id);
+    if (connection.provider === "evm_wallet") {
+      if (!evmDetail) {
+        fail(
+          "BACKUP_EVM_RELATION",
+          `EVM candidate ${candidate.id} is missing details.`,
+        );
+      }
+      try {
+        const txHash = normalizeEvmTxHash(evmDetail.txHash);
+        const expectedStableKey =
+          evmDetail.candidateKind === "gas"
+            ? evmGasStableKey(txHash)
+            : evmMovementStableKey(txHash);
+        if (
+          txHash !== evmDetail.txHash ||
+          candidate.stableKey !== expectedStableKey ||
+          normalizeEvmAddress(evmDetail.fromAddressLower) !==
+            evmDetail.fromAddressLower ||
+          (evmDetail.toAddressLower !== null &&
+            normalizeEvmAddress(evmDetail.toAddressLower) !==
+              evmDetail.toAddressLower)
+        ) {
+          throw new Error("candidate mismatch");
+        }
+      } catch {
+        fail(
+          "BACKUP_EVM_CANDIDATE_INVALID",
+          `EVM candidate ${candidate.id} has inconsistent transaction identity.`,
+        );
+      }
+    } else if (evmDetail || !candidate.stableKey.startsWith("kraken:")) {
+      fail(
+        "BACKUP_EXTERNAL_CANDIDATE_INVALID",
+        `Kraken candidate ${candidate.id} has an invalid namespace or subtype.`,
       );
     }
     const linked = data.externalCandidateSourceObjects.filter(
@@ -866,6 +1177,20 @@ function validateExternalRelations(data: BackupData): void {
       );
     }
   }
+  for (const detail of data.evmCandidateDetails) {
+    const candidate = candidates.get(detail.candidateId);
+    if (
+      !candidate ||
+      connections.get(candidate.connectionId)?.provider !== "evm_wallet" ||
+      (detail.candidateKind === "gas") !==
+        (detail.classification === "gas_only")
+    ) {
+      fail(
+        "BACKUP_EVM_RELATION",
+        `EVM candidate detail ${detail.candidateId} is orphaned or inconsistent.`,
+      );
+    }
+  }
   for (const link of data.externalCandidateSourceObjects) {
     const candidate = candidates.get(link.candidateId);
     const source = sources.get(link.sourceObjectId);
@@ -890,6 +1215,19 @@ function validateExternalRelations(data: BackupData): void {
         "BACKUP_EXTERNAL_RELATION",
         `External candidate leg ${leg.id} references a missing candidate or mapping.`,
       );
+    }
+    const connection = candidate
+      ? connections.get(candidate.connectionId)
+      : undefined;
+    if (connection?.provider === "evm_wallet") {
+      try {
+        parseEvmAssetKey(leg.providerAssetKey);
+      } catch {
+        fail(
+          "BACKUP_EVM_ASSET_KEY_INVALID",
+          `EVM candidate leg ${leg.id} has an invalid asset identity.`,
+        );
+      }
     }
     validateExternalAmount({
       amountText: leg.amountText,
@@ -1242,10 +1580,10 @@ function upgradeLegacyBackup(payload: LegacyBackupPayload): V2BackupPayload {
   };
 }
 
-function upgradeV2Backup(payload: V2BackupPayload): BackupPayload {
+function upgradeV2Backup(payload: V2BackupPayload): V3BackupPayload {
   return {
     ...payload,
-    schemaVersion: BACKUP_SCHEMA_VERSION,
+    schemaVersion: BACKUP_V3_SCHEMA_VERSION,
     data: {
       ...payload.data,
       externalConnections: [],
@@ -1257,6 +1595,25 @@ function upgradeV2Backup(payload: V2BackupPayload): BackupPayload {
       externalCandidateSourceObjects: [],
       externalTransactionLegs: [],
       externalImportLinks: [],
+    },
+  };
+}
+
+function upgradeV3Backup(payload: V3BackupPayload): BackupPayload {
+  return {
+    ...payload,
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    data: {
+      ...payload.data,
+      externalConnections: payload.data.externalConnections.map(
+        (connection) => ({
+          ...connection,
+          sourceKey: "kraken:primary" as const,
+        }),
+      ),
+      evmWalletConnections: [],
+      evmBalanceObservationDetails: [],
+      evmCandidateDetails: [],
     },
   };
 }
@@ -1280,15 +1637,21 @@ export function parseBackupPayload(value: unknown): BackupPayload {
   if (schemaVersion === BACKUP_LEGACY_SCHEMA_VERSION) {
     const legacy = legacyBackupPayloadSchema.safeParse(value);
     if (!legacy.success) schemaFailure(legacy);
-    normalized = upgradeV2Backup(upgradeLegacyBackup(legacy.data));
+    normalized = upgradeV3Backup(
+      upgradeV2Backup(upgradeLegacyBackup(legacy.data)),
+    );
   } else if (schemaVersion === BACKUP_V2_SCHEMA_VERSION) {
     const v2 = v2BackupPayloadSchema.safeParse(value);
     if (!v2.success) schemaFailure(v2);
-    normalized = upgradeV2Backup(v2.data);
-  } else {
-    const v3 = backupPayloadSchema.safeParse(value);
+    normalized = upgradeV3Backup(upgradeV2Backup(v2.data));
+  } else if (schemaVersion === BACKUP_V3_SCHEMA_VERSION) {
+    const v3 = v3BackupPayloadSchema.safeParse(value);
     if (!v3.success) schemaFailure(v3);
-    normalized = v3.data;
+    normalized = upgradeV3Backup(v3.data);
+  } else {
+    const v4 = backupPayloadSchema.safeParse(value);
+    if (!v4.success) schemaFailure(v4);
+    normalized = v4.data;
   }
   validateRelations(normalized.data);
   return normalized;

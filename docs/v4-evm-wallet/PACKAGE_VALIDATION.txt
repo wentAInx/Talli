@@ -1,0 +1,8 @@
+PACKAGE VALIDATION — 2026-08-12
+- Fixture JSON parse: PASS
+- V4 target schema SQLite parse: PASS
+- Expected V4 external/EVM tables: PASS
+- Multiple EVM wallet connections sharing env:alchemy.primary: PASS
+- Combined package: PASS
+
+This validates package structure, not repository implementation. Codex must implement the actual forward migration and run the full CI gates.

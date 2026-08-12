@@ -5,7 +5,8 @@ const EXTERNAL_DECIMAL_PATTERN = /^[+-]?\d+(?:\.\d+)?$/;
 
 export type ExternalPrecisionStatus = "exact" | "excess_precision" | "unmapped";
 
-export type ExternalObjectType = "kraken_ledger" | "kraken_trade";
+export type ExternalObjectType =
+  "kraken_ledger" | "kraken_trade" | "evm_transaction" | "evm_transfer";
 
 export type CanonicalJsonValue =
   | null
@@ -115,6 +116,11 @@ export function externalStableKey(
     normalizedId.length > 0,
     "INVALID_EXTERNAL_ID",
     "External object ID cannot be empty.",
+  );
+  assertDomain(
+    objectType === "kraken_trade" || objectType === "kraken_ledger",
+    "INVALID_EXTERNAL_OBJECT_TYPE",
+    "Use the EVM transaction stable-key helpers for on-chain candidates.",
   );
   return objectType === "kraken_trade"
     ? `kraken:trade:${normalizedId}`

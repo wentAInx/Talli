@@ -51,6 +51,7 @@ export default defineConfig({
       CI: "true",
       DATABASE_PATH: e2eDatabasePath,
       TALLI_E2E_KRAKEN_FIXTURE: "1",
+      TALLI_E2E_EVM_FIXTURE: "1",
     },
   },
 });

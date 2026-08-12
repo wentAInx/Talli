@@ -38,7 +38,9 @@ export default async function CandidateDetailPage({
   });
   if (!candidate) notFound();
   const importable =
-    candidate.status === "pending" || candidate.status === "needs_mapping";
+    (candidate.status === "pending" || candidate.status === "needs_mapping") &&
+    (candidate.allowedEventTypes === undefined ||
+      candidate.allowedEventTypes.length > 0);
 
   return (
     <div className="page-stack candidate-review-page">
@@ -63,7 +65,7 @@ export default async function CandidateDetailPage({
       <section className="provenance-track" aria-label="导入来源轨道">
         <div>
           <span>1</span>
-          <strong>Kraken source</strong>
+          <strong>{candidate.providerName} source</strong>
           <small>{candidate.sources.length} 个证据对象</small>
         </div>
         <div>
@@ -87,6 +89,43 @@ export default async function CandidateDetailPage({
             <p key={warning}>{warning}</p>
           ))}
         </aside>
+      ) : null}
+
+      {candidate.evmDetail ? (
+        <section className="content-section evm-candidate-facts">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Ethereum transaction identity</p>
+              <h2>
+                {candidate.evmDetail.candidateKind === "gas"
+                  ? "Network fee"
+                  : "Movement"}
+              </h2>
+            </div>
+            <span>{candidate.evmDetail.classification}</span>
+          </div>
+          <dl className="credential-facts">
+            <div>
+              <dt>Tx hash</dt>
+              <dd>{candidate.evmDetail.txHash}</dd>
+            </div>
+            <div>
+              <dt>Receipt</dt>
+              <dd>{candidate.evmDetail.txStatus}</dd>
+            </div>
+            <div>
+              <dt>Block</dt>
+              <dd>{candidate.evmDetail.blockNumberText ?? "unresolved"}</dd>
+            </div>
+            <div>
+              <dt>From / to</dt>
+              <dd>
+                {candidate.evmDetail.fromAddressLower} →{" "}
+                {candidate.evmDetail.toAddressLower ?? "contract creation"}
+              </dd>
+            </div>
+          </dl>
+        </section>
       ) : null}
 
       <div className="candidate-detail-grid">
@@ -153,8 +192,10 @@ export default async function CandidateDetailPage({
           </div>
           <CandidateReviewForm
             accounts={candidate.accounts}
+            allowedEventTypes={candidate.allowedEventTypes}
             candidateId={candidate.id}
             legs={candidate.legs}
+            providerName={candidate.providerName}
             suggestedEventType={candidate.suggestedEventType}
             unresolvedFee={candidate.unresolvedFee}
           />

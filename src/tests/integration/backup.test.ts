@@ -67,7 +67,7 @@ describe("lossless backup and guarded restore", () => {
     const payload = service.exportBackup();
     const json = JSON.stringify(payload);
 
-    expect(payload.schemaVersion).toBe(3);
+    expect(payload.schemaVersion).toBe(4);
     expect(json).toContain('"amountAtomic":"1000000000000000001"');
     expect(json).toContain('"balanceAtomic":"2000000000000000001"');
     expect(json).toContain('"occurredAt":"2026-08-08T00:00:00.000Z"');
@@ -132,7 +132,7 @@ describe("lossless backup and guarded restore", () => {
     const payload = new BackupService(source.database.context).exportBackup();
     const target = createTestDatabase();
     databases.push(target);
-    const invalid = { ...payload, schemaVersion: 4 };
+    const invalid = { ...payload, schemaVersion: 5 };
 
     expect(() => new BackupService(target.context).restore(invalid)).toThrow(
       BackupValidationError,

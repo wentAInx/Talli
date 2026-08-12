@@ -41,7 +41,7 @@ export class ExternalMappingService {
           (connection) =>
             connection.bookId === input.bookId &&
             connection.provider === "kraken" &&
-            connection.credentialRef === "env:kraken.primary",
+            connection.sourceKey === "kraken:primary",
         );
         if (existing) return existing.id;
 
@@ -51,6 +51,7 @@ export class ExternalMappingService {
           id,
           bookId: input.bookId,
           provider: "kraken",
+          sourceKey: "kraken:primary",
           name: input.name?.trim() || "Kraken",
           credentialRef: "env:kraken.primary",
           isEnabled: true,

@@ -1,18 +1,18 @@
-# AGENTS.md — Talli V2.0
+# AGENTS.md — Talli V4.0
 
 ## Project identity
 
-This repository implements the frozen **Multi-Asset Personal Ledger V1** core plus the additive **Talli V2.0 Price & Valuation Engine**.
+This repository implements the frozen **Multi-Asset Personal Ledger V1** core, the additive **Talli V2.0 Price & Valuation Engine**, the frozen **Talli V3 Kraken external-sync layer**, and **Talli V4.0 Ethereum Mainnet read-only wallet sync**.
 
 The product is a single-user, self-hosted Next.js + TypeScript application backed by SQLite. Its primary invariant is:
 
-> Ledger quantities are source of truth. Current market valuation is optional derived data and may never mutate or replace ledger facts.
+> Ledger quantities are source of truth. Valuation and external/on-chain observations are separate facts and may never mutate or replace Ledger data automatically.
 
 Do not reinterpret the project as a historical portfolio tracker, investment-accounting system, banking-sync product, or multi-user SaaS.
 
 ## Canonical specification and precedence
 
-Before substantial implementation work, read the relevant V1 canonical files and `docs/v2-price-valuation/CODEX_HANDOFF_PROMPT.txt`. For V2 price/valuation work, the preserved package under `docs/v2-price-valuation/` is the highest-priority specification.
+Before substantial implementation work, read the relevant versioned package. For V4 wallet work, `docs/v4-evm-wallet/01_CODEX_MASTER_INSTRUCTION_CN.md` and its numbered 00→15 package are canonical. V3 Kraken remains governed by `docs/v3-external-sync/`; V2 valuation remains governed by `docs/v2-price-valuation/`.
 
 When rules conflict, use this precedence:
 
@@ -23,6 +23,8 @@ When rules conflict, use this precedence:
 5. UI and implementation guidance
 
 For V2 conflicts, `docs/v2-price-valuation/01_CODEX_MASTER_INSTRUCTION_CN.md` and its numbered package files override V1 text that says valuation does not yet exist. They do not override V1 ledger, snapshot, report, or atomic-money invariants.
+
+For V4 conflicts, `docs/v4-evm-wallet/01_CODEX_MASTER_INSTRUCTION_CN.md`, domain/identity, provider, activity/gas, security, backup, and acceptance files override older text that limits external sync to Kraken. They do not override the frozen V1/V2/V3 invariants.
 
 Do not modify canonical specification files unless the user explicitly asks to change the specification.
 
@@ -42,6 +44,11 @@ Do not modify canonical specification files unless the user explicitly asks to c
 - Event plus entries mutations are atomic SQLite transactions.
 - An account belongs to exactly one asset.
 - Referenced assets/accounts are archived rather than destructively removed.
+- On-chain data is not Ledger data. Ethereum sync writes only connection, mapping, append-only observation, source, and candidate facts. Only explicit Import/Reconcile may invoke the existing V1 writers.
+- V4.0 accepts only public Ethereum addresses on chainId 1. Never accept, persist, display, or request private keys, mnemonics, seed phrases, signing, transaction sending, or configurable write RPC URLs.
+- `ALCHEMY_API_KEY` is server-only and the Mainnet origin is fixed. Tests use injectable deterministic transport and never real Alchemy.
+- Native/ERC-20 amounts come from hex or `rawContract.value` through `bigint`; human provider values are audit-only. ERC-20 identity is chain plus contract, never symbol.
+- Complex DeFi stays unsupported. Gas is a separate candidate, including exact failed-transaction gas; it is never silently folded into movement.
 
 When touching ledger semantics, invoke or follow `$ledger-domain-guard`.
 
@@ -49,7 +56,7 @@ When touching ledger semantics, invoke or follow `$ledger-domain-guard`.
 
 For implementation details not fixed by the canonical specs, also follow `CODEX_ARCHITECTURE_DEFAULTS_CN.md`.
 
-Use a pragmatic modular monolith. Do not introduce microservices, Redis, queues, cron collectors, GraphQL, event buses, CQRS frameworks, generic repository frameworks, or distributed infrastructure in V2.0.
+Use a pragmatic modular monolith. Do not introduce microservices, Redis, queues, cron collectors, GraphQL, event buses, CQRS frameworks, generic repository frameworks, or distributed infrastructure in V4.0.
 
 Preferred dependency direction:
 
@@ -116,16 +123,16 @@ Product-specific requirements include:
 
 ## Implementation workflow
 
-For V1 core follow `08_IMPLEMENTATION_PLAN_CN.md`; for V2 follow `docs/v2-price-valuation/11_IMPLEMENTATION_PLAN_CN.md`. Correctness of Money, ledger invariants, balance snapshots, cache state, and persistence comes before elaborate UI.
+For V1 core follow `08_IMPLEMENTATION_PLAN_CN.md`; for V2 follow `docs/v2-price-valuation/11_IMPLEMENTATION_PLAN_CN.md`; for V3 follow `docs/v3-external-sync/13_IMPLEMENTATION_PLAN_CN.md`; for V4 follow `docs/v4-evm-wallet/12_IMPLEMENTATION_PLAN_CN.md`. Migration correctness, exact money/identity, provider/domain boundaries, and backup compatibility come before UI.
 
 For non-trivial work:
 
 1. Inspect existing code and the relevant spec sections before editing.
 2. State the affected invariants and acceptance cases.
-3. Make the smallest coherent change that preserves the frozen V1 core and V2.0 scope.
+3. Make the smallest coherent change that preserves the frozen V1/V2/V3 baselines and the active version scope.
 4. Add/update tests together with behavior changes.
 5. Run targeted checks first, then the repository validation gate.
-6. Review the diff for V2.1 scope creep, float money/rates, implicit FX or stablecoin pegs, client key leakage, hidden DB access, and missing transaction boundaries.
+6. Review the diff for future-version scope creep, float money/rates, symbol identity, implicit FX or stablecoin pegs, client key leakage, signing/write RPC, hidden DB access, and missing transaction boundaries.
 
 Do not ask the user to resolve an ambiguity if the canonical specs already resolve it. For minor unspecified implementation details, choose the simplest conservative V1-compatible option and record it briefly if consequential.
 
@@ -140,6 +147,8 @@ lint
 typecheck
 unit/integration tests
 build
+security:check
+e2e
 ```
 
 Run relevant Playwright E2E when UI flows are changed or when the suite is configured.

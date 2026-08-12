@@ -25,7 +25,13 @@ async function postJson(
   return payload;
 }
 
-export function SyncRunButton({ connectionId }: { connectionId: string }) {
+export function SyncRunButton({
+  connectionId,
+  provider = "kraken",
+}: {
+  connectionId: string;
+  provider?: "kraken" | "evm_wallet";
+}) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +40,12 @@ export function SyncRunButton({ connectionId }: { connectionId: string }) {
     setPending(true);
     setError(null);
     try {
-      await postJson("/api/sync/kraken/run", { connectionId });
+      await postJson(
+        provider === "evm_wallet"
+          ? "/api/sync/evm/run"
+          : "/api/sync/kraken/run",
+        { connectionId },
+      );
       router.refresh();
     } catch (requestError) {
       setError(
@@ -68,10 +79,12 @@ export function ReconcileObservationButton({
   observationId,
   accountId,
   disabled = false,
+  providerName = "Kraken",
 }: {
   observationId: string;
   accountId: string;
   disabled?: boolean;
+  providerName?: string;
 }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
@@ -80,7 +93,7 @@ export function ReconcileObservationButton({
   async function reconcile(): Promise<void> {
     if (
       !window.confirm(
-        "这会创建余额快照，把该观察时间的 Talli 余额调整为 Kraken 外部余额；不会创建收入或支出。确认继续？",
+        `这会创建余额快照，把该观察时间的 Talli 余额调整为 ${providerName} 外部余额；不会创建收入或支出。确认继续？`,
       )
     ) {
       return;
@@ -186,6 +199,8 @@ export function CandidateReviewForm({
   accounts,
   legs,
   unresolvedFee,
+  providerName = "Kraken",
+  allowedEventTypes,
 }: {
   candidateId: string;
   suggestedEventType:
@@ -193,10 +208,18 @@ export function CandidateReviewForm({
   accounts: CandidateAccountOption[];
   legs: CandidateLegOption[];
   unresolvedFee: { amountText: string } | null;
+  providerName?: string;
+  allowedEventTypes?: Array<"exchange" | "transfer" | "income" | "expense">;
 }) {
   const router = useRouter();
-  const defaultEventType =
+  const eventTypes =
+    allowedEventTypes ??
+    (["exchange", "transfer", "income", "expense"] as const);
+  const proposedDefault =
     suggestedEventType === "unknown" ? "transfer" : suggestedEventType;
+  const defaultEventType = eventTypes.includes(proposedDefault)
+    ? proposedDefault
+    : eventTypes[0]!;
   const [eventType, setEventType] = useState<
     "exchange" | "transfer" | "income" | "expense"
   >(defaultEventType);
@@ -255,7 +278,11 @@ export function CandidateReviewForm({
   }
 
   async function ignoreCandidate(): Promise<void> {
-    if (!window.confirm("忽略后会保留 Kraken source 与审计记录。确认忽略？")) {
+    if (
+      !window.confirm(
+        `忽略后会保留 ${providerName} source 与审计记录。确认忽略？`,
+      )
+    ) {
       return;
     }
     setPending(true);
@@ -289,10 +316,18 @@ export function CandidateReviewForm({
           }
           value={eventType}
         >
-          <option value="exchange">兑换</option>
-          <option value="transfer">转账</option>
-          <option value="income">收入</option>
-          <option value="expense">支出</option>
+          {eventTypes.map((value) => (
+            <option key={value} value={value}>
+              {
+                {
+                  exchange: "兑换",
+                  transfer: "转账",
+                  income: "收入",
+                  expense: "支出",
+                }[value]
+              }
+            </option>
+          ))}
         </select>
         <small>
           建议：

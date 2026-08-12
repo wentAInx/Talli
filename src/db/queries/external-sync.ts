@@ -345,7 +345,8 @@ export function listExternalSyncRuns(
 export function findExternalSourceObject(
   executor: DatabaseExecutor,
   connectionId: string,
-  objectType: "kraken_ledger" | "kraken_trade",
+  objectType:
+    "kraken_ledger" | "kraken_trade" | "evm_transaction" | "evm_transfer",
   externalId: string,
 ) {
   return executor

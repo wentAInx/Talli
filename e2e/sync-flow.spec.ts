@@ -41,7 +41,10 @@ test("Kraken read-only sync requires explicit mapping, reconcile, and import", a
     await expect(
       page.getByRole("link", { name: "同步", exact: true }),
     ).toHaveAttribute("aria-current", "page");
-    await expect(page.getByText("只读同步正常")).toBeVisible();
+    const krakenCard = page.locator(".sync-connection-card").filter({
+      has: page.getByRole("heading", { name: "Kraken", exact: true }),
+    });
+    await expect(krakenCard.getByText("只读同步正常")).toBeVisible();
     await expect(
       page.getByRole("link", { name: /Kraken trade BTC\/USD/ }),
     ).toBeVisible();
@@ -205,4 +208,171 @@ test("Kraken read-only sync requires explicit mapping, reconcile, and import", a
     () => document.documentElement.scrollWidth <= window.innerWidth,
   );
   expect(noHorizontalOverflow).toBe(true);
+});
+
+test("Ethereum Mainnet wallet keeps on-chain balance, gas, and movement outside Ledger until review", async ({
+  page,
+}, testInfo) => {
+  const address = "0x1111111111111111111111111111111111111111";
+  if (testInfo.project.name === "sync-mobile") {
+    await page.goto("/sync?queue=imported");
+    await expect(
+      page.getByRole("heading", { name: "V4 Main wallet" }),
+    ).toBeVisible();
+    await expect(page.getByText("◇ 0x111111…111111")).toBeVisible();
+    await expect(page.getByText("Network fee", { exact: true })).toBeVisible();
+    const noHorizontalOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    );
+    expect(noHorizontalOverflow).toBe(true);
+    return;
+  }
+
+  const noOrigin = await page.request.post("/api/sync/evm/run", {
+    data: { connectionId: "missing" },
+  });
+  expect(noOrigin.status()).toBe(403);
+
+  await createAccount(page, {
+    name: "V4 Ethereum ETH",
+    assetId: "seed-asset-eth",
+    initialBalance: "1.5",
+  });
+  await createAccount(page, {
+    name: "V4 Ethereum USDC",
+    assetId: "seed-asset-usdc",
+    initialBalance: "90",
+  });
+
+  await page.goto("/sync");
+  await page.getByLabel("钱包名称").fill("V4 Main wallet");
+  await page.getByLabel("Public Ethereum address").fill(address);
+  await page.getByLabel(/History start date/).fill("2026-01-01");
+  await page.getByRole("button", { name: "添加 Ethereum 只读钱包" }).click();
+  await expect(
+    page.getByRole("heading", { name: "V4 Main wallet" }),
+  ).toBeVisible();
+  await expect(page.getByText("env:alchemy.primary")).toBeVisible();
+  await expect(page.getByText("no sign / send / write RPC")).toBeVisible();
+
+  const beforeSync = (await (
+    await page.request.get("/api/data/backup")
+  ).json()) as {
+    data: { ledgerEvents: unknown[]; balanceSnapshots: unknown[] };
+  };
+  const walletCard = page.locator(".evm-workbench .sync-connection-card");
+  await walletCard.getByRole("button", { name: "立即同步" }).click();
+  await expect(walletCard.getByText("只读同步正常")).toBeVisible();
+  await expect(walletCard.getByText(/21000018/)).toBeVisible();
+
+  await mapAsset(page, {
+    raw: "eip155:1/native",
+    assetId: "seed-asset-eth",
+    accountLabel: "V4 Ethereum ETH · ETH",
+  });
+  await mapAsset(page, {
+    raw: "eip155:1/erc20:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    assetId: "seed-asset-usdc",
+    accountLabel: "V4 Ethereum USDC · USDC",
+  });
+  await walletCard.getByRole("button", { name: "立即同步" }).click();
+
+  const ethObservation = page
+    .locator(".evm-workbench .observation-card")
+    .filter({
+      hasText: "On-chain ETH",
+    });
+  await expect(ethObservation).toContainText("1.490000000000000000 ETH");
+  await expect(ethObservation).toContainText("1.500000000000000000 ETH");
+  await expect(ethObservation).toContainText("-0.010000000000000000 ETH");
+  const afterSync = (await (
+    await page.request.get("/api/data/backup")
+  ).json()) as {
+    data: { ledgerEvents: unknown[]; balanceSnapshots: unknown[] };
+  };
+  expect(afterSync.data.ledgerEvents).toHaveLength(
+    beforeSync.data.ledgerEvents.length,
+  );
+  expect(afterSync.data.balanceSnapshots).toHaveLength(
+    beforeSync.data.balanceSnapshots.length,
+  );
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await ethObservation
+    .getByRole("button", { name: "调整账本为外部余额" })
+    .click();
+  await expect(
+    ethObservation.getByRole("button", { name: "已创建余额快照" }),
+  ).toBeVisible();
+
+  await expect(page.getByText("Movement", { exact: true })).toBeVisible();
+  await expect(page.getByText("Network fee", { exact: true })).toBeVisible();
+  const txGroup = page
+    .locator(".candidate-tx-group")
+    .filter({ hasText: "Tx 0xaaaaaa" });
+  await expect(txGroup).toContainText("100 USDC");
+  await expect(txGroup).toContainText("0.01 ETH");
+  await txGroup.getByRole("link", { name: /Movement/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Movement", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("导入为")).toHaveValue("exchange");
+  await expect(page.getByLabel("导入为").locator("option")).toHaveCount(1);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "导入到 Talli" }).click();
+  await expect(page.getByRole("heading", { name: "编辑兑换" })).toBeVisible();
+  await page.getByRole("link", { name: "查看 Ethereum 候选" }).click();
+  await expect(
+    page.getByRole("heading", { name: "已导入 Talli" }),
+  ).toBeVisible();
+
+  await page.goto("/sync");
+  const pendingEvmGroup = page
+    .locator(".evm-workbench .candidate-tx-group")
+    .filter({ hasText: "Network fee" });
+  await pendingEvmGroup.getByRole("link", { name: /Network fee/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Network fee", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("导入为")).toHaveValue("expense");
+  await expect(page.getByLabel("导入为").locator("option")).toHaveCount(1);
+  await expect(
+    page.locator(".evm-candidate-facts").getByText(`0x${"a".repeat(64)}`),
+  ).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "导入到 Talli" }).click();
+  await expect(
+    page.getByRole("heading", { name: "编辑Ethereum Network" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "查看 Ethereum 候选" }).click();
+  await expect(
+    page.getByRole("heading", { name: "已导入 Talli" }),
+  ).toBeVisible();
+
+  const beforeResync = (await (
+    await page.request.get("/api/data/backup")
+  ).json()) as {
+    schemaVersion: number;
+    data: { ledgerEvents: unknown[]; externalImportLinks: unknown[] };
+  };
+  expect(beforeResync.schemaVersion).toBe(4);
+  await page.goto("/sync?queue=imported");
+  await page
+    .locator(".evm-workbench .sync-connection-card")
+    .getByRole("button", { name: "立即同步" })
+    .click();
+  await expect(
+    page.locator(".evm-workbench").getByText("Network fee", { exact: true }),
+  ).toBeVisible();
+  const afterResync = (await (
+    await page.request.get("/api/data/backup")
+  ).json()) as {
+    data: { ledgerEvents: unknown[]; externalImportLinks: unknown[] };
+  };
+  expect(afterResync.data.ledgerEvents).toHaveLength(
+    beforeResync.data.ledgerEvents.length,
+  );
+  expect(afterResync.data.externalImportLinks).toHaveLength(
+    beforeResync.data.externalImportLinks.length,
+  );
 });

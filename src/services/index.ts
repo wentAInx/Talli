@@ -3,6 +3,7 @@ export * from "./backup-service";
 export * from "./contracts";
 export * from "./errors";
 export * from "./external-sync-service";
+export * from "./evm-wallet-service";
 export * from "./external-mapping-service";
 export * from "./external-import-service";
 export * from "./external-reconciliation-service";

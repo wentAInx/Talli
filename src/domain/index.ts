@@ -1,5 +1,6 @@
 export * from "./balance";
 export * from "./errors";
+export * from "./evm";
 export * from "./exchange-rate";
 export * from "./external-sync";
 export * from "./ledger";

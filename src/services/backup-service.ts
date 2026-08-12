@@ -54,10 +54,13 @@ export interface BackupSummary {
   providerMappings: number;
   manualQuotes: number;
   externalConnections: number;
+  evmWallets: number;
   externalMappings: number;
   externalObservations: number;
+  evmObservationDetails: number;
   externalSources: number;
   externalCandidates: number;
+  evmCandidateDetails: number;
   externalImportLinks: number;
 }
 
@@ -83,11 +86,14 @@ function summary(data: BackupData): BackupSummary {
     providerMappings: data.priceProviderMappings.length,
     manualQuotes: data.manualPriceQuotes.length,
     externalConnections: data.externalConnections.length,
+    evmWallets: data.evmWalletConnections.length,
     externalMappings:
       data.externalAssetMappings.length + data.externalAccountMappings.length,
     externalObservations: data.externalBalanceObservations.length,
+    evmObservationDetails: data.evmBalanceObservationDetails.length,
     externalSources: data.externalSourceObjects.length,
     externalCandidates: data.externalTransactionCandidates.length,
+    evmCandidateDetails: data.evmCandidateDetails.length,
     externalImportLinks: data.externalImportLinks.length,
   };
 }

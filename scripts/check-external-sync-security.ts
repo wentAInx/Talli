@@ -36,7 +36,12 @@ const clientBoundaryFiles = [
 ].filter((file) => sourceExtensions.test(file));
 assertAbsent(
   clientBoundaryFiles,
-  [/\bKRAKEN_API_KEY\b/, /\bKRAKEN_API_SECRET\b/, /\bapiSecret\b/],
+  [
+    /\bKRAKEN_API_KEY\b/,
+    /\bKRAKEN_API_SECRET\b/,
+    /\bALCHEMY_API_KEY\b/,
+    /\bapiSecret\b/,
+  ],
   "Client/UI secret boundary",
 );
 
@@ -46,7 +51,12 @@ const persistenceFiles = [
 ].filter((file) => sourceExtensions.test(file));
 assertAbsent(
   persistenceFiles,
-  [/\bKRAKEN_API_KEY\b/, /\bKRAKEN_API_SECRET\b/, /\bapiSecret\b/],
+  [
+    /\bKRAKEN_API_KEY\b/,
+    /\bKRAKEN_API_SECRET\b/,
+    /\bALCHEMY_API_KEY\b/,
+    /\bapiSecret\b/,
+  ],
   "Persistence secret boundary",
 );
 
@@ -64,8 +74,24 @@ assertAbsent(
   "Forbidden Kraken write endpoint",
 );
 
+const evmProviderFiles = filesUnder(join(root, "src/providers/evm")).filter(
+  (file) => /\.(?:ts|tsx)$/.test(file),
+);
+assertAbsent(
+  evmProviderFiles,
+  [
+    /eth_sendTransaction/,
+    /eth_sendRawTransaction/,
+    /eth_sign(?:Transaction|TypedData)?/,
+    /personal_/,
+    /wallet_/,
+    /ALCHEMY_BASE_URL/,
+  ],
+  "Forbidden EVM write/sign method or custom RPC configuration",
+);
+
 const envExample = readFileSync(join(root, ".env.example"), "utf8");
-for (const name of ["KRAKEN_API_KEY", "KRAKEN_API_SECRET"]) {
+for (const name of ["KRAKEN_API_KEY", "KRAKEN_API_SECRET", "ALCHEMY_API_KEY"]) {
   const expected = name + "=";
   const line = envExample
     .split(/\r?\n/)
@@ -83,7 +109,9 @@ assertAbsent(
   [
     /\bKRAKEN_API_KEY\b/,
     /\bKRAKEN_API_SECRET\b/,
+    /\bALCHEMY_API_KEY\b/,
     /sentinel-api-key/,
+    /sentinel-alchemy-key/,
     /c2VjcmV0LWJ5dGVz/,
   ],
   "Built client bundle secret boundary",

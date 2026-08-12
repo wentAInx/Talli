@@ -1587,6 +1587,52 @@ button:disabled {
   gap: 10px;
 }
 
+.sync-source-onboarding {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.sync-source-onboarding > :only-child {
+  grid-column: 1 / -1;
+}
+
+.evm-add-wallet-card {
+  border-top: 3px solid #627eea;
+  background:
+    linear-gradient(135deg, rgb(98 126 234 / 7%), transparent 42%), white;
+}
+
+.evm-chain-chip,
+.evm-wallet-address {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #cdd5f8;
+  border-radius: 999px;
+  background: #f4f6ff;
+  color: #3d4f9c;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 750;
+  padding: 6px 9px;
+}
+
+.evm-wallet-address {
+  margin-bottom: 7px;
+}
+
+.evm-wallet-form {
+  grid-template-columns: minmax(140px, 0.7fr) minmax(260px, 1.5fr) minmax(
+      150px,
+      0.7fr
+    );
+}
+
+.evm-wallet-form .action-form-status,
+.evm-wallet-form .primary-button {
+  grid-column: 1 / -1;
+}
+
 .sync-workbench {
   display: grid;
   grid-template-columns: minmax(310px, 0.78fr) minmax(0, 1.22fr);
@@ -1600,6 +1646,10 @@ button:disabled {
 .sync-connection-card {
   grid-area: connection;
   border-top: 3px solid var(--ledger-blue);
+}
+
+.evm-workbench .sync-connection-card {
+  border-top-color: #627eea;
 }
 
 .sync-mapping-section {
@@ -1772,6 +1822,22 @@ button:disabled {
   padding: 6px 8px;
 }
 
+.mapping-metadata,
+.mapping-metadata strong,
+.mapping-metadata small {
+  display: block;
+  min-width: 0;
+}
+
+.mapping-metadata small {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--slate);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
 .mapping-inline-form .primary-button {
   min-height: 36px;
   font-size: 11px;
@@ -1892,6 +1958,48 @@ button:disabled {
   color: var(--ink);
 }
 
+.candidate-tx-groups {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.candidate-tx-group {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #fbfcfb;
+}
+
+.candidate-tx-group > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  background: #f3f5fb;
+  padding: 9px 12px;
+}
+
+.candidate-tx-group > header strong {
+  color: #3d4f9c;
+  font-size: 10px;
+}
+
+.candidate-tx-group > header code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--slate);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidate-tx-group .candidate-list {
+  margin: 0;
+  padding: 2px 8px;
+}
+
 .candidate-list,
 .source-id-list,
 .candidate-leg-list {
@@ -1974,6 +2082,10 @@ button:disabled {
 .candidate-review-page {
   width: min(960px, 100%);
   margin: 0 auto;
+}
+
+.evm-candidate-facts {
+  border-left: 4px solid #627eea;
 }
 
 .provenance-track {
@@ -2122,6 +2234,19 @@ button:disabled {
       "mapping"
       "observations"
       "candidates";
+  }
+
+  .sync-source-onboarding {
+    grid-template-columns: 1fr;
+  }
+
+  .evm-wallet-form {
+    grid-template-columns: 1fr;
+  }
+
+  .evm-wallet-form .action-form-status,
+  .evm-wallet-form .primary-button {
+    grid-column: auto;
   }
 
   .filter-grid {

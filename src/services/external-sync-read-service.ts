@@ -6,6 +6,10 @@ import {
   findExternalCandidate,
   findExternalConnection,
   findExternalConnectionState,
+  findEvmBalanceObservationDetail,
+  findEvmCandidateDetail,
+  findEvmWalletConnection,
+  findEvmWalletConnectionState,
   findExternalImportLink,
   findExternalSourceObjectById,
   findSnapshotAtTime,
@@ -67,6 +71,26 @@ function permissionSummary(value: string | null): {
   }
 }
 
+function providerMetadata(value: string | null): {
+  contractAddress: string | null;
+  decimals: number | null;
+  symbol: string | null;
+} {
+  try {
+    const parsed = value ? (JSON.parse(value) as Record<string, unknown>) : {};
+    return {
+      contractAddress:
+        typeof parsed.contractAddress === "string"
+          ? parsed.contractAddress
+          : null,
+      decimals: typeof parsed.decimals === "number" ? parsed.decimals : null,
+      symbol: typeof parsed.symbol === "string" ? parsed.symbol : null,
+    };
+  } catch {
+    return { contractAddress: null, decimals: null, symbol: null };
+  }
+}
+
 export class ExternalSyncReadService {
   constructor(private readonly context: DatabaseContext) {}
 
@@ -106,6 +130,7 @@ export class ExternalSyncReadService {
             talliAssetCode: asset?.code ?? null,
             talliAccountId: account?.id ?? null,
             talliAccountName: account?.name ?? null,
+            providerMetadata: providerMetadata(mapping.providerMetadataJson),
           };
         });
         const latest = new Map<
@@ -121,6 +146,10 @@ export class ExternalSyncReadService {
           }
         }
         const observations = [...latest.values()].map((observation) => {
+          const evmDetail = findEvmBalanceObservationDetail(
+            this.context.db,
+            observation.id,
+          );
           const asset = observation.talliAssetId
             ? assets.get(observation.talliAssetId)
             : undefined;
@@ -151,6 +180,7 @@ export class ExternalSyncReadService {
               differenceDisplay: null,
               differenceDirection: null,
               reconciled: false,
+              evmDetail: evmDetail ?? null,
             };
           }
           const externalAtomic = atomicFromDb(observation.mappedAmountAtomic);
@@ -193,6 +223,7 @@ export class ExternalSyncReadService {
                 observation.observedAt,
               ),
             ),
+            evmDetail: evmDetail ?? null,
           };
         });
         const state = findExternalConnectionState(
@@ -204,23 +235,38 @@ export class ExternalSyncReadService {
           connection.id,
           undefined,
           100,
-        ).map((candidate) => ({
-          ...candidate,
-          legs: listExternalCandidateLegs(this.context.db, candidate.id).map(
-            (leg) => ({
-              role: leg.role,
-              providerAssetKey: leg.providerAssetKey,
-              amountText: leg.amountText,
-              assetCode: leg.talliAssetId
-                ? (assets.get(leg.talliAssetId)?.code ?? null)
-                : null,
-              precisionStatus: leg.precisionStatus,
-            }),
-          ),
-          ledgerEventId:
-            findExternalImportLink(this.context.db, candidate.id)
-              ?.ledgerEventId ?? null,
-        }));
+        ).map((candidate) => {
+          const evmDetail = findEvmCandidateDetail(
+            this.context.db,
+            candidate.id,
+          );
+          return {
+            ...candidate,
+            evmDetail: evmDetail ?? null,
+            legs: listExternalCandidateLegs(this.context.db, candidate.id).map(
+              (leg) => ({
+                role: leg.role,
+                providerAssetKey: leg.providerAssetKey,
+                amountText: leg.amountText,
+                assetCode: leg.talliAssetId
+                  ? (assets.get(leg.talliAssetId)?.code ?? null)
+                  : null,
+                precisionStatus: leg.precisionStatus,
+              }),
+            ),
+            ledgerEventId:
+              findExternalImportLink(this.context.db, candidate.id)
+                ?.ledgerEventId ?? null,
+          };
+        });
+        const evmWallet = findEvmWalletConnection(
+          this.context.db,
+          connection.id,
+        );
+        const evmState = findEvmWalletConnectionState(
+          this.context.db,
+          connection.id,
+        );
         return {
           ...connection,
           state: state
@@ -236,6 +282,8 @@ export class ExternalSyncReadService {
           mappings,
           observations,
           candidates,
+          evmWallet: evmWallet ?? null,
+          evmState: evmState ?? null,
           assets: [...assets.values()]
             .filter((asset) => !asset.isArchived)
             .map((asset) => ({
@@ -340,11 +388,33 @@ export class ExternalSyncReadService {
     const unresolvedFeeAmountText =
       !legs.some((leg) => leg.role === "fee") &&
       primaryTradeSources.length === 1
-        ? krakenReportedNonzeroTradeFee(primaryTradeSources[0]!.source!)
+        ? krakenReportedNonzeroTradeFee({
+            objectType: "kraken_trade",
+            payloadJson: primaryTradeSources[0]!.source!.payloadJson,
+          })
         : null;
+    const evmDetail = findEvmCandidateDetail(this.context.db, candidate.id);
+    const allowedEventTypes:
+      Array<"exchange" | "transfer" | "income" | "expense"> | undefined =
+      evmDetail
+        ? evmDetail.candidateKind === "gas"
+          ? ["expense"]
+          : evmDetail.classification === "simple_exchange"
+            ? ["exchange"]
+            : evmDetail.classification === "simple_in"
+              ? ["income", "transfer"]
+              : evmDetail.classification === "simple_out"
+                ? ["expense", "transfer"]
+                : []
+        : undefined;
     return {
       ...candidate,
       connectionName: connection.name,
+      provider: connection.provider,
+      providerName:
+        connection.provider === "evm_wallet" ? "Ethereum" : "Kraken",
+      evmDetail: evmDetail ?? null,
+      allowedEventTypes,
       sources,
       legs,
       accounts,
@@ -357,7 +427,14 @@ export class ExternalSyncReadService {
           ? ["仍有资产、账户或精度问题，导入前必须解决。"]
           : []),
         ...(candidate.suggestedEventType === "unknown"
-          ? ["Kraken 类型不会自动映射为收入或支出，请明确选择。"]
+          ? [
+              connection.provider === "evm_wallet"
+                ? "On-chain direction 不会自动等于收入或支出，请明确选择。"
+                : "Kraken 类型不会自动映射为收入或支出，请明确选择。",
+            ]
+          : []),
+        ...(evmDetail?.classification === "complex"
+          ? ["复杂合约交互不可自动解释；请保留证据并在 Talli 手工记账。"]
           : []),
       ],
     };

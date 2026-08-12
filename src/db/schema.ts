@@ -32,8 +32,13 @@ export const eventTypes = [
 export const entryRoles = ["main", "source", "destination", "fee"] as const;
 export const priceProviderIds = ["coingecko", "ecb"] as const;
 export const externalQuoteKinds = ["spot", "reference"] as const;
-export const externalProviderIds = ["kraken"] as const;
-export const externalObjectTypes = ["kraken_ledger", "kraken_trade"] as const;
+export const externalProviderIds = ["kraken", "evm_wallet"] as const;
+export const externalObjectTypes = [
+  "kraken_ledger",
+  "kraken_trade",
+  "evm_transaction",
+  "evm_transfer",
+] as const;
 export const externalMappingStatuses = [
   "mapped",
   "unmapped",
@@ -76,6 +81,22 @@ export const externalTransactionLegRoles = [
   "external_in",
   "external_out",
   "unknown",
+] as const;
+export const evmAssetKinds = ["native", "erc20"] as const;
+export const evmCandidateKinds = ["movement", "gas"] as const;
+export const evmCandidateClassifications = [
+  "simple_in",
+  "simple_out",
+  "simple_exchange",
+  "gas_only",
+  "complex",
+  "unsupported",
+] as const;
+export const evmTransactionStatuses = ["success", "failed", "unknown"] as const;
+export const evmGasFeeStatuses = [
+  "exact",
+  "not_applicable",
+  "unresolved",
 ] as const;
 
 export const books = sqliteTable(
@@ -488,6 +509,7 @@ export const externalConnections = sqliteTable(
       .notNull()
       .references(() => books.id, { onDelete: "restrict" }),
     provider: text("provider", { enum: externalProviderIds }).notNull(),
+    sourceKey: text("source_key").notNull(),
     name: text("name").notNull(),
     credentialRef: text("credential_ref").notNull(),
     isEnabled: integer("is_enabled", { mode: "boolean" })
@@ -497,14 +519,19 @@ export const externalConnections = sqliteTable(
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
-    uniqueIndex("external_connections_book_provider_credential_unique").on(
+    uniqueIndex("external_connections_book_provider_source_unique").on(
       table.bookId,
       table.provider,
-      table.credentialRef,
+      table.sourceKey,
+    ),
+    index("external_connections_book_provider_idx").on(
+      table.bookId,
+      table.provider,
+      table.isEnabled,
     ),
     check(
       "external_connections_provider_check",
-      sql`${table.provider} in ('kraken')`,
+      sql`${table.provider} in ('kraken', 'evm_wallet')`,
     ),
     check(
       "external_connections_enabled_check",
@@ -537,6 +564,53 @@ export const externalConnectionState = sqliteTable(
       sql`length(${table.lastNonceText}) > 0 and ${table.lastNonceText} not glob '*[^0-9]*'`,
     ),
   ],
+);
+
+export const evmWalletConnections = sqliteTable(
+  "evm_wallet_connections",
+  {
+    connectionId: text("connection_id")
+      .primaryKey()
+      .references(() => externalConnections.id, { onDelete: "cascade" }),
+    chainId: integer("chain_id").notNull(),
+    networkId: text("network_id").notNull(),
+    addressLower: text("address_lower").notNull(),
+    addressDisplay: text("address_display").notNull(),
+    dataProvider: text("data_provider").notNull(),
+    historyStartAt: text("history_start_at").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("evm_wallet_connections_chain_address_unique").on(
+      table.chainId,
+      table.addressLower,
+    ),
+    check("evm_wallet_connections_chain_check", sql`${table.chainId} = 1`),
+    check(
+      "evm_wallet_connections_network_check",
+      sql`${table.networkId} = 'eth-mainnet'`,
+    ),
+    check(
+      "evm_wallet_connections_provider_check",
+      sql`${table.dataProvider} = 'alchemy'`,
+    ),
+  ],
+);
+
+export const evmWalletConnectionState = sqliteTable(
+  "evm_wallet_connection_state",
+  {
+    connectionId: text("connection_id")
+      .primaryKey()
+      .references(() => evmWalletConnections.connectionId, {
+        onDelete: "cascade",
+      }),
+    lastFinalizedBlockText: text("last_finalized_block_text"),
+    lastBalanceSyncAt: text("last_balance_sync_at"),
+    lastActivitySyncAt: text("last_activity_sync_at"),
+    updatedAt: text("updated_at").notNull(),
+  },
 );
 
 export const externalAssetMappings = sqliteTable(
@@ -659,7 +733,7 @@ export const externalSourceObjects = sqliteTable(
     ),
     check(
       "external_source_objects_type_check",
-      sql`${table.objectType} in ('kraken_ledger', 'kraken_trade')`,
+      sql`${table.objectType} in ('kraken_ledger', 'kraken_trade', 'evm_transaction', 'evm_transfer')`,
     ),
   ],
 );
@@ -699,6 +773,38 @@ export const externalBalanceObservations = sqliteTable(
     check(
       "external_balance_observations_precision_check",
       sql`${table.precisionStatus} in ('exact', 'excess_precision', 'unmapped')`,
+    ),
+  ],
+);
+
+export const evmBalanceObservationDetails = sqliteTable(
+  "evm_balance_observation_details",
+  {
+    observationId: text("observation_id")
+      .primaryKey()
+      .references(() => externalBalanceObservations.id, {
+        onDelete: "cascade",
+      }),
+    chainId: integer("chain_id").notNull(),
+    assetKind: text("asset_kind", { enum: evmAssetKinds }).notNull(),
+    contractAddressLower: text("contract_address_lower"),
+    rawAmountAtomicText: text("raw_amount_atomic_text").notNull(),
+    tokenDecimals: integer("token_decimals").notNull(),
+    syncHeadBlockText: text("sync_head_block_text"),
+  },
+  (table) => [
+    check("evm_balance_details_chain_check", sql`${table.chainId} = 1`),
+    check(
+      "evm_balance_details_kind_check",
+      sql`${table.assetKind} in ('native', 'erc20')`,
+    ),
+    check(
+      "evm_balance_details_decimals_check",
+      sql`${table.tokenDecimals} >= 0 and ${table.tokenDecimals} <= 255`,
+    ),
+    check(
+      "evm_balance_details_contract_check",
+      sql`(${table.assetKind} = 'native' and ${table.contractAddressLower} is null) or (${table.assetKind} = 'erc20' and ${table.contractAddressLower} is not null)`,
     ),
   ],
 );
@@ -807,6 +913,58 @@ export const externalTransactionLegs = sqliteTable(
   ],
 );
 
+export const evmCandidateDetails = sqliteTable(
+  "evm_candidate_details",
+  {
+    candidateId: text("candidate_id")
+      .primaryKey()
+      .references(() => externalTransactionCandidates.id, {
+        onDelete: "cascade",
+      }),
+    chainId: integer("chain_id").notNull(),
+    txHash: text("tx_hash").notNull(),
+    candidateKind: text("candidate_kind", {
+      enum: evmCandidateKinds,
+    }).notNull(),
+    classification: text("classification", {
+      enum: evmCandidateClassifications,
+    }).notNull(),
+    txStatus: text("tx_status", { enum: evmTransactionStatuses }).notNull(),
+    blockNumberText: text("block_number_text"),
+    blockTimestamp: text("block_timestamp"),
+    fromAddressLower: text("from_address_lower").notNull(),
+    toAddressLower: text("to_address_lower"),
+    gasFeeAtomicText: text("gas_fee_atomic_text"),
+    gasFeeStatus: text("gas_fee_status", {
+      enum: evmGasFeeStatuses,
+    }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("evm_candidate_details_tx_kind_unique").on(
+      table.chainId,
+      table.txHash,
+      table.candidateKind,
+    ),
+    check("evm_candidate_details_chain_check", sql`${table.chainId} = 1`),
+    check(
+      "evm_candidate_details_kind_check",
+      sql`${table.candidateKind} in ('movement', 'gas')`,
+    ),
+    check(
+      "evm_candidate_details_classification_check",
+      sql`${table.classification} in ('simple_in', 'simple_out', 'simple_exchange', 'gas_only', 'complex', 'unsupported')`,
+    ),
+    check(
+      "evm_candidate_details_tx_status_check",
+      sql`${table.txStatus} in ('success', 'failed', 'unknown')`,
+    ),
+    check(
+      "evm_candidate_details_gas_status_check",
+      sql`${table.gasFeeStatus} in ('exact', 'not_applicable', 'unresolved')`,
+    ),
+  ],
+);
+
 export const externalImportLinks = sqliteTable(
   "external_import_links",
   {
@@ -844,6 +1002,9 @@ export type PriceProviderStateRow = typeof priceProviderState.$inferSelect;
 export type ExternalConnectionRow = typeof externalConnections.$inferSelect;
 export type ExternalConnectionStateRow =
   typeof externalConnectionState.$inferSelect;
+export type EvmWalletConnectionRow = typeof evmWalletConnections.$inferSelect;
+export type EvmWalletConnectionStateRow =
+  typeof evmWalletConnectionState.$inferSelect;
 export type ExternalAssetMappingRow = typeof externalAssetMappings.$inferSelect;
 export type ExternalAccountMappingRow =
   typeof externalAccountMappings.$inferSelect;
@@ -851,8 +1012,11 @@ export type ExternalSyncRunRow = typeof externalSyncRuns.$inferSelect;
 export type ExternalSourceObjectRow = typeof externalSourceObjects.$inferSelect;
 export type ExternalBalanceObservationRow =
   typeof externalBalanceObservations.$inferSelect;
+export type EvmBalanceObservationDetailRow =
+  typeof evmBalanceObservationDetails.$inferSelect;
 export type ExternalTransactionCandidateRow =
   typeof externalTransactionCandidates.$inferSelect;
 export type ExternalTransactionLegRow =
   typeof externalTransactionLegs.$inferSelect;
+export type EvmCandidateDetailRow = typeof evmCandidateDetails.$inferSelect;
 export type ExternalImportLinkRow = typeof externalImportLinks.$inferSelect;
