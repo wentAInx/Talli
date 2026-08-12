@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
+  krakenReportedNonzeroTradeFee,
   normalizeKrakenLedgerCandidate,
   normalizeKrakenTradeCandidate,
 } from "../../../providers/kraken/candidates";
@@ -16,6 +17,7 @@ const referenceData: KrakenReferenceData = {
   assetPairs: {
     "BTC/USD": {
       displayPair: "BTC/USD",
+      providerAliases: ["BTC/USD", "XBT/USD", "XBTUSD", "XXBTZUSD"],
       altname: "XBTUSD",
       wsname: "XBT/USD",
       base: "BTC",
@@ -46,7 +48,7 @@ function trade(type: "buy" | "sell", fee = "0.2500"): KrakenSourceObject {
   return source("kraken_trade", `T-${type}`, {
     ordertxid: "O-1",
     postxid: "",
-    pair: "BTC/USD",
+    pair: "XXBTZUSD",
     time: "1786440000.1000",
     type,
     price: "68965.517241",
@@ -76,7 +78,7 @@ function ledger(
 }
 
 describe("Kraken candidate normalization", () => {
-  it("maps a buy fill to negative quote and positive base with explicit fee evidence", () => {
+  it("maps a real XXBTZUSD buy fill to raw ZUSD/XXBT legs with a display title", () => {
     const candidate = normalizeKrakenTradeCandidate({
       trade: trade("buy"),
       ledgers: [
@@ -93,6 +95,7 @@ describe("Kraken candidate normalization", () => {
     });
 
     expect(candidate.suggestedEventType).toBe("exchange");
+    expect(candidate.title).toBe("Kraken trade BTC/USD");
     expect(candidate.legs).toEqual([
       { role: "source", providerAssetKey: "ZUSD", amountText: "-100.0000" },
       {
@@ -137,6 +140,7 @@ describe("Kraken candidate normalization", () => {
     expect(candidate.warnings).toContain(
       "Trade fee amount is present, but its asset is unresolved.",
     );
+    expect(krakenReportedNonzeroTradeFee(trade("buy"))).toBe("0.2500");
   });
 
   it("keeps deposit and withdrawal as explicit-review unknown events", () => {

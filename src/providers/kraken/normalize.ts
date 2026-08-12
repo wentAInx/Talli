@@ -191,10 +191,15 @@ export function parseKrakenAssetPairs(
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([displayPair, raw]) => {
         const value = record(raw, `asset pair ${displayPair}`);
+        const altname = optionalString(value.altname);
+        const wsname = optionalString(value.wsname);
         const metadata: KrakenPairMetadata = {
           displayPair,
-          altname: optionalString(value.altname),
-          wsname: optionalString(value.wsname),
+          providerAliases: [...new Set([displayPair, altname, wsname])].filter(
+            (alias): alias is string => alias !== null,
+          ),
+          altname,
+          wsname,
           base: requiredString(value.base, "pair base"),
           quote: requiredString(value.quote, "pair quote"),
           feeVolumeCurrency: optionalString(value.fee_volume_currency),
@@ -203,6 +208,42 @@ export function parseKrakenAssetPairs(
         };
         return [displayPair, metadata];
       }),
+  );
+}
+
+export function associateKrakenPairAliases(
+  displayPairs: KrakenReferenceData["assetPairs"],
+  internalPairs: KrakenReferenceData["assetPairs"],
+): KrakenReferenceData["assetPairs"] {
+  const internalEntries = Object.entries(internalPairs);
+  return Object.fromEntries(
+    Object.entries(displayPairs).map(([displayPair, metadata]) => {
+      const documentedIdentities = new Set(
+        [metadata.altname, metadata.wsname].filter(
+          (identity): identity is string => identity !== null,
+        ),
+      );
+      const matches = internalEntries.filter(([, internal]) =>
+        [internal.altname, internal.wsname].some(
+          (identity) => identity !== null && documentedIdentities.has(identity),
+        ),
+      );
+      const aliases =
+        matches.length === 1
+          ? [
+              ...metadata.providerAliases,
+              ...matches[0]![1].providerAliases,
+              matches[0]![0],
+            ]
+          : metadata.providerAliases;
+      return [
+        displayPair,
+        {
+          ...metadata,
+          providerAliases: [...new Set(aliases)].sort(),
+        },
+      ];
+    }),
   );
 }
 
@@ -235,12 +276,11 @@ export function resolveKrakenPair(
 ): KrakenPairMetadata | null {
   if (pairs[providerPair]) return pairs[providerPair];
   const normalized = providerPair.replace("/", "");
-  const matches = Object.values(pairs).filter(
-    (pair) =>
-      pair.altname === providerPair ||
-      pair.altname === normalized ||
-      pair.wsname === providerPair ||
-      pair.displayPair.replace("/", "") === normalized,
+  const matches = Object.values(pairs).filter((pair) =>
+    pair.providerAliases.some(
+      (alias) =>
+        alias === providerPair || alias.replace("/", "") === normalized,
+    ),
   );
   return matches.length === 1 ? matches[0]! : null;
 }

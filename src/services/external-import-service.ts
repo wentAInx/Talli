@@ -18,6 +18,7 @@ import {
   canonicalExternalDecimalText,
   canonicalExternalJson,
 } from "../domain/external-sync";
+import { krakenReportedNonzeroTradeFee } from "../providers/kraken/candidates";
 import type { LedgerMutationInput, OptionalFeeInput } from "./contracts";
 import { assertService } from "./errors";
 import { createLedgerEventIn } from "./ledger-command-service";
@@ -34,6 +35,7 @@ export interface CandidateImportInput {
   destinationAccountId?: string;
   mainAccountId?: string;
   feeAccountId?: string | null;
+  ignoreUnresolvedFee?: boolean;
   categoryId?: string | null;
   note?: string | null;
   confirmed: true;
@@ -99,13 +101,7 @@ function explicitUnresolvedFeeAmount(
     .map((link) => findExternalSourceObjectById(executor, link.sourceObjectId))
     .filter((source) => source?.objectType === "kraken_trade");
   if (sources.length !== 1) return null;
-  const payload = JSON.parse(sources[0]!.payloadJson) as Record<
-    string,
-    unknown
-  >;
-  if (typeof payload.fee !== "string") return null;
-  const magnitude = magnitudeText(payload.fee);
-  return /^0+(?:\.0+)?$/.test(magnitude) ? null : magnitude;
+  return krakenReportedNonzeroTradeFee(sources[0]!);
 }
 
 function prepareCommand(
@@ -150,6 +146,11 @@ function prepareCommand(
   let fee: OptionalFeeInput | null = null;
   if (feeLeg) {
     assertService(
+      input.ignoreUnresolvedFee !== true,
+      "EXTERNAL_IMPORT_FEE_IGNORE_INVALID",
+      "A fee with explicit asset evidence cannot be ignored.",
+    );
+    assertService(
       input.feeAccountId,
       "EXTERNAL_IMPORT_FEE_ACCOUNT_REQUIRED",
       "Select the mapped fee account before importing.",
@@ -165,23 +166,41 @@ function prepareCommand(
       accountId: input.feeAccountId,
       amount: magnitudeText(feeLeg.amountText),
     };
-  } else if (input.feeAccountId) {
+  } else {
     const amount = explicitUnresolvedFeeAmount(executor, candidate.id);
-    assertService(
-      amount,
-      "EXTERNAL_IMPORT_FEE_UNRESOLVED",
-      "Candidate has no explicit fee amount to import.",
-    );
-    const feeAccount = findAccountWithAsset(executor, input.feeAccountId);
-    assertService(
-      feeAccount &&
-        !feeAccount.account.isArchived &&
-        !feeAccount.asset.isArchived &&
-        feeAccount.account.bookId === connection.bookId,
-      "EXTERNAL_IMPORT_FEE_ACCOUNT_INVALID",
-      "Selected manual fee account must be active and in the connection book.",
-    );
-    fee = { accountId: input.feeAccountId, amount };
+    if (amount) {
+      assertService(
+        !(input.feeAccountId && input.ignoreUnresolvedFee),
+        "EXTERNAL_IMPORT_FEE_CHOICE_CONFLICT",
+        "Choose a fee account or explicitly ignore the unresolved fee, not both.",
+      );
+      assertService(
+        input.feeAccountId || input.ignoreUnresolvedFee === true,
+        "EXTERNAL_IMPORT_FEE_UNRESOLVED",
+        "Kraken reported a nonzero fee. Select a Talli fee account or explicitly confirm that the fee should not be imported.",
+      );
+      if (input.feeAccountId) {
+        const feeAccount = findAccountWithAsset(executor, input.feeAccountId);
+        assertService(
+          feeAccount &&
+            !feeAccount.account.isArchived &&
+            !feeAccount.asset.isArchived &&
+            feeAccount.account.bookId === connection.bookId,
+          "EXTERNAL_IMPORT_FEE_ACCOUNT_INVALID",
+          "Selected manual fee account must be active and in the connection book.",
+        );
+        fee = {
+          accountId: input.feeAccountId,
+          amount: magnitudeText(amount),
+        };
+      }
+    } else {
+      assertService(
+        !input.feeAccountId && input.ignoreUnresolvedFee !== true,
+        "EXTERNAL_IMPORT_FEE_UNAVAILABLE",
+        "Candidate has no unresolved fee to resolve or ignore.",
+      );
+    }
   }
 
   const common = {
@@ -307,6 +326,7 @@ export class ExternalImportService {
           destinationAccountId: input.destinationAccountId ?? null,
           mainAccountId: input.mainAccountId ?? null,
           feeAccountId: input.feeAccountId ?? null,
+          ignoreUnresolvedFee: input.ignoreUnresolvedFee === true,
           categoryId: input.categoryId ?? null,
           note: input.note ?? null,
           sourceFingerprint: prepared.sourceFingerprint,

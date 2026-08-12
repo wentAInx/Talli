@@ -60,7 +60,9 @@ function stringField(value: Record<string, unknown>, field: string): string {
   return candidate;
 }
 
-function tradePayload(source: KrakenSourceObject): KrakenTradePayload {
+function tradePayload(
+  source: Pick<KrakenSourceObject, "payloadJson">,
+): KrakenTradePayload {
   const value = parseObject(source.payloadJson);
   return {
     ordertxid: stringField(value, "ordertxid"),
@@ -103,6 +105,13 @@ function nonzeroMagnitude(value: string): string | null {
   const normalized = validatedExternalDecimalText(value);
   const magnitude = normalized.replace(/^[+-]/, "");
   return /^0+(?:\.0+)?$/.test(magnitude) ? null : magnitude;
+}
+
+export function krakenReportedNonzeroTradeFee(
+  source: Pick<KrakenSourceObject, "objectType" | "payloadJson">,
+): string | null {
+  if (source.objectType !== "kraken_trade") return null;
+  return nonzeroMagnitude(tradePayload(source).fee);
 }
 
 function fingerprint(sources: readonly KrakenSourceObject[]): string {
@@ -205,7 +214,7 @@ export function normalizeKrakenTradeCandidate(input: {
         ];
   if (fee) legs.push(fee);
 
-  const feeMagnitude = nonzeroMagnitude(payload.fee);
+  const feeMagnitude = krakenReportedNonzeroTradeFee(input.trade);
   return {
     stableKey: externalStableKey("kraken_trade", input.trade.externalId),
     suggestedEventType: "exchange",

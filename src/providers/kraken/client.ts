@@ -6,6 +6,7 @@ import {
 import { createKrakenSignature } from "./auth";
 import { KrakenProviderError } from "./errors";
 import {
+  associateKrakenPairAliases,
   krakenResultCount,
   parseKrakenAssetPairs,
   parseKrakenAssets,
@@ -216,9 +217,10 @@ export class KrakenReadOnlyClient implements KrakenReadOnlyProvider {
 
   private async publicGet(
     path: "/0/public/Assets" | "/0/public/AssetPairs",
+    assetVersion?: "1",
   ): Promise<unknown> {
     const url = new URL(path, KRAKEN_ORIGIN);
-    url.searchParams.set("assetVersion", "1");
+    if (assetVersion) url.searchParams.set("assetVersion", assetVersion);
     const response = await this.transport.request({
       method: "GET",
       url,
@@ -300,10 +302,12 @@ export class KrakenReadOnlyClient implements KrakenReadOnlyProvider {
       );
     }
 
-    const [assetsResult, pairsResult] = await Promise.all([
-      this.publicGet("/0/public/Assets"),
-      this.publicGet("/0/public/AssetPairs"),
-    ]);
+    const [assetsResult, displayPairsResult, internalPairsResult] =
+      await Promise.all([
+        this.publicGet("/0/public/Assets", "1"),
+        this.publicGet("/0/public/AssetPairs", "1"),
+        this.publicGet("/0/public/AssetPairs"),
+      ]);
     const balances = parseKrakenBalances(await this.privatePost("Balance"));
     const ledgers = await this.fetchLedgers(
       startEpochSeconds(fetchedAt, input.sinceLedger),
@@ -317,7 +321,10 @@ export class KrakenReadOnlyClient implements KrakenReadOnlyProvider {
       permissions,
       referenceData: {
         assets: parseKrakenAssets(assetsResult),
-        assetPairs: parseKrakenAssetPairs(pairsResult),
+        assetPairs: associateKrakenPairAliases(
+          parseKrakenAssetPairs(displayPairsResult),
+          parseKrakenAssetPairs(internalPairsResult),
+        ),
       },
       balances,
       ledgers,

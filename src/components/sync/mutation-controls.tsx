@@ -150,12 +150,14 @@ function AccountSelect({
   accounts,
   defaultValue,
   optional = false,
+  emptyLabel,
 }: {
   label: string;
   name: string;
   accounts: CandidateAccountOption[];
   defaultValue?: string | null;
   optional?: boolean;
+  emptyLabel?: string;
 }) {
   return (
     <label className="field">
@@ -165,7 +167,9 @@ function AccountSelect({
         name={name}
         required={!optional}
       >
-        <option value="">{optional ? "不导入手续费" : "请选择账户"}</option>
+        <option value="">
+          {emptyLabel ?? (optional ? "不导入手续费" : "请选择账户")}
+        </option>
         {accounts.map((account) => (
           <option key={account.id} value={account.id}>
             {account.name} · {account.assetCode}
@@ -181,12 +185,14 @@ export function CandidateReviewForm({
   suggestedEventType,
   accounts,
   legs,
+  unresolvedFee,
 }: {
   candidateId: string;
   suggestedEventType:
     "exchange" | "transfer" | "income" | "expense" | "unknown";
   accounts: CandidateAccountOption[];
   legs: CandidateLegOption[];
+  unresolvedFee: { amountText: string } | null;
 }) {
   const router = useRouter();
   const defaultEventType =
@@ -227,6 +233,7 @@ export function CandidateReviewForm({
           destinationAccountId: text("destinationAccountId"),
           mainAccountId: text("mainAccountId"),
           feeAccountId: text("feeAccountId"),
+          ignoreUnresolvedFee: formData.get("ignoreUnresolvedFee") === "on",
           note: text("note"),
           confirmed: true,
         },
@@ -345,6 +352,26 @@ export function CandidateReviewForm({
           label={`手续费账户 · ${fee.amountText} ${fee.providerAssetKey}`}
           name="feeAccountId"
         />
+      ) : null}
+
+      {unresolvedFee ? (
+        <div className="fee-panel candidate-unresolved-fee">
+          <p>
+            <strong>Kraken reported fee: {unresolvedFee.amountText}</strong>
+          </p>
+          <p>Fee asset unresolved</p>
+          <AccountSelect
+            accounts={accounts}
+            emptyLabel="请选择手续费账户 / 资产"
+            label="手续费 Talli 账户 / 资产"
+            name="feeAccountId"
+            optional
+          />
+          <label className="checkbox-row">
+            <input name="ignoreUnresolvedFee" type="checkbox" />
+            <span>我确认本次不导入 Kraken 报告的手续费</span>
+          </label>
+        </div>
       ) : null}
 
       <label className="field">

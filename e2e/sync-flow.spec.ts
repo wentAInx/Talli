@@ -146,7 +146,29 @@ test("Kraken read-only sync requires explicit mapping, reconcile, and import", a
   await expect(page.getByText("-100.0000 ZUSD", { exact: true })).toBeVisible();
   await expect(page.getByLabel("卖出账户")).toHaveValue(/.+/);
   await expect(page.getByLabel("买入账户")).toHaveValue(/.+/);
-  await expect(page.getByLabel(/手续费账户/)).toHaveValue(/.+/);
+  await expect(
+    page.getByText("Kraken reported fee: 0.2500", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Fee asset unresolved", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("手续费 Talli 账户 / 资产")).toHaveValue("");
+  await expect(
+    page.getByLabel("我确认本次不导入 Kraken 报告的手续费"),
+  ).not.toBeChecked();
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "导入到 Talli" }).click();
+  await expect(
+    page.locator(".candidate-import-form .form-error"),
+  ).toContainText("Kraken reported a nonzero fee");
+  await expect(
+    page.getByRole("heading", { name: "Kraken trade BTC/USD" }),
+  ).toBeVisible();
+
+  await page
+    .getByLabel("手续费 Talli 账户 / 资产")
+    .selectOption({ label: "V3 Kraken USD · USD" });
 
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "导入到 Talli" }).click();

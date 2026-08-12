@@ -21,6 +21,7 @@ import {
   queryBalanceAt,
 } from "../db/queries";
 import { formatAtomic } from "../domain/money";
+import { krakenReportedNonzeroTradeFee } from "../providers/kraken/candidates";
 import { ServiceError } from "./errors";
 
 function formatAmount(amount: bigint, scale: number, code: string): string {
@@ -313,7 +314,7 @@ export class ExternalSyncReadService {
         };
       },
     );
-    const sources = listExternalCandidateSourceLinks(
+    const sourceRows = listExternalCandidateSourceLinks(
       this.context.db,
       candidate.id,
     ).map((link) => {
@@ -321,6 +322,9 @@ export class ExternalSyncReadService {
         this.context.db,
         link.sourceObjectId,
       );
+      return { link, source };
+    });
+    const sources = sourceRows.map(({ link, source }) => {
       return {
         relation: link.relation,
         id: source?.id ?? link.sourceObjectId,
@@ -329,6 +333,15 @@ export class ExternalSyncReadService {
         occurredAt: source?.occurredAt ?? null,
       };
     });
+    const primaryTradeSources = sourceRows.filter(
+      ({ link, source }) =>
+        link.relation === "primary" && source?.objectType === "kraken_trade",
+    );
+    const unresolvedFeeAmountText =
+      !legs.some((leg) => leg.role === "fee") &&
+      primaryTradeSources.length === 1
+        ? krakenReportedNonzeroTradeFee(primaryTradeSources[0]!.source!)
+        : null;
     return {
       ...candidate,
       connectionName: connection.name,
@@ -336,6 +349,9 @@ export class ExternalSyncReadService {
       legs,
       accounts,
       importLink: findExternalImportLink(this.context.db, candidate.id) ?? null,
+      unresolvedFee: unresolvedFeeAmountText
+        ? { amountText: unresolvedFeeAmountText }
+        : null,
       warnings: [
         ...(candidate.status === "needs_mapping"
           ? ["仍有资产、账户或精度问题，导入前必须解决。"]

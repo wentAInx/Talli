@@ -15,6 +15,7 @@ import type {
   KrakenSyncSnapshot,
 } from "../../providers/kraken/types";
 import { ExternalSyncService } from "../../services/external-sync-service";
+import { ExternalSyncReadService } from "../../services/external-sync-read-service";
 import { ExternalMappingService } from "../../services/external-mapping-service";
 import { ExternalImportService } from "../../services/external-import-service";
 import { ExternalReconciliationService } from "../../services/external-reconciliation-service";
@@ -44,7 +45,10 @@ function source(
   };
 }
 
-function snapshot(tradeCost = "100.0000"): KrakenSyncSnapshot {
+function snapshot(
+  tradeCost = "100.0000",
+  linkedFeeEvidence = true,
+): KrakenSyncSnapshot {
   return {
     fetchedAt: "2026-08-11T12:05:00.000Z",
     permissions,
@@ -75,6 +79,7 @@ function snapshot(tradeCost = "100.0000"): KrakenSyncSnapshot {
       assetPairs: {
         "BTC/USD": {
           displayPair: "BTC/USD",
+          providerAliases: ["BTC/USD", "XBT/USD", "XBTUSD", "XXBTZUSD"],
           altname: "XBTUSD",
           wsname: "XBT/USD",
           base: "BTC",
@@ -91,7 +96,7 @@ function snapshot(tradeCost = "100.0000"): KrakenSyncSnapshot {
     ],
     ledgers: [
       source("kraken_ledger", "L-TRADE-1", {
-        refid: "T-TRADE-1",
+        refid: linkedFeeEvidence ? "T-TRADE-1" : "UNRELATED-TRADE",
         time: "1786440000.1000",
         type: "trade",
         subtype: "",
@@ -115,14 +120,14 @@ function snapshot(tradeCost = "100.0000"): KrakenSyncSnapshot {
       source("kraken_trade", "T-TRADE-1", {
         ordertxid: "O-ORDER-1",
         postxid: "",
-        pair: "BTC/USD",
+        pair: "XXBTZUSD",
         time: "1786440000.1000",
         type: "buy",
         price: "68965.517241",
         cost: tradeCost,
         fee: "0.2500",
         vol: "0.00145000",
-        ledgers: ["L-TRADE-1"],
+        ledgers: linkedFeeEvidence ? ["L-TRADE-1"] : [],
       }),
     ],
   };
@@ -167,7 +172,7 @@ describe("external sync persistence", () => {
     database = null;
   });
 
-  function setup() {
+  function setup(initialSnapshot = snapshot()) {
     database = createTestDatabase();
     seedDatabase(database.context);
     insertExternalConnection(database.context.db, {
@@ -185,7 +190,7 @@ describe("external sync persistence", () => {
       id: () => `v3-id-${String(++sequence).padStart(4, "0")}`,
       now: () => "2026-08-11T12:05:00.000Z",
     };
-    const provider = new FixtureProvider(snapshot());
+    const provider = new FixtureProvider(initialSnapshot);
     const service = new ExternalSyncService(
       database.context,
       () => provider,
@@ -214,8 +219,8 @@ describe("external sync persistence", () => {
     });
   }
 
-  async function syncWithMappedAccounts() {
-    const initialized = setup();
+  async function syncWithMappedAccounts(initialSnapshot = snapshot()) {
+    const initialized = setup(initialSnapshot);
     await initialized.service.syncNow("connection-kraken");
     createAccount("account-kraken-btc", "seed-asset-btc");
     createAccount("account-kraken-usd", "seed-asset-usd");
@@ -453,6 +458,70 @@ describe("external sync persistence", () => {
     ).rejects.toMatchObject({
       code: "IMPORTED_EVENT_DELETE_FORBIDDEN",
     });
+  });
+
+  it("rebuilds an unresolved nonzero trade fee from persisted source and blocks silent import", async () => {
+    const { runtime } = await syncWithMappedAccounts(
+      snapshot("100.0000", false),
+    );
+    const sqlite = database!.context.sqlite;
+    const candidateId = rowId(
+      sqlite,
+      "select id from external_transaction_candidates where stable_key = 'kraken:trade:T-TRADE-1'",
+    );
+    const review = new ExternalSyncReadService(database!.context).candidate(
+      candidateId,
+    );
+    expect(review.unresolvedFee).toEqual({ amountText: "0.2500" });
+
+    const importer = new ExternalImportService(database!.context, runtime);
+    await expect(
+      importer.importCandidate({
+        candidateId,
+        chosenEventType: "exchange",
+        sourceAccountId: "account-kraken-usd",
+        destinationAccountId: "account-kraken-btc",
+        confirmed: true,
+      }),
+    ).rejects.toMatchObject({ code: "EXTERNAL_IMPORT_FEE_UNRESOLVED" });
+    expect(count(sqlite, "ledger_events")).toBe(0);
+    expect(count(sqlite, "external_import_links")).toBe(0);
+
+    await importer.importCandidate({
+      candidateId,
+      chosenEventType: "exchange",
+      sourceAccountId: "account-kraken-usd",
+      destinationAccountId: "account-kraken-btc",
+      feeAccountId: "account-kraken-usd",
+      confirmed: true,
+    });
+    expect(count(sqlite, "ledger_events")).toBe(1);
+    expect(count(sqlite, "ledger_entries")).toBe(3);
+    expect(count(sqlite, "external_import_links")).toBe(1);
+  });
+
+  it("allows an unresolved fee to be omitted only after explicit confirmation", async () => {
+    const { runtime } = await syncWithMappedAccounts(
+      snapshot("100.0000", false),
+    );
+    const sqlite = database!.context.sqlite;
+    const candidateId = rowId(
+      sqlite,
+      "select id from external_transaction_candidates where stable_key = 'kraken:trade:T-TRADE-1'",
+    );
+    const importer = new ExternalImportService(database!.context, runtime);
+
+    await importer.importCandidate({
+      candidateId,
+      chosenEventType: "exchange",
+      sourceAccountId: "account-kraken-usd",
+      destinationAccountId: "account-kraken-btc",
+      ignoreUnresolvedFee: true,
+      confirmed: true,
+    });
+    expect(count(sqlite, "ledger_events")).toBe(1);
+    expect(count(sqlite, "ledger_entries")).toBe(2);
+    expect(count(sqlite, "external_import_links")).toBe(1);
   });
 
   it("rolls back the V1 event when provenance insertion fails late", async () => {

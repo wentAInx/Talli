@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createKrakenSignature } from "../../../providers/kraken/auth";
 import { KrakenReadOnlyClient } from "../../../providers/kraken/client";
 import {
+  associateKrakenPairAliases,
   evaluateKrakenPermissions,
   parseKrakenAssetPairs,
   parseKrakenAssets,
@@ -42,7 +43,7 @@ function tradeRecord(index: number) {
   return {
     ordertxid: `O-${index}`,
     postxid: "",
-    pair: "BTC/USD",
+    pair: "XXBTZUSD",
     time: `1786440000.${String(index).padStart(4, "0")}`,
     type: index % 2 === 0 ? "buy" : "sell",
     price: "68965.517241",
@@ -95,17 +96,29 @@ class ScriptedKrakenTransport implements KrakenHttpTransport {
         };
         break;
       case "/0/public/AssetPairs":
-        result = {
-          "BTC/USD": {
-            altname: "XBTUSD",
-            wsname: "XBT/USD",
-            base: "BTC",
-            quote: "USD",
-            fee_volume_currency: "USD",
-            pair_decimals: 4,
-            lot_decimals: 8,
-          },
-        };
+        result = input.url.searchParams.has("assetVersion")
+          ? {
+              "BTC/USD": {
+                altname: "XBTUSD",
+                wsname: "XBT/USD",
+                base: "BTC",
+                quote: "USD",
+                fee_volume_currency: "USD",
+                pair_decimals: 4,
+                lot_decimals: 8,
+              },
+            }
+          : {
+              XXBTZUSD: {
+                altname: "XBTUSD",
+                wsname: "XBT/USD",
+                base: "XXBT",
+                quote: "ZUSD",
+                fee_volume_currency: "ZUSD",
+                pair_decimals: 4,
+                lot_decimals: 8,
+              },
+            };
         break;
       case "/0/private/Balance":
         result = { XXBT: "0.50200000", "USDT.F": "5.00000000" };
@@ -190,7 +203,7 @@ describe("Kraken read-only provider", () => {
       USD: { altname: "USD", decimals: 4, display_decimals: 2 },
       "USDT.F": { altname: "USDT.F", decimals: 8, display_decimals: 8 },
     });
-    const pairs = parseKrakenAssetPairs({
+    const displayPairs = parseKrakenAssetPairs({
       "BTC/USD": {
         altname: "XBTUSD",
         wsname: "XBT/USD",
@@ -199,13 +212,26 @@ describe("Kraken read-only provider", () => {
         fee_volume_currency: "USD",
       },
     });
+    const internalPairs = parseKrakenAssetPairs({
+      XXBTZUSD: {
+        altname: "XBTUSD",
+        wsname: "XBT/USD",
+        base: "XXBT",
+        quote: "ZUSD",
+        fee_volume_currency: "ZUSD",
+      },
+    });
+    const pairs = associateKrakenPairAliases(displayPairs, internalPairs);
     expect(resolveKrakenAssetDisplayCode("XXBT", assets)).toBe("BTC");
     expect(resolveKrakenAssetDisplayCode("ZUSD", assets)).toBe("USD");
     expect(resolveKrakenAssetDisplayCode("USDT.F", assets)).toBe("USDT.F");
-    expect(resolveKrakenPair("XBTUSD", pairs)).toMatchObject({
-      base: "BTC",
-      quote: "USD",
-    });
+    for (const identifier of ["XXBTZUSD", "XBTUSD", "XBT/USD", "BTC/USD"]) {
+      expect(resolveKrakenPair(identifier, pairs)).toMatchObject({
+        displayPair: "BTC/USD",
+        base: "BTC",
+        quote: "USD",
+      });
+    }
   });
 
   it("paginates ledgers and fills with injectable transport only", async () => {
@@ -253,6 +279,12 @@ describe("Kraken read-only provider", () => {
         ].includes(call.path),
       ),
     ).toBe(true);
+    expect(
+      transport.calls
+        .filter((call) => call.path === "/0/public/AssetPairs")
+        .map((call) => call.search)
+        .sort(),
+    ).toEqual(["", "?assetVersion=1"]);
     expect(snapshot.ledgers[0]!.payloadJson).not.toContain("must-not-persist");
   });
 

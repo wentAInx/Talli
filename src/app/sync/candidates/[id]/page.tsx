@@ -156,6 +156,7 @@ export default async function CandidateDetailPage({
             candidateId={candidate.id}
             legs={candidate.legs}
             suggestedEventType={candidate.suggestedEventType}
+            unresolvedFee={candidate.unresolvedFee}
           />
         </section>
       ) : (

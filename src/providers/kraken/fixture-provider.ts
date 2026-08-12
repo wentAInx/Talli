@@ -3,6 +3,11 @@ import "server-only";
 import { createHash } from "node:crypto";
 
 import { canonicalExternalJson } from "../../domain/external-sync";
+import {
+  defaultServiceRuntime,
+  runtimeNow,
+  type ServiceRuntime,
+} from "../../services/runtime";
 import type {
   KrakenPermissionCheck,
   KrakenReadOnlyProvider,
@@ -17,8 +22,6 @@ const FIXTURE_PERMISSIONS: KrakenPermissionCheck = {
   forbiddenWritePermissions: [],
   extraReadOnlyPermissions: [],
 };
-let fixtureFetchSequence = 0;
-
 function fixtureSource(
   objectType: "kraken_trade" | "kraken_ledger",
   externalId: string,
@@ -34,11 +37,7 @@ function fixtureSource(
   };
 }
 
-function fixtureSnapshot(): KrakenSyncSnapshot {
-  const fetchedAt = new Date(
-    Date.parse("2026-08-11T12:05:00.000Z") + fixtureFetchSequence * 60_000,
-  ).toISOString();
-  fixtureFetchSequence += 1;
+function fixtureSnapshot(fetchedAt: string): KrakenSyncSnapshot {
   return {
     fetchedAt,
     permissions: FIXTURE_PERMISSIONS,
@@ -69,6 +68,7 @@ function fixtureSnapshot(): KrakenSyncSnapshot {
       assetPairs: {
         "BTC/USD": {
           displayPair: "BTC/USD",
+          providerAliases: ["BTC/USD", "XBT/USD", "XBTUSD", "XXBTZUSD"],
           altname: "XBTUSD",
           wsname: "XBT/USD",
           base: "BTC",
@@ -85,7 +85,7 @@ function fixtureSnapshot(): KrakenSyncSnapshot {
     ],
     ledgers: [
       fixtureSource("kraken_ledger", "L-TRADE-1", {
-        refid: "T-TRADE-1",
+        refid: "UNRELATED-TRADE",
         time: "1786440000.1000",
         type: "trade",
         subtype: "",
@@ -109,14 +109,14 @@ function fixtureSnapshot(): KrakenSyncSnapshot {
       fixtureSource("kraken_trade", "T-TRADE-1", {
         ordertxid: "O-ORDER-1",
         postxid: "",
-        pair: "BTC/USD",
+        pair: "XXBTZUSD",
         time: "1786440000.1000",
         type: "buy",
         price: "68965.517241",
         cost: "100.0000",
         fee: "0.2500",
         vol: "0.00145000",
-        ledgers: ["L-TRADE-1"],
+        ledgers: [],
       }),
     ],
   };
@@ -130,11 +130,15 @@ export function isKrakenFixtureMode(): boolean {
 }
 
 export class DeterministicKrakenFixtureProvider implements KrakenReadOnlyProvider {
+  constructor(
+    private readonly runtime: ServiceRuntime = defaultServiceRuntime,
+  ) {}
+
   async validateCredentials(): Promise<KrakenPermissionCheck> {
     return FIXTURE_PERMISSIONS;
   }
 
   async fetchSnapshot(): Promise<KrakenSyncSnapshot> {
-    return fixtureSnapshot();
+    return fixtureSnapshot(runtimeNow(this.runtime));
   }
 }

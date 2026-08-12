@@ -32,6 +32,7 @@ export interface KrakenAssetMetadata {
 
 export interface KrakenPairMetadata {
   displayPair: string;
+  providerAliases: string[];
   altname: string | null;
   wsname: string | null;
   base: string;
