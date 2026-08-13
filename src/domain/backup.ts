@@ -17,9 +17,10 @@ import {
 import {
   EVM_ALCHEMY_CREDENTIAL_REF,
   assertEvmChainNetwork,
-  evmRawAtomicToDecimalText,
   evmGasStableKey,
   evmMovementStableKey,
+  evmNativeAssetKey,
+  evmRawAtomicToDecimalText,
   evmWalletSourceKey,
   normalizeEvmAddress,
   normalizeEvmTxHash,
@@ -1006,6 +1007,15 @@ function validateExternalRelations(data: BackupData): void {
   const candidates = new Map(
     data.externalTransactionCandidates.map((row) => [row.id, row]),
   );
+  const candidateLegs = new Map<
+    string,
+    BackupData["externalTransactionLegs"]
+  >();
+  for (const leg of data.externalTransactionLegs) {
+    const legs = candidateLegs.get(leg.candidateId) ?? [];
+    legs.push(leg);
+    candidateLegs.set(leg.candidateId, legs);
+  }
   const importLinks = new Map(
     data.externalImportLinks.map((row) => [row.candidateId, row]),
   );
@@ -1347,6 +1357,8 @@ function validateExternalRelations(data: BackupData): void {
   }
   for (const fee of data.evmL2GasFeeDetails) {
     const detail = evmCandidateDetails.get(fee.candidateId);
+    const candidate = candidates.get(fee.candidateId);
+    const legs = candidateLegs.get(fee.candidateId) ?? [];
     const expectedModel =
       fee.chainId === 8453 ? "base_op_stack" : "arbitrum_nitro";
     let componentsAreExact = true;
@@ -1371,12 +1383,43 @@ function validateExternalRelations(data: BackupData): void {
     } else if (fee.totalFeeAtomicText !== null) {
       componentsAreExact = false;
     }
+    let candidateBindingIsValid = false;
+    if (fee.feeStatus === "exact" && fee.totalFeeAtomicText !== null) {
+      const leg = legs[0];
+      candidateBindingIsValid =
+        candidate !== undefined &&
+        detail !== undefined &&
+        detail.candidateKind === "gas" &&
+        detail.classification === "gas_only" &&
+        detail.gasFeeStatus === "exact" &&
+        detail.gasFeeAtomicText !== null &&
+        detail.gasFeeAtomicText === fee.totalFeeAtomicText &&
+        legs.length === 1 &&
+        leg?.role === "external_out" &&
+        leg.providerAssetKey === evmNativeAssetKey(fee.chainId) &&
+        leg.amountText ===
+          `-${evmRawAtomicToDecimalText(BigInt(fee.totalFeeAtomicText), 18)}`;
+    } else if (fee.feeStatus === "unresolved") {
+      candidateBindingIsValid =
+        candidate !== undefined &&
+        detail !== undefined &&
+        detail.candidateKind === "gas" &&
+        detail.classification === "gas_only" &&
+        detail.gasFeeStatus === "unresolved" &&
+        detail.gasFeeAtomicText === null &&
+        fee.totalFeeAtomicText === null &&
+        candidate.status !== "pending" &&
+        candidate.status !== "needs_mapping" &&
+        candidate.status !== "imported" &&
+        legs.length === 0;
+    }
     if (
       !detail ||
       detail.candidateKind !== "gas" ||
       detail.chainId !== fee.chainId ||
       fee.feeModel !== expectedModel ||
-      !componentsAreExact
+      !componentsAreExact ||
+      !candidateBindingIsValid
     ) {
       fail(
         "BACKUP_EVM_L2_FEE_INVALID",

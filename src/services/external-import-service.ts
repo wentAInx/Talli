@@ -8,6 +8,7 @@ import {
   findExternalCandidate,
   findExternalConnection,
   findEvmCandidateDetail,
+  findEvmL2GasFeeDetail,
   findExternalImportLink,
   findExternalSourceObjectById,
   insertExternalImportLink,
@@ -19,7 +20,11 @@ import {
   canonicalExternalDecimalText,
   canonicalExternalJson,
 } from "../domain/external-sync";
-import { evmChainIdentity } from "../domain/evm";
+import {
+  evmChainIdentity,
+  evmNativeAssetKey,
+  evmRawAtomicToDecimalText,
+} from "../domain/evm";
 import { krakenReportedNonzeroTradeFee } from "../providers/kraken/candidates";
 import type { LedgerMutationInput, OptionalFeeInput } from "./contracts";
 import { assertService } from "./errors";
@@ -146,6 +151,7 @@ function prepareCommand(
     "EXTERNAL_CONNECTION_NOT_FOUND",
     "External connection was not found.",
   );
+  const legs = listExternalCandidateLegs(executor, candidate.id);
   let evmChainName: string | null = null;
   if (connection.provider === "evm_wallet") {
     const detail = findEvmCandidateDetail(executor, candidate.id);
@@ -154,6 +160,37 @@ function prepareCommand(
       "EXTERNAL_CANDIDATE_INTEGRITY_ERROR",
       "EVM candidate details are missing.",
     );
+    if (
+      (detail.chainId === 8453 || detail.chainId === 42161) &&
+      detail.candidateKind === "gas"
+    ) {
+      const fee = findEvmL2GasFeeDetail(executor, candidate.id);
+      const totalFeeAtomicText = fee?.totalFeeAtomicText ?? null;
+      let expectedLegAmountText: string | null = null;
+      if (totalFeeAtomicText !== null && /^\d+$/.test(totalFeeAtomicText)) {
+        expectedLegAmountText = `-${evmRawAtomicToDecimalText(
+          BigInt(totalFeeAtomicText),
+          18,
+        )}`;
+      }
+      const gasLeg = legs[0];
+      assertService(
+        detail.classification === "gas_only" &&
+          detail.gasFeeStatus === "exact" &&
+          detail.gasFeeAtomicText !== null &&
+          fee?.chainId === detail.chainId &&
+          fee.feeStatus === "exact" &&
+          totalFeeAtomicText !== null &&
+          detail.gasFeeAtomicText === totalFeeAtomicText &&
+          legs.length === 1 &&
+          gasLeg?.role === "external_out" &&
+          gasLeg.providerAssetKey === evmNativeAssetKey(detail.chainId) &&
+          expectedLegAmountText !== null &&
+          gasLeg.amountText === expectedLegAmountText,
+        "EVM_L2_FEE_INTEGRITY_ERROR",
+        "L2 gas fee provenance is inconsistent with its import candidate.",
+      );
+    }
     evmChainName =
       detail.chainId === 1
         ? "Ethereum"
@@ -179,7 +216,6 @@ function prepareCommand(
       "The selected Ledger event type is not supported for this EVM candidate.",
     );
   }
-  const legs = listExternalCandidateLegs(executor, candidate.id);
   const source = legs.find((leg) => leg.role === "source");
   const destination = legs.find((leg) => leg.role === "destination");
   const external = legs.find(
