@@ -17,6 +17,7 @@ import {
 import { EvmProviderError } from "./errors";
 import type {
   AlchemyReadMethod,
+  EvmBalanceIssue,
   EvmBalanceRecord,
   EvmEnrichedTransaction,
   EvmJsonRpcTransport,
@@ -74,6 +75,31 @@ function nullableStringField(
     );
   }
   return candidate;
+}
+
+function addressOrNullField(
+  value: Record<string, unknown>,
+  field: string,
+  label: string,
+): string | null {
+  const candidate = value[field];
+  if (candidate === null) return null;
+  if (typeof candidate !== "string") {
+    throw new EvmProviderError(
+      "INVALID_PAYLOAD",
+      `${label} ${field} is invalid.`,
+    );
+  }
+  return normalizeEvmAddress(candidate);
+}
+
+function safeTokenIssueAssetKey(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    return evmErc20AssetKey(normalizeEvmAddress(value));
+  } catch {
+    return null;
+  }
 }
 
 function canonicalInstant(input: string): string {
@@ -248,8 +274,9 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
   private async tokenBalances(
     addressLower: string,
     metadata: Map<string, EvmTokenMetadata>,
-  ): Promise<EvmBalanceRecord[]> {
+  ): Promise<{ balances: EvmBalanceRecord[]; issues: EvmBalanceIssue[] }> {
     const balances: EvmBalanceRecord[] = [];
+    const issues: EvmBalanceIssue[] = [];
     let pageKey: string | null = null;
     do {
       const options: Record<string, unknown> = { maxCount: 100 };
@@ -271,10 +298,15 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
       for (const raw of result.tokenBalances) {
         const row = record(raw, "Alchemy token balance");
         if (row.error !== null && row.error !== undefined) {
-          throw new EvmProviderError(
-            "INVALID_PAYLOAD",
-            "Alchemy returned an ERC-20 balance error.",
-          );
+          const providerAssetKey = safeTokenIssueAssetKey(row.contractAddress);
+          issues.push({
+            code: "TOKEN_BALANCE_UNAVAILABLE",
+            providerAssetKey,
+            message: providerAssetKey
+              ? `Token balance unavailable for ${providerAssetKey}.`
+              : "Token balance unavailable for an unresolved ERC-20 contract.",
+          });
+          continue;
         }
         const contractAddressLower = normalizeEvmAddress(
           stringField(row, "contractAddress", "Alchemy token balance"),
@@ -307,13 +339,17 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
           ? result.pageKey
           : null;
     } while (pageKey);
-    return balances;
+    return { balances, issues };
   }
 
   private async currentBalances(
     addressLower: string,
     metadata: Map<string, EvmTokenMetadata>,
-  ): Promise<{ head: bigint; balances: EvmBalanceRecord[] }> {
+  ): Promise<{
+    head: bigint;
+    balances: EvmBalanceRecord[];
+    issues: EvmBalanceIssue[];
+  }> {
     const [headResult, nativeResult] = await Promise.all([
       this.rpc("eth_blockNumber", []),
       this.rpc("eth_getBalance", [addressLower, "latest"]),
@@ -340,8 +376,9 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
           displayCode: "ETH",
           name: "Ethereum",
         },
-        ...tokens,
+        ...tokens.balances,
       ],
+      issues: tokens.issues,
     };
   }
 
@@ -481,9 +518,7 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
       fromAddressLower: normalizeEvmAddress(
         stringField(row, "from", "Alchemy transfer"),
       ),
-      toAddressLower: normalizeEvmAddress(
-        stringField(row, "to", "Alchemy transfer"),
-      ),
+      toAddressLower: addressOrNullField(row, "to", "Alchemy transfer"),
       providerAssetKey: contractAddressLower
         ? evmErc20AssetKey(contractAddressLower)
         : EVM_NATIVE_ASSET_KEY,
@@ -522,9 +557,11 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
       fromAddressLower: normalizeEvmAddress(
         stringField(transaction, "from", "Alchemy transaction"),
       ),
-      toAddressLower: nullableStringField(transaction, "to")
-        ? normalizeEvmAddress(nullableStringField(transaction, "to")!)
-        : null,
+      toAddressLower: addressOrNullField(
+        transaction,
+        "to",
+        "Alchemy transaction",
+      ),
       typeHex: nullableStringField(transaction, "type"),
       valueHex: stringField(transaction, "value", "Alchemy transaction"),
       blockNumberText: nullableStringField(transaction, "blockNumber")
@@ -567,6 +604,7 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
     await this.assertMainnet();
     const metadata = new Map<string, EvmTokenMetadata>();
     const current = await this.currentBalances(addressLower, metadata);
+    const balanceObservedAt = runtimeNow(this.runtime);
     const finalized = await this.block("finalized");
     const initialStart = await this.blockAtOrAfter(
       input.historyStartAt,
@@ -615,10 +653,13 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
       txHashes.map((txHash) => this.transaction(txHash)),
     );
     return {
-      fetchedAt: runtimeNow(this.runtime),
+      balanceObservedAt,
+      syncCompletedAt: runtimeNow(this.runtime),
       addressLower,
       syncHeadBlockText: current.head.toString(),
       finalizedBlockText: finalized.number.toString(),
+      balanceComplete: current.issues.length === 0,
+      balanceIssues: current.issues,
       balances: current.balances,
       transfers,
       transactions,

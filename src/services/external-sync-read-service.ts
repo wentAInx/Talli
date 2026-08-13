@@ -166,6 +166,9 @@ export class ExternalSyncReadService {
             !account ||
             !accountMapping?.isEnabled
           ) {
+            const decimalsUnresolved =
+              evmDetail?.assetKind === "erc20" &&
+              evmDetail.tokenDecimals === null;
             return {
               id: observation.id,
               providerAssetKey: observation.providerAssetKey,
@@ -175,11 +178,14 @@ export class ExternalSyncReadService {
               providerAmountText: observation.providerAmountText,
               precisionStatus: observation.precisionStatus,
               observedAt: observation.observedAt,
-              externalDisplay: `${observation.providerAmountText} ${asset?.code ?? observation.providerAssetKey}`,
+              externalDisplay: decimalsUnresolved
+                ? `raw atomic ${evmDetail.rawAmountAtomicText}`
+                : `${observation.providerAmountText} ${asset?.code ?? observation.providerAssetKey}`,
               ledgerDisplay: null,
               differenceDisplay: null,
               differenceDirection: null,
               reconciled: false,
+              decimalsUnresolved,
               evmDetail: evmDetail ?? null,
             };
           }
@@ -223,6 +229,7 @@ export class ExternalSyncReadService {
                 observation.observedAt,
               ),
             ),
+            decimalsUnresolved: false,
             evmDetail: evmDetail ?? null,
           };
         });

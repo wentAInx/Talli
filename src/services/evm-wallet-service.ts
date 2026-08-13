@@ -68,10 +68,31 @@ export type EvmProviderFactory = (connectionId: string) => EvmReadOnlyProvider;
 
 export interface EvmSyncResult {
   runId: string;
+  status: "success" | "partial";
+  balanceIssues: number;
   balancesSeen: number;
   sourceObjectsSeen: number;
   candidatesCreated: number;
   candidatesUpdated: number;
+}
+
+const TOKEN_BALANCE_PARTIAL_CODE = "EVM_TOKEN_BALANCE_PARTIAL";
+
+function balanceIssueSummary(snapshot: EvmSyncSnapshot): string | null {
+  const issueCount = snapshot.balanceIssues.length;
+  assertService(
+    snapshot.balanceComplete === (issueCount === 0),
+    "EVM_BALANCE_ISSUES_INVALID",
+    "EVM balance completeness is inconsistent with its issue list.",
+  );
+  if (issueCount === 0) return null;
+  const affected = snapshot.balanceIssues
+    .map((issue) => issue.providerAssetKey)
+    .filter((value): value is string => value !== null)
+    .slice(0, 3);
+  const suffix =
+    affected.length > 0 ? ` Affected: ${affected.join(", ")}.` : "";
+  return `${issueCount} token balance row${issueCount === 1 ? "" : "s"} could not be observed; unavailable rows were skipped.${suffix}`;
 }
 
 function sourceIdentity(
@@ -235,9 +256,9 @@ function persistBalances(input: {
           ? null
           : atomicToDb(conversion.amountAtomic),
       precisionStatus: conversion.precisionStatus,
-      observedAt: input.snapshot.fetchedAt,
+      observedAt: input.snapshot.balanceObservedAt,
       payloadHash: createHash("sha256").update(payloadJson).digest("hex"),
-      createdAt: input.snapshot.fetchedAt,
+      createdAt: input.snapshot.syncCompletedAt,
     });
     insertEvmBalanceObservationDetail(input.executor, {
       observationId,
@@ -245,7 +266,7 @@ function persistBalances(input: {
       assetKind: balance.assetKind,
       contractAddressLower: balance.contractAddressLower,
       rawAmountAtomicText: balance.rawAmountAtomicText,
-      tokenDecimals: balance.decimals ?? 0,
+      tokenDecimals: balance.decimals,
       syncHeadBlockText: input.snapshot.syncHeadBlockText,
     });
   }
@@ -540,19 +561,23 @@ export class EvmWalletService {
         transfers: snapshot.transfers,
         transactions: snapshot.transactions,
       });
+      const partialMessage = balanceIssueSummary(snapshot);
+      const syncStatus: EvmSyncResult["status"] = snapshot.balanceComplete
+        ? "success"
+        : "partial";
       return this.context.db.transaction(
         (transaction) => {
           ensureMappings({
             executor: transaction,
             connectionId,
             snapshot,
-            now: snapshot.fetchedAt,
+            now: snapshot.syncCompletedAt,
           });
           const sourceIds = persistSources({
             executor: transaction,
             connectionId,
             sources: normalized.sources,
-            now: snapshot.fetchedAt,
+            now: snapshot.syncCompletedAt,
             runtime: this.runtime,
           });
           persistBalances({
@@ -566,36 +591,40 @@ export class EvmWalletService {
             connectionId,
             candidates: normalized.candidates,
             sourceIds,
-            now: snapshot.fetchedAt,
+            now: snapshot.syncCompletedAt,
             runtime: this.runtime,
           });
           const result = {
             runId: runId!,
+            status: syncStatus,
+            balanceIssues: snapshot.balanceIssues.length,
             balancesSeen: snapshot.balances.length,
             sourceObjectsSeen: normalized.sources.length,
             ...counts,
           };
           finishExternalSyncRun(transaction, runId!, {
-            finishedAt: snapshot.fetchedAt,
-            status: "success",
+            finishedAt: snapshot.syncCompletedAt,
+            status: syncStatus,
             balancesSeen: result.balancesSeen,
             sourceObjectsSeen: result.sourceObjectsSeen,
             candidatesCreated: result.candidatesCreated,
             candidatesUpdated: result.candidatesUpdated,
-            errorCode: null,
-            errorMessage: null,
+            errorCode:
+              syncStatus === "partial" ? TOKEN_BALANCE_PARTIAL_CODE : null,
+            errorMessage: partialMessage,
           });
           updateExternalConnectionState(transaction, connectionId, {
-            lastSuccessAt: snapshot.fetchedAt,
-            lastErrorCode: null,
-            lastErrorMessage: null,
-            updatedAt: snapshot.fetchedAt,
+            lastSuccessAt: snapshot.syncCompletedAt,
+            lastErrorCode:
+              syncStatus === "partial" ? TOKEN_BALANCE_PARTIAL_CODE : null,
+            lastErrorMessage: partialMessage,
+            updatedAt: snapshot.syncCompletedAt,
           });
           updateEvmWalletConnectionState(transaction, connectionId, {
             lastFinalizedBlockText: snapshot.finalizedBlockText,
-            lastBalanceSyncAt: snapshot.fetchedAt,
-            lastActivitySyncAt: snapshot.fetchedAt,
-            updatedAt: snapshot.fetchedAt,
+            lastBalanceSyncAt: snapshot.balanceObservedAt,
+            lastActivitySyncAt: snapshot.syncCompletedAt,
+            updatedAt: snapshot.syncCompletedAt,
           });
           return result;
         },

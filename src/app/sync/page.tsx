@@ -82,6 +82,9 @@ function connectionStatus(connection: {
   if (connection.state?.permissions?.forbiddenWritePermissions.length) {
     return { tone: "danger", label: "权限不安全" };
   }
+  if (connection.state?.lastErrorCode === "EVM_TOKEN_BALANCE_PARTIAL") {
+    return { tone: "warning", label: "Token 余额部分完成" };
+  }
   if (connection.state?.lastErrorCode) {
     return { tone: "warning", label: "最近同步失败" };
   }
@@ -320,9 +323,24 @@ export default async function SyncPage({
                 </div>
               )}
               {connection.state?.lastErrorCode ? (
-                <p className="form-error" role="alert">
-                  {connection.state.lastErrorCode} ·{" "}
-                  {connection.state.lastErrorMessage}
+                <p
+                  className={
+                    connection.state.lastErrorCode ===
+                    "EVM_TOKEN_BALANCE_PARTIAL"
+                      ? "sync-partial-warning"
+                      : "form-error"
+                  }
+                  role={
+                    connection.state.lastErrorCode ===
+                    "EVM_TOKEN_BALANCE_PARTIAL"
+                      ? "status"
+                      : "alert"
+                  }
+                >
+                  {connection.state.lastErrorCode ===
+                  "EVM_TOKEN_BALANCE_PARTIAL"
+                    ? "本次同步存在 token balance issue；失败 token 未按 0 写入，其他余额与完整 activity 已保存。"
+                    : `${connection.state.lastErrorCode} · ${connection.state.lastErrorMessage}`}
                 </p>
               ) : null}
             </section>
@@ -348,6 +366,10 @@ export default async function SyncPage({
                     </thead>
                     <tbody>
                       {connection.mappings.map((mapping) => {
+                        const tokenDecimalsUnresolved =
+                          isEvm &&
+                          mapping.providerMetadata.contractAddress !== null &&
+                          mapping.providerMetadata.decimals === null;
                         const action = updateExternalMappingAction.bind(
                           null,
                           connection.id,
@@ -369,8 +391,9 @@ export default async function SyncPage({
                                 </strong>
                                 {isEvm ? (
                                   <small>
-                                    decimals{" "}
-                                    {mapping.providerMetadata.decimals ?? "?"}
+                                    {tokenDecimalsUnresolved
+                                      ? "token decimals unresolved"
+                                      : `decimals ${mapping.providerMetadata.decimals}`}
                                     {mapping.providerMetadata.contractAddress
                                       ? ` · ${mapping.providerMetadata.contractAddress}`
                                       : " · native"}
@@ -390,7 +413,14 @@ export default async function SyncPage({
                                     defaultValue={mapping.mappingStatus}
                                     name="mappingStatus"
                                   >
-                                    <option value="mapped">映射</option>
+                                    <option
+                                      disabled={tokenDecimalsUnresolved}
+                                      value="mapped"
+                                    >
+                                      {tokenDecimalsUnresolved
+                                        ? "映射（等待 decimals）"
+                                        : "映射"}
+                                    </option>
                                     <option value="unmapped">未映射</option>
                                     <option value="ignored">忽略</option>
                                   </select>
@@ -510,6 +540,14 @@ export default async function SyncPage({
                           ? ` · head ${observation.evmDetail.syncHeadBlockText}`
                           : ""}
                       </time>
+                      {observation.decimalsUnresolved &&
+                      observation.evmDetail ? (
+                        <p className="evm-decimals-warning" role="status">
+                          raw atomic amount{" "}
+                          {observation.evmDetail.rawAmountAtomicText} · token
+                          decimals unresolved
+                        </p>
+                      ) : null}
                       {observation.accountId &&
                       observation.differenceDisplay ? (
                         <ReconcileObservationButton

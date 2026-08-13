@@ -789,7 +789,7 @@ export const evmBalanceObservationDetails = sqliteTable(
     assetKind: text("asset_kind", { enum: evmAssetKinds }).notNull(),
     contractAddressLower: text("contract_address_lower"),
     rawAmountAtomicText: text("raw_amount_atomic_text").notNull(),
-    tokenDecimals: integer("token_decimals").notNull(),
+    tokenDecimals: integer("token_decimals"),
     syncHeadBlockText: text("sync_head_block_text"),
   },
   (table) => [
@@ -800,7 +800,7 @@ export const evmBalanceObservationDetails = sqliteTable(
     ),
     check(
       "evm_balance_details_decimals_check",
-      sql`${table.tokenDecimals} >= 0 and ${table.tokenDecimals} <= 255`,
+      sql`${table.tokenDecimals} is null or (${table.tokenDecimals} >= 0 and ${table.tokenDecimals} <= 255)`,
     ),
     check(
       "evm_balance_details_contract_check",

@@ -18,6 +18,7 @@ import type {
 
 const FIXTURE_OTHER_ADDRESS = "0x2222222222222222222222222222222222222222";
 const FIXTURE_USDC_CONTRACT = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+const FIXTURE_UNKNOWN_CONTRACT = "0x8888888888888888888888888888888888888888";
 const FIXTURE_TX_HASH = `0x${"a".repeat(64)}`;
 
 export function isEvmFixtureMode(): boolean {
@@ -34,11 +35,15 @@ export class DeterministicEvmFixtureProvider implements EvmReadOnlyProvider {
 
   async fetchSnapshot(input: EvmSyncInput): Promise<EvmSyncSnapshot> {
     const address = normalizeEvmAddress(input.address);
+    const balanceObservedAt = runtimeNow(this.runtime);
     return {
-      fetchedAt: runtimeNow(this.runtime),
+      balanceObservedAt,
+      syncCompletedAt: runtimeNow(this.runtime),
       addressLower: address,
       syncHeadBlockText: "21000020",
       finalizedBlockText: "21000018",
+      balanceComplete: true,
+      balanceIssues: [],
       balances: [
         {
           providerAssetKey: EVM_NATIVE_ASSET_KEY,
@@ -59,6 +64,16 @@ export class DeterministicEvmFixtureProvider implements EvmReadOnlyProvider {
           amountText: "100",
           displayCode: "USDC",
           name: "USD Coin",
+        },
+        {
+          providerAssetKey: evmErc20AssetKey(FIXTURE_UNKNOWN_CONTRACT),
+          assetKind: "erc20",
+          contractAddressLower: FIXTURE_UNKNOWN_CONTRACT,
+          rawAmountAtomicText: "123456789",
+          decimals: null,
+          amountText: null,
+          displayCode: "UNKNOWN",
+          name: "Unknown decimals token",
         },
       ],
       transfers: [

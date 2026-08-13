@@ -264,6 +264,18 @@ test("Ethereum Mainnet wallet keeps on-chain balance, gas, and movement outside 
   await walletCard.getByRole("button", { name: "立即同步" }).click();
   await expect(walletCard.getByText("只读同步正常")).toBeVisible();
   await expect(walletCard.getByText(/21000018/)).toBeVisible();
+  const unknownMapping = page.locator(".sync-mapping-table tr").filter({
+    has: page.getByText(
+      "eip155:1/erc20:0x8888888888888888888888888888888888888888",
+      { exact: true },
+    ),
+  });
+  await expect(unknownMapping).toContainText("token decimals unresolved");
+  await expect(
+    unknownMapping
+      .getByRole("combobox", { name: "映射状态" })
+      .locator('option[value="mapped"]'),
+  ).toHaveAttribute("disabled", "");
 
   await mapAsset(page, {
     raw: "eip155:1/native",
@@ -285,6 +297,17 @@ test("Ethereum Mainnet wallet keeps on-chain balance, gas, and movement outside 
   await expect(ethObservation).toContainText("1.490000000000000000 ETH");
   await expect(ethObservation).toContainText("1.500000000000000000 ETH");
   await expect(ethObservation).toContainText("-0.010000000000000000 ETH");
+  const unknownObservation = page
+    .locator(".evm-workbench .observation-card")
+    .filter({
+      hasText: "raw atomic amount 123456789 · token decimals unresolved",
+    });
+  await expect(unknownObservation).toContainText(
+    "raw atomic amount 123456789 · token decimals unresolved",
+  );
+  await expect(
+    unknownObservation.getByRole("button", { name: "调整账本为外部余额" }),
+  ).toHaveCount(0);
   const afterSync = (await (
     await page.request.get("/api/data/backup")
   ).json()) as {

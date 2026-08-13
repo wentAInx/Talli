@@ -35,12 +35,18 @@ export interface EvmBalanceRecord {
   name: string | null;
 }
 
+export interface EvmBalanceIssue {
+  code: "TOKEN_BALANCE_UNAVAILABLE";
+  providerAssetKey: string | null;
+  message: string;
+}
+
 export interface EvmTransferRecord {
   uniqueId: string;
   txHash: string;
   category: "external" | "internal" | "erc20";
   fromAddressLower: string;
-  toAddressLower: string;
+  toAddressLower: string | null;
   providerAssetKey: string;
   contractAddressLower: string | null;
   rawAmountAtomicText: string;
@@ -77,10 +83,13 @@ export interface EvmEnrichedTransaction {
 }
 
 export interface EvmSyncSnapshot {
-  fetchedAt: string;
+  balanceObservedAt: string;
+  syncCompletedAt: string;
   addressLower: string;
   syncHeadBlockText: string;
   finalizedBlockText: string;
+  balanceComplete: boolean;
+  balanceIssues: EvmBalanceIssue[];
   balances: EvmBalanceRecord[];
   transfers: EvmTransferRecord[];
   transactions: EvmEnrichedTransaction[];

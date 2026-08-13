@@ -15,7 +15,7 @@ const TX = `0x${"a".repeat(64)}`;
 function transfer(input: {
   uniqueId: string;
   from: string;
-  to: string;
+  to: string | null;
   key?: string;
   raw: bigint;
   decimals?: number | null;
@@ -48,13 +48,14 @@ function transaction(
     type?: string | null;
     blobGasUsed?: string | null;
     blobGasPrice?: string | null;
+    to?: string | null;
   } = {},
 ): EvmEnrichedTransaction {
   return {
     transaction: {
       txHash: TX,
       fromAddressLower: input.from ?? WALLET,
-      toAddressLower: OTHER,
+      toAddressLower: input.to === undefined ? OTHER : input.to,
       typeHex: input.type ?? "0x2",
       valueHex: "0x0",
       blockNumberText: "100",
@@ -165,6 +166,39 @@ describe("EVM activity normalization", () => {
     });
     expect(normalized.candidates).toHaveLength(1);
     expect(normalized.candidates[0]?.detail.candidateKind).toBe("gas");
+  });
+
+  it("keeps a zero-value contract deployment source and only emits exact gas", () => {
+    const normalized = normalizeEvmActivity({
+      walletAddressLower: WALLET,
+      transfers: [
+        transfer({
+          uniqueId: "contract-deployment",
+          from: WALLET,
+          to: null,
+          raw: 0n,
+        }),
+      ],
+      transactions: [transaction({ to: null })],
+    });
+
+    expect(normalized.sources).toHaveLength(2);
+    expect(
+      JSON.parse(
+        normalized.sources.find(
+          (source) => source.objectType === "evm_transfer",
+        )!.payloadJson,
+      ),
+    ).toMatchObject({ to: null, rawAmountAtomic: "0" });
+    expect(normalized.candidates).toHaveLength(1);
+    expect(normalized.candidates[0]).toMatchObject({
+      initialStatus: "pending",
+      detail: {
+        candidateKind: "gas",
+        gasFeeStatus: "exact",
+        toAddressLower: null,
+      },
+    });
   });
 
   it("keeps complex, missing-decimal, and failed movement unimportable", () => {

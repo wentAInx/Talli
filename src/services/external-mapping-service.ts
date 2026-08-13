@@ -110,6 +110,29 @@ export class ExternalMappingService {
           return;
         }
 
+        if (connection.provider === "evm_wallet") {
+          let decimals: unknown = null;
+          try {
+            const metadata = existing.providerMetadataJson
+              ? (JSON.parse(existing.providerMetadataJson) as Record<
+                  string,
+                  unknown
+                >)
+              : null;
+            decimals = metadata?.decimals ?? null;
+          } catch {
+            decimals = null;
+          }
+          assertService(
+            typeof decimals === "number" &&
+              Number.isInteger(decimals) &&
+              decimals >= 0 &&
+              decimals <= 255,
+            "EVM_TOKEN_DECIMALS_UNRESOLVED",
+            "Token decimals must be resolved before this on-chain asset can be mapped.",
+          );
+        }
+
         assertService(
           input.talliAssetId,
           "EXTERNAL_ASSET_REQUIRED",

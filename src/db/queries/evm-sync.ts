@@ -141,6 +141,22 @@ export function insertEvmBalanceObservationDetail(
       "EVM raw balance amount cannot be negative.",
     );
   }
+  if (
+    value.tokenDecimals !== null &&
+    value.tokenDecimals !== undefined &&
+    (!Number.isInteger(value.tokenDecimals) ||
+      value.tokenDecimals < 0 ||
+      value.tokenDecimals > 255)
+  ) {
+    throw new PersistenceIntegrityError(
+      "EVM token decimals must be null or an integer between 0 and 255.",
+    );
+  }
+  if (value.assetKind === "native" && value.tokenDecimals !== 18) {
+    throw new PersistenceIntegrityError(
+      "Native Ethereum observations must use 18 decimals.",
+    );
+  }
   assertUnsignedIntegerText(value.syncHeadBlockText);
   executor.insert(evmBalanceObservationDetails).values(value).run();
 }

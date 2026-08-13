@@ -4,11 +4,14 @@ import { seedDatabase } from "../../db/seed";
 import {
   findEvmWalletConnection,
   findEvmWalletConnectionState,
+  findExternalConnectionState,
   insertAccount,
   readBackupData,
   listExternalBalanceObservations,
   listExternalCandidates,
   listExternalSyncRuns,
+  upsertExternalAccountMapping,
+  upsertExternalAssetMapping,
 } from "../../db/queries";
 import { EVM_NATIVE_ASSET_KEY, evmErc20AssetKey } from "../../domain/evm";
 import { BackupValidationError } from "../../domain/backup";
@@ -28,15 +31,21 @@ const ADDRESS = "0x1111111111111111111111111111111111111111";
 const OTHER = "0x2222222222222222222222222222222222222222";
 const TX_HASH = `0x${"a".repeat(64)}`;
 const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+const BAD_TOKEN = "0x7777777777777777777777777777777777777777";
+const UNKNOWN_TOKEN = "0x8888888888888888888888888888888888888888";
 
 function fixtureSnapshot(
-  fetchedAt = "2026-08-12T08:00:00.000Z",
+  syncCompletedAt = "2026-08-12T08:00:00.000Z",
+  balanceObservedAt = syncCompletedAt,
 ): EvmSyncSnapshot {
   return {
-    fetchedAt,
+    balanceObservedAt,
+    syncCompletedAt,
     addressLower: ADDRESS,
     syncHeadBlockText: "220",
     finalizedBlockText: "218",
+    balanceComplete: true,
+    balanceIssues: [],
     balances: [
       {
         providerAssetKey: EVM_NATIVE_ASSET_KEY,
@@ -255,6 +264,176 @@ describe("EVM wallet sync persistence", () => {
     });
   });
 
+  it("persists a contract deployment source with null to, no movement, and standalone exact gas", async () => {
+    const { provider, service } = setup();
+    const connectionId = await createWallet(service);
+    const mappedAt = "2026-08-12T08:00:00.000Z";
+    insertAccount(database!.context.db, {
+      id: "account-deployment-gas",
+      bookId: "seed-book-default",
+      assetId: "seed-asset-eth",
+      name: "Deployment gas",
+      accountType: "crypto_wallet",
+      institutionName: "Ethereum",
+      note: null,
+      isArchived: false,
+      sortOrder: 0,
+      createdAt: mappedAt,
+      updatedAt: mappedAt,
+    });
+    upsertExternalAssetMapping(database!.context.db, {
+      connectionId,
+      providerAssetKey: EVM_NATIVE_ASSET_KEY,
+      providerDisplayCode: "ETH",
+      talliAssetId: "seed-asset-eth",
+      mappingStatus: "mapped",
+      providerMetadataJson:
+        '{"assetKind":"native","chainId":1,"contractAddress":null,"decimals":18,"name":"Ether","symbol":"ETH"}',
+      createdAt: mappedAt,
+      updatedAt: mappedAt,
+    });
+    upsertExternalAccountMapping(database!.context.db, {
+      connectionId,
+      providerAssetKey: EVM_NATIVE_ASSET_KEY,
+      talliAccountId: "account-deployment-gas",
+      isEnabled: true,
+      createdAt: mappedAt,
+      updatedAt: mappedAt,
+    });
+    const deployment = fixtureSnapshot();
+    deployment.transfers = [
+      {
+        ...deployment.transfers[0]!,
+        uniqueId: `${TX_HASH}:external:deployment`,
+        toAddressLower: null,
+        rawAmountAtomicText: "0",
+        amountText: "0",
+        humanValue: 0,
+      },
+    ];
+    deployment.transactions = [
+      {
+        ...deployment.transactions[0]!,
+        transaction: {
+          ...deployment.transactions[0]!.transaction,
+          toAddressLower: null,
+          valueHex: "0x0",
+        },
+      },
+    ];
+    provider.setSnapshot(deployment);
+    const beforeLedger = count(database!, "ledger_events");
+    const beforeSnapshots = count(database!, "balance_snapshots");
+
+    await expect(service.syncNow(connectionId)).resolves.toMatchObject({
+      status: "success",
+      sourceObjectsSeen: 2,
+      candidatesCreated: 1,
+    });
+
+    const sources = database!.context.sqlite
+      .prepare(
+        "select object_type as objectType, payload_json as payloadJson from external_source_objects order by object_type",
+      )
+      .all() as Array<{ objectType: string; payloadJson: string }>;
+    expect(
+      JSON.parse(
+        sources.find((source) => source.objectType === "evm_transfer")!
+          .payloadJson,
+      ),
+    ).toMatchObject({ to: null, rawAmountAtomic: "0" });
+    expect(
+      listExternalCandidates(database!.context.db, connectionId),
+    ).toMatchObject([
+      {
+        stableKey: `evm:1:gas:${TX_HASH}`,
+        status: "pending",
+      },
+    ]);
+    expect(count(database!, "ledger_events")).toBe(beforeLedger);
+    expect(count(database!, "balance_snapshots")).toBe(beforeSnapshots);
+  });
+
+  it("anchors observations to the balance read while finishing the run later", async () => {
+    const { provider, service } = setup();
+    const connectionId = await createWallet(service);
+    provider.setSnapshot(
+      fixtureSnapshot("2026-08-12T08:05:00.000Z", "2026-08-12T08:01:00.000Z"),
+    );
+
+    await service.syncNow(connectionId);
+
+    expect(
+      listExternalBalanceObservations(database!.context.db, connectionId)[0]
+        ?.observedAt,
+    ).toBe("2026-08-12T08:01:00.000Z");
+    expect(
+      listExternalSyncRuns(database!.context.db, connectionId)[0]?.finishedAt,
+    ).toBe("2026-08-12T08:05:00.000Z");
+    expect(
+      findExternalConnectionState(database!.context.db, connectionId),
+    ).toMatchObject({ lastSuccessAt: "2026-08-12T08:05:00.000Z" });
+    expect(
+      findEvmWalletConnectionState(database!.context.db, connectionId),
+    ).toMatchObject({
+      lastBalanceSyncAt: "2026-08-12T08:01:00.000Z",
+      lastActivitySyncAt: "2026-08-12T08:05:00.000Z",
+    });
+  });
+
+  it("persists valid balances and complete activity when one token row is partial", async () => {
+    const { provider, service } = setup();
+    const connectionId = await createWallet(service);
+    const partial = fixtureSnapshot();
+    partial.balances.push({
+      providerAssetKey: evmErc20AssetKey(USDC),
+      assetKind: "erc20",
+      contractAddressLower: USDC,
+      rawAmountAtomicText: "1000000",
+      decimals: 6,
+      amountText: "1",
+      displayCode: "USDC",
+      name: "USD Coin",
+    });
+    partial.balanceComplete = false;
+    partial.balanceIssues = [
+      {
+        code: "TOKEN_BALANCE_UNAVAILABLE",
+        providerAssetKey: evmErc20AssetKey(BAD_TOKEN),
+        message: `Token balance unavailable for ${evmErc20AssetKey(BAD_TOKEN)}.`,
+      },
+    ];
+    provider.setSnapshot(partial);
+    const beforeLedger = count(database!, "ledger_events");
+
+    await expect(service.syncNow(connectionId)).resolves.toMatchObject({
+      status: "partial",
+      balanceIssues: 1,
+      balancesSeen: 2,
+      sourceObjectsSeen: 2,
+    });
+
+    const observationKeys = listExternalBalanceObservations(
+      database!.context.db,
+      connectionId,
+    ).map((observation) => observation.providerAssetKey);
+    expect(observationKeys).toEqual(
+      expect.arrayContaining([EVM_NATIVE_ASSET_KEY, evmErc20AssetKey(USDC)]),
+    );
+    expect(observationKeys).not.toContain(evmErc20AssetKey(BAD_TOKEN));
+    expect(
+      listExternalSyncRuns(database!.context.db, connectionId)[0],
+    ).toMatchObject({
+      status: "partial",
+      errorCode: "EVM_TOKEN_BALANCE_PARTIAL",
+      finishedAt: partial.syncCompletedAt,
+    });
+    expect(
+      findEvmWalletConnectionState(database!.context.db, connectionId),
+    ).toMatchObject({ lastFinalizedBlockText: "218" });
+    expect(count(database!, "ledger_events")).toBe(beforeLedger);
+  });
+
   it("keeps source and candidate identities stable across ten syncs while observations remain append-only", async () => {
     const { provider, service, setNow } = setup();
     const connectionId = await createWallet(service);
@@ -340,6 +519,79 @@ describe("EVM wallet sync persistence", () => {
     ).filter((row) => row.providerAssetKey === evmErc20AssetKey(USDC));
     expect(tokenObservations).toHaveLength(1);
     expect(tokenObservations[0]?.providerAmountText).toBe("1");
+  });
+
+  it("keeps unknown ERC-20 decimals null and round-trips the raw atomic provenance", async () => {
+    const { provider, runtime, service } = setup();
+    const connectionId = await createWallet(service);
+    const unresolved = fixtureSnapshot();
+    unresolved.balances.push({
+      providerAssetKey: evmErc20AssetKey(UNKNOWN_TOKEN),
+      assetKind: "erc20",
+      contractAddressLower: UNKNOWN_TOKEN,
+      rawAmountAtomicText: "123456789",
+      decimals: null,
+      amountText: null,
+      displayCode: "UNKNOWN",
+      name: "Unknown decimals token",
+    });
+    provider.setSnapshot(unresolved);
+    await service.syncNow(connectionId);
+
+    const observation = listExternalBalanceObservations(
+      database!.context.db,
+      connectionId,
+    ).find((row) => row.providerAssetKey === evmErc20AssetKey(UNKNOWN_TOKEN))!;
+    expect(observation).toMatchObject({
+      providerAmountText: "123456789",
+      talliAssetId: null,
+      mappedAmountAtomic: null,
+      precisionStatus: "unmapped",
+    });
+    expect(
+      database!.context.sqlite
+        .prepare(
+          "select raw_amount_atomic_text as rawAmountAtomicText, token_decimals as tokenDecimals from evm_balance_observation_details where observation_id = ?",
+        )
+        .get(observation.id),
+    ).toEqual({ rawAmountAtomicText: "123456789", tokenDecimals: null });
+
+    await expect(
+      new ExternalMappingService(database!.context, runtime).updateMapping({
+        connectionId,
+        providerAssetKey: evmErc20AssetKey(UNKNOWN_TOKEN),
+        mappingStatus: "mapped",
+        talliAssetId: "seed-asset-eth",
+        talliAccountId: "missing",
+      }),
+    ).rejects.toMatchObject({ code: "EVM_TOKEN_DECIMALS_UNRESOLVED" });
+
+    const payload = new BackupService(database!.context).exportBackup();
+    const detail = payload.data.evmBalanceObservationDetails.find(
+      (row) => row.observationId === observation.id,
+    )!;
+    expect(detail.tokenDecimals).toBeNull();
+    const target = createTestDatabase();
+    try {
+      new BackupService(target.context).restore(payload);
+      expect(
+        readBackupData(target.context.db).evmBalanceObservationDetails.find(
+          (row) => row.observationId === observation.id,
+        )?.tokenDecimals,
+      ).toBeNull();
+    } finally {
+      target.close();
+    }
+
+    const inconsistent = structuredClone(payload);
+    inconsistent.data.evmBalanceObservationDetails.find(
+      (row) => row.observationId === observation.id,
+    )!.tokenDecimals = 6;
+    expect(() =>
+      new BackupService(database!.context).parseJson(
+        JSON.stringify(inconsistent),
+      ),
+    ).toThrow(BackupValidationError);
   });
 
   it("imports the separate gas candidate only as an explicit V1 expense", async () => {

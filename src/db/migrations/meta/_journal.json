@@ -36,6 +36,13 @@
       "when": 1786541957015,
       "tag": "0004_v4_evm_wallet_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786604226653,
+      "tag": "0005_quiet_betty_brant",
+      "breakpoints": true
     }
   ]
 }

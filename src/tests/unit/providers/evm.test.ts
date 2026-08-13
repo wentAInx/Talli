@@ -9,6 +9,7 @@ import type {
 
 const WALLET = "0x1111111111111111111111111111111111111111";
 const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+const BAD_TOKEN = "0x7777777777777777777777777777777777777777";
 const FAKE_USDC = "0x9999999999999999999999999999999999999999";
 const TX_A = `0x${"a".repeat(64)}`;
 const TX_B = `0x${"b".repeat(64)}`;
@@ -30,6 +31,10 @@ class ScriptedAlchemyTransport implements EvmJsonRpcTransport {
     private readonly options: {
       chainId?: string;
       expireTransferPagination?: boolean;
+      tokenBalanceError?: boolean;
+      contractDeployment?: boolean;
+      unknownTokenDecimals?: boolean;
+      invalidTransferTo?: boolean;
     } = {},
   ) {}
 
@@ -81,6 +86,15 @@ class ScriptedAlchemyTransport implements EvmJsonRpcTransport {
                   tokenBalance: "0x0",
                   error: null,
                 },
+                ...(this.options.tokenBalanceError
+                  ? [
+                      {
+                        contractAddress: BAD_TOKEN,
+                        tokenBalance: null,
+                        error: "upstream token read failed",
+                      },
+                    ]
+                  : []),
               ],
               pageKey: "token-page-2",
             };
@@ -88,7 +102,10 @@ class ScriptedAlchemyTransport implements EvmJsonRpcTransport {
       }
       case "alchemy_getTokenMetadata":
         result = {
-          decimals: 6,
+          decimals:
+            this.options.unknownTokenDecimals && request.params[0] === FAKE_USDC
+              ? null
+              : 6,
           name: request.params[0] === USDC ? "USD Coin" : "Fake USD Coin",
           symbol: "USDC",
         };
@@ -131,7 +148,9 @@ class ScriptedAlchemyTransport implements EvmJsonRpcTransport {
                 hash: TX_A,
                 category: "erc20",
                 from: WALLET,
-                to: "0x3333333333333333333333333333333333333333",
+                to: this.options.invalidTransferTo
+                  ? 42
+                  : "0x3333333333333333333333333333333333333333",
                 value: 999999999,
                 asset: "USDC",
                 blockNum: "0x64",
@@ -142,62 +161,89 @@ class ScriptedAlchemyTransport implements EvmJsonRpcTransport {
                   decimal: "0x6",
                 },
               },
-              {
-                uniqueId: "tx:self:0",
-                hash: TX_B,
-                category: "external",
-                from: WALLET,
-                to: WALLET,
-                value: 1,
-                asset: "ETH",
-                blockNum: "0x63",
-                metadata: { blockTimestamp: "1970-01-01T00:01:39.000Z" },
-                rawContract: {
-                  value: "0xde0b6b3a7640000",
-                  address: null,
-                  decimal: "0x12",
-                },
-              },
+              this.options.contractDeployment
+                ? {
+                    uniqueId: "tx:deployment:0",
+                    hash: TX_B,
+                    category: "external",
+                    from: WALLET,
+                    to: null,
+                    value: 0,
+                    asset: "ETH",
+                    blockNum: "0x63",
+                    metadata: {
+                      blockTimestamp: "1970-01-01T00:01:39.000Z",
+                    },
+                    rawContract: {
+                      value: "0x0",
+                      address: null,
+                      decimal: "0x12",
+                    },
+                  }
+                : {
+                    uniqueId: "tx:self:0",
+                    hash: TX_B,
+                    category: "external",
+                    from: WALLET,
+                    to: WALLET,
+                    value: 1,
+                    asset: "ETH",
+                    blockNum: "0x63",
+                    metadata: {
+                      blockTimestamp: "1970-01-01T00:01:39.000Z",
+                    },
+                    rawContract: {
+                      value: "0xde0b6b3a7640000",
+                      address: null,
+                      decimal: "0x12",
+                    },
+                  },
             ],
           };
         } else {
-          result = {
-            pageKey: "to-page-2",
-            transfers: [
-              {
-                uniqueId: "tx:internal:0",
-                hash: TX_A,
-                category: "internal",
-                from: "0x3333333333333333333333333333333333333333",
-                to: WALLET,
-                value: 0.04,
-                asset: "ETH",
-                blockNum: "0x64",
-                metadata: { blockTimestamp: "1970-01-01T00:01:40.000Z" },
-                rawContract: {
-                  value: "0x8e1bc9bf040000",
-                  address: null,
-                  decimal: "0x12",
-                },
-              },
-              {
-                uniqueId: "tx:self:0",
-                hash: TX_B,
-                category: "external",
-                from: WALLET,
-                to: WALLET,
-                value: 1,
-                asset: "ETH",
-                blockNum: "0x63",
-                metadata: { blockTimestamp: "1970-01-01T00:01:39.000Z" },
-                rawContract: {
-                  value: "0xde0b6b3a7640000",
-                  address: null,
-                  decimal: "0x12",
-                },
-              },
-            ],
-          };
+          result = this.options.contractDeployment
+            ? { pageKey: "to-page-2", transfers: [] }
+            : {
+                pageKey: "to-page-2",
+                transfers: [
+                  {
+                    uniqueId: "tx:internal:0",
+                    hash: TX_A,
+                    category: "internal",
+                    from: "0x3333333333333333333333333333333333333333",
+                    to: WALLET,
+                    value: 0.04,
+                    asset: "ETH",
+                    blockNum: "0x64",
+                    metadata: {
+                      blockTimestamp: "1970-01-01T00:01:40.000Z",
+                    },
+                    rawContract: {
+                      value: "0x8e1bc9bf040000",
+                      address: null,
+                      decimal: "0x12",
+                    },
+                  },
+                  {
+                    uniqueId: "tx:self:0",
+                    hash: TX_B,
+                    category: "external",
+                    from: WALLET,
+                    to: WALLET,
+                    value: 1,
+                    asset: "ETH",
+                    blockNum: "0x63",
+                    metadata: {
+                      blockTimestamp: "1970-01-01T00:01:39.000Z",
+                    },
+                    rawContract: {
+                      value: "0xde0b6b3a7640000",
+                      address: null,
+                      decimal: "0x12",
+                    },
+                  },
+                ],
+              };
         }
         break;
       }
@@ -209,7 +255,9 @@ class ScriptedAlchemyTransport implements EvmJsonRpcTransport {
           to:
             txHash === TX_A
               ? "0x3333333333333333333333333333333333333333"
-              : WALLET,
+              : this.options.contractDeployment
+                ? null
+                : WALLET,
           type: "0x2",
           value: "0x0",
           blockNumber: txHash === TX_A ? "0x64" : "0x63",
@@ -240,13 +288,17 @@ class ScriptedAlchemyTransport implements EvmJsonRpcTransport {
   }
 }
 
-function provider(transport: EvmJsonRpcTransport) {
+function provider(
+  transport: EvmJsonRpcTransport,
+  times = ["2026-08-12T13:00:00.000Z"],
+) {
+  let timeIndex = 0;
   return new AlchemyReadOnlyClient(
     transport,
     { apiKey: "alchemy-test-key" },
     {
       id: () => "unused",
-      now: () => "2026-08-12T13:00:00.000Z",
+      now: () => times[Math.min(timeIndex++, times.length - 1)]!,
     },
   );
 }
@@ -283,6 +335,8 @@ describe("Alchemy read-only provider", () => {
       humanValue: 999999999,
     });
     expect(snapshot.transactions).toHaveLength(2);
+    expect(snapshot.balanceComplete).toBe(true);
+    expect(snapshot.balanceIssues).toEqual([]);
     expect(
       transport.calls.filter(
         (call) => call.method === "alchemy_getTokenBalances",
@@ -296,6 +350,101 @@ describe("Alchemy read-only provider", () => {
     expect(
       transport.calls.every((call) => call.path === "/v2/alchemy-test-key"),
     ).toBe(true);
+  });
+
+  it("keeps contract deployment null-to data without fabricating a movement amount", async () => {
+    const snapshot = await provider(
+      new ScriptedAlchemyTransport({ contractDeployment: true }),
+    ).fetchSnapshot({
+      address: WALLET,
+      historyStartAt: "1970-01-01T00:00:50.000Z",
+    });
+
+    expect(
+      snapshot.transfers.find(
+        (transfer) => transfer.uniqueId === "tx:deployment:0",
+      ),
+    ).toMatchObject({
+      fromAddressLower: WALLET,
+      toAddressLower: null,
+      rawAmountAtomicText: "0",
+    });
+    expect(
+      snapshot.transactions.find((entry) => entry.transaction.txHash === TX_B)
+        ?.transaction.toAddressLower,
+    ).toBeNull();
+  });
+
+  it("rejects a transfer to value that is neither an address nor null", async () => {
+    await expect(
+      provider(
+        new ScriptedAlchemyTransport({ invalidTransferTo: true }),
+      ).fetchSnapshot({
+        address: WALLET,
+        historyStartAt: "1970-01-01T00:00:50.000Z",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
+  });
+
+  it("anchors current balances before history completes", async () => {
+    const snapshot = await provider(new ScriptedAlchemyTransport(), [
+      "2026-08-12T12:00:00.000Z",
+      "2026-08-12T12:05:00.000Z",
+    ]).fetchSnapshot({
+      address: WALLET,
+      historyStartAt: "1970-01-01T00:00:50.000Z",
+    });
+
+    expect(snapshot.balanceObservedAt).toBe("2026-08-12T12:00:00.000Z");
+    expect(snapshot.syncCompletedAt).toBe("2026-08-12T12:05:00.000Z");
+  });
+
+  it("isolates a token row error while preserving valid balances and activity", async () => {
+    const snapshot = await provider(
+      new ScriptedAlchemyTransport({ tokenBalanceError: true }),
+    ).fetchSnapshot({
+      address: WALLET,
+      historyStartAt: "1970-01-01T00:00:50.000Z",
+    });
+
+    expect(snapshot.balanceComplete).toBe(false);
+    expect(
+      snapshot.balances.map((balance) => balance.providerAssetKey),
+    ).toEqual(
+      expect.arrayContaining(["eip155:1/native", `eip155:1/erc20:${USDC}`]),
+    );
+    expect(snapshot.balances).not.toContainEqual(
+      expect.objectContaining({
+        providerAssetKey: `eip155:1/erc20:${BAD_TOKEN}`,
+      }),
+    );
+    expect(snapshot.balanceIssues).toEqual([
+      {
+        code: "TOKEN_BALANCE_UNAVAILABLE",
+        providerAssetKey: `eip155:1/erc20:${BAD_TOKEN}`,
+        message: `Token balance unavailable for eip155:1/erc20:${BAD_TOKEN}.`,
+      },
+    ]);
+    expect(snapshot.transfers.length).toBeGreaterThan(0);
+  });
+
+  it("keeps unknown ERC-20 decimals and human amount unresolved", async () => {
+    const snapshot = await provider(
+      new ScriptedAlchemyTransport({ unknownTokenDecimals: true }),
+    ).fetchSnapshot({
+      address: WALLET,
+      historyStartAt: "1970-01-01T00:00:50.000Z",
+    });
+
+    expect(
+      snapshot.balances.find(
+        (balance) => balance.providerAssetKey === `eip155:1/erc20:${FAKE_USDC}`,
+      ),
+    ).toMatchObject({
+      rawAmountAtomicText: "1",
+      decimals: null,
+      amountText: null,
+    });
   });
 
   it("rejects a non-mainnet endpoint before fetching balances", async () => {

@@ -10,11 +10,13 @@ import {
 } from "./ledger";
 import { normalizePositiveDecimalText } from "./price-decimal";
 import {
+  canonicalExternalDecimalText,
   externalDecimalToAtomic,
   validatedExternalDecimalText,
 } from "./external-sync";
 import {
   EVM_ALCHEMY_CREDENTIAL_REF,
+  evmRawAtomicToDecimalText,
   evmGasStableKey,
   evmMovementStableKey,
   evmWalletSourceKey,
@@ -393,7 +395,7 @@ const evmBalanceObservationDetailSchema = z
     assetKind: z.enum(["native", "erc20"]),
     contractAddressLower: z.string().nullable(),
     rawAmountAtomicText: z.string().regex(/^\d+$/),
-    tokenDecimals: z.number().int().min(0).max(255),
+    tokenDecimals: z.number().int().min(0).max(255).nullable(),
     syncHeadBlockText: z.string().regex(/^\d+$/).nullable(),
   })
   .strict();
@@ -1017,9 +1019,28 @@ function validateExternalRelations(data: BackupData): void {
         const asset = parseEvmAssetKey(observation.providerAssetKey);
         if (
           asset.kind !== detail.assetKind ||
-          asset.contractAddressLower !== detail.contractAddressLower
+          asset.contractAddressLower !== detail.contractAddressLower ||
+          (detail.assetKind === "native" && detail.tokenDecimals !== 18)
         ) {
           throw new Error("asset mismatch");
+        }
+        const expectedAmount =
+          detail.tokenDecimals === null
+            ? detail.rawAmountAtomicText
+            : evmRawAtomicToDecimalText(
+                BigInt(detail.rawAmountAtomicText),
+                detail.tokenDecimals,
+              );
+        if (
+          canonicalExternalDecimalText(observation.providerAmountText) !==
+            expectedAmount ||
+          (detail.tokenDecimals === null &&
+            (detail.assetKind !== "erc20" ||
+              observation.talliAssetId !== null ||
+              observation.mappedAmountAtomic !== null ||
+              observation.precisionStatus !== "unmapped"))
+        ) {
+          throw new Error("amount provenance mismatch");
         }
       } catch {
         fail(

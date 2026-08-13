@@ -1643,6 +1643,10 @@ button:disabled {
   align-items: start;
 }
 
+.sync-workbench > .content-section {
+  min-width: 0;
+}
+
 .sync-connection-card {
   grid-area: connection;
   border-top: 3px solid var(--ledger-blue);
@@ -1722,6 +1726,23 @@ button:disabled {
   color: #4c5954;
 }
 
+.sync-partial-warning,
+.evm-decimals-warning {
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--amber) 42%, transparent);
+  border-radius: 0.7rem;
+  background: color-mix(in srgb, var(--amber) 9%, var(--paper));
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  padding: 0.7rem 0.8rem;
+}
+
+.evm-decimals-warning {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
 .sync-safety-copy {
   margin: 15px 0;
   border-left: 3px solid var(--amber);
@@ -1780,6 +1801,7 @@ button:disabled {
 
 .sync-table-scroll {
   min-width: 0;
+  overflow-x: auto;
 }
 
 .sync-mapping-table {
@@ -1849,6 +1871,7 @@ button:disabled {
 }
 
 .observation-card {
+  min-width: 0;
   border: 1px solid var(--line);
   border-left: 4px solid #8d9b95;
   border-radius: 11px;
@@ -1861,6 +1884,10 @@ button:disabled {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.observation-card header > * {
+  min-width: 0;
 }
 
 .observation-card header strong,
@@ -1880,8 +1907,11 @@ button:disabled {
 }
 
 .observation-card header code {
+  max-width: 52%;
+  overflow-wrap: anywhere;
   color: var(--slate);
   font-size: 10px;
+  text-align: right;
 }
 
 .observation-card dl {
@@ -1898,6 +1928,7 @@ button:disabled {
 
 .observation-card dt,
 .observation-card dd {
+  overflow-wrap: anywhere;
   margin: 0;
 }
 
@@ -2208,6 +2239,17 @@ button:disabled {
   color: var(--ledger-blue);
   font-size: 12px;
   font-weight: 750;
+}
+
+@media (max-width: 1320px) {
+  .evm-wallet-form {
+    grid-template-columns: 1fr;
+  }
+
+  .evm-wallet-form .action-form-status,
+  .evm-wallet-form .primary-button {
+    grid-column: auto;
+  }
 }
 
 @media (max-width: 980px) {
