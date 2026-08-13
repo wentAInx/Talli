@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   calculateEthereumGasFee,
-  EVM_NATIVE_ASSET_KEY,
+  evmChainIdentity,
   evmErc20AssetKey,
   evmGasStableKey,
   evmMovementStableKey,
+  evmNativeAssetKey,
   evmRawAtomicToDecimalText,
   evmWalletSourceKey,
   normalizeEvmAddress,
@@ -21,7 +22,9 @@ describe("EVM domain primitives", () => {
     expect(
       normalizeEvmAddress("0xA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48"),
     ).toBe("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
-    expect(evmWalletSourceKey(WALLET)).toBe(`eip155:1:${WALLET}`);
+    expect(evmWalletSourceKey(1, WALLET)).toBe(`eip155:1:${WALLET}`);
+    expect(evmWalletSourceKey(8453, WALLET)).toBe(`eip155:8453:${WALLET}`);
+    expect(evmWalletSourceKey(42161, WALLET)).toBe(`eip155:42161:${WALLET}`);
     for (const invalid of ["", "0x1234", "seed phrase words", "0xzzzz"]) {
       expect(() => normalizeEvmAddress(invalid)).toThrow(DomainValidationError);
     }
@@ -29,20 +32,60 @@ describe("EVM domain primitives", () => {
 
   it("uses chain plus contract identity and never symbol identity", () => {
     const first = evmErc20AssetKey(
+      8453,
       "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
     );
     const second = evmErc20AssetKey(
+      42161,
+      "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    );
+    const third = evmErc20AssetKey(
+      8453,
       "0x9999999999999999999999999999999999999999",
     );
     expect(first).not.toBe(second);
-    expect(parseEvmAssetKey(EVM_NATIVE_ASSET_KEY)).toEqual({
+    expect(first).not.toBe(third);
+    expect(parseEvmAssetKey(evmNativeAssetKey(1))).toEqual({
+      chainId: 1,
       kind: "native",
       contractAddressLower: null,
     });
     expect(parseEvmAssetKey(first)).toEqual({
+      chainId: 8453,
       kind: "erc20",
       contractAddressLower: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
     });
+  });
+
+  it("registers the exact production chain identities and capabilities", () => {
+    expect(
+      ([1, 8453, 42161] as const).map((chainId) => evmChainIdentity(chainId)),
+    ).toEqual([
+      expect.objectContaining({
+        chainId: 1,
+        chainIdHex: "0x1",
+        networkId: "eth-mainnet",
+        feeModel: "ethereum",
+        historyCoverage: "complete",
+        requiresDebugForMovement: false,
+      }),
+      expect.objectContaining({
+        chainId: 8453,
+        chainIdHex: "0x2105",
+        networkId: "base-mainnet",
+        feeModel: "base_op_stack",
+        historyCoverage: "discovery_limited",
+        requiresDebugForMovement: true,
+      }),
+      expect.objectContaining({
+        chainId: 42161,
+        chainIdHex: "0xa4b1",
+        networkId: "arb-mainnet",
+        feeModel: "arbitrum_nitro",
+        historyCoverage: "discovery_limited",
+        requiresDebugForMovement: true,
+      }),
+    ]);
   });
 
   it("keeps raw hex quantities exact through bigint and decimal text", () => {
@@ -57,8 +100,10 @@ describe("EVM domain primitives", () => {
 
   it("creates separate stable keys for movement and gas", () => {
     const txHash = `0x${"a".repeat(64)}`;
-    expect(evmMovementStableKey(txHash)).toBe(`evm:1:movement:${txHash}`);
-    expect(evmGasStableKey(txHash)).toBe(`evm:1:gas:${txHash}`);
+    expect(evmMovementStableKey(8453, txHash)).toBe(
+      `evm:8453:movement:${txHash}`,
+    );
+    expect(evmGasStableKey(42161, txHash)).toBe(`evm:42161:gas:${txHash}`);
   });
 
   it("calculates execution and blob fees with bigint only", () => {

@@ -94,7 +94,7 @@ export default async function TransactionDetailPage({
           </div>
           <Link href={`/sync/candidates/${view.provenance.candidateId}`}>
             {view.provenance.provider === "evm_wallet"
-              ? "查看 Ethereum 候选"
+              ? "查看 EVM 候选"
               : "查看 Kraken 候选"}
           </Link>
         </section>

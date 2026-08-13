@@ -31,16 +31,16 @@ export async function POST(request: Request) {
   }
   try {
     const result = await withDatabase((context) =>
-      new EvmWalletService(context, () => createServerEvmProvider()).syncNow(
-        parsed.data.connectionId,
-      ),
+      new EvmWalletService(context, (_connectionId, chainId) =>
+        createServerEvmProvider(chainId),
+      ).syncNow(parsed.data.connectionId),
     );
     return NextResponse.json(
       { ok: true, result },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
-    logSafeSyncFailure("Ethereum wallet sync route", error);
+    logSafeSyncFailure("EVM wallet sync route", error);
     return safeSyncError(error);
   }
 }

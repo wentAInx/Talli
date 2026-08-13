@@ -13,7 +13,7 @@ import {
   upsertExternalAccountMapping,
   upsertExternalAssetMapping,
 } from "../../db/queries";
-import { EVM_NATIVE_ASSET_KEY, evmErc20AssetKey } from "../../domain/evm";
+import { evmErc20AssetKey, evmNativeAssetKey } from "../../domain/evm";
 import { BackupValidationError } from "../../domain/backup";
 import type {
   EvmReadOnlyProvider,
@@ -33,12 +33,14 @@ const TX_HASH = `0x${"a".repeat(64)}`;
 const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
 const BAD_TOKEN = "0x7777777777777777777777777777777777777777";
 const UNKNOWN_TOKEN = "0x8888888888888888888888888888888888888888";
+const EVM_NATIVE_ASSET_KEY = evmNativeAssetKey(1);
 
 function fixtureSnapshot(
   syncCompletedAt = "2026-08-12T08:00:00.000Z",
   balanceObservedAt = syncCompletedAt,
 ): EvmSyncSnapshot {
   return {
+    chainId: 1,
     balanceObservedAt,
     syncCompletedAt,
     addressLower: ADDRESS,
@@ -93,10 +95,19 @@ function fixtureSnapshot(
           effectiveGasPriceHex: "0x3b9aca00",
           blobGasUsedHex: null,
           blobGasPriceHex: null,
+          gasUsedForL1Hex: null,
           blockNumberText: "217",
         },
+        nativeTrace: null,
+        l2GasFee: null,
       },
     ],
+    activityCapability: {
+      traceCapability: "unknown",
+      historyCoverage: "complete",
+      activityStatus: "complete",
+      activityStartBlockText: "0",
+    },
   };
 }
 
@@ -199,6 +210,7 @@ describe("EVM wallet sync persistence", () => {
     return service.createWallet({
       bookId: "seed-book-default",
       name: "Cold wallet",
+      chainId: 1,
       publicAddress: ADDRESS.toUpperCase().replace("0X", "0x"),
       historyStartAt: "2026-01-01T00:00:00.000Z",
     });
@@ -223,6 +235,7 @@ describe("EVM wallet sync persistence", () => {
       service.createWallet({
         bookId: "seed-book-default",
         name: "Secret-shaped input",
+        chainId: 1,
         publicAddress:
           "test test test test test test test test test test test junk",
         historyStartAt: "2026-01-01T00:00:00.000Z",
@@ -386,7 +399,7 @@ describe("EVM wallet sync persistence", () => {
     const connectionId = await createWallet(service);
     const partial = fixtureSnapshot();
     partial.balances.push({
-      providerAssetKey: evmErc20AssetKey(USDC),
+      providerAssetKey: evmErc20AssetKey(1, USDC),
       assetKind: "erc20",
       contractAddressLower: USDC,
       rawAmountAtomicText: "1000000",
@@ -399,8 +412,8 @@ describe("EVM wallet sync persistence", () => {
     partial.balanceIssues = [
       {
         code: "TOKEN_BALANCE_UNAVAILABLE",
-        providerAssetKey: evmErc20AssetKey(BAD_TOKEN),
-        message: `Token balance unavailable for ${evmErc20AssetKey(BAD_TOKEN)}.`,
+        providerAssetKey: evmErc20AssetKey(1, BAD_TOKEN),
+        message: `Token balance unavailable for ${evmErc20AssetKey(1, BAD_TOKEN)}.`,
       },
     ];
     provider.setSnapshot(partial);
@@ -418,9 +431,9 @@ describe("EVM wallet sync persistence", () => {
       connectionId,
     ).map((observation) => observation.providerAssetKey);
     expect(observationKeys).toEqual(
-      expect.arrayContaining([EVM_NATIVE_ASSET_KEY, evmErc20AssetKey(USDC)]),
+      expect.arrayContaining([EVM_NATIVE_ASSET_KEY, evmErc20AssetKey(1, USDC)]),
     );
-    expect(observationKeys).not.toContain(evmErc20AssetKey(BAD_TOKEN));
+    expect(observationKeys).not.toContain(evmErc20AssetKey(1, BAD_TOKEN));
     expect(
       listExternalSyncRuns(database!.context.db, connectionId)[0],
     ).toMatchObject({
@@ -498,7 +511,7 @@ describe("EVM wallet sync persistence", () => {
     const connectionId = await createWallet(service);
     const withToken = fixtureSnapshot();
     withToken.balances.push({
-      providerAssetKey: evmErc20AssetKey(USDC),
+      providerAssetKey: evmErc20AssetKey(1, USDC),
       assetKind: "erc20",
       contractAddressLower: USDC,
       rawAmountAtomicText: "1000000",
@@ -516,7 +529,7 @@ describe("EVM wallet sync persistence", () => {
     const tokenObservations = listExternalBalanceObservations(
       database!.context.db,
       connectionId,
-    ).filter((row) => row.providerAssetKey === evmErc20AssetKey(USDC));
+    ).filter((row) => row.providerAssetKey === evmErc20AssetKey(1, USDC));
     expect(tokenObservations).toHaveLength(1);
     expect(tokenObservations[0]?.providerAmountText).toBe("1");
   });
@@ -526,7 +539,7 @@ describe("EVM wallet sync persistence", () => {
     const connectionId = await createWallet(service);
     const unresolved = fixtureSnapshot();
     unresolved.balances.push({
-      providerAssetKey: evmErc20AssetKey(UNKNOWN_TOKEN),
+      providerAssetKey: evmErc20AssetKey(1, UNKNOWN_TOKEN),
       assetKind: "erc20",
       contractAddressLower: UNKNOWN_TOKEN,
       rawAmountAtomicText: "123456789",
@@ -541,7 +554,9 @@ describe("EVM wallet sync persistence", () => {
     const observation = listExternalBalanceObservations(
       database!.context.db,
       connectionId,
-    ).find((row) => row.providerAssetKey === evmErc20AssetKey(UNKNOWN_TOKEN))!;
+    ).find(
+      (row) => row.providerAssetKey === evmErc20AssetKey(1, UNKNOWN_TOKEN),
+    )!;
     expect(observation).toMatchObject({
       providerAmountText: "123456789",
       talliAssetId: null,
@@ -559,7 +574,7 @@ describe("EVM wallet sync persistence", () => {
     await expect(
       new ExternalMappingService(database!.context, runtime).updateMapping({
         connectionId,
-        providerAssetKey: evmErc20AssetKey(UNKNOWN_TOKEN),
+        providerAssetKey: evmErc20AssetKey(1, UNKNOWN_TOKEN),
         mappingStatus: "mapped",
         talliAssetId: "seed-asset-eth",
         talliAccountId: "missing",
@@ -700,15 +715,16 @@ describe("EVM wallet sync persistence", () => {
     ).toBe("source_changed");
   });
 
-  it("exports and restores V4 user facts while excluding cursors, runs, and secrets", async () => {
+  it("exports and restores V5 user facts while excluding cursors, runs, and secrets", async () => {
     const { connectionId } = await syncAndMapEth();
     const payload = new BackupService(database!.context).exportBackup();
     const json = JSON.stringify(payload);
 
-    expect(payload.schemaVersion).toBe(4);
+    expect(payload.schemaVersion).toBe(5);
     expect(payload.data.evmWalletConnections).toHaveLength(1);
     expect(payload.data.evmBalanceObservationDetails).toHaveLength(2);
     expect(payload.data.evmCandidateDetails).toHaveLength(2);
+    expect(payload.data.evmL2GasFeeDetails).toEqual([]);
     expect(payload.data.externalConnections[0]).toMatchObject({
       id: connectionId,
       provider: "evm_wallet",
@@ -733,7 +749,7 @@ describe("EVM wallet sync persistence", () => {
     }
   });
 
-  it("rolls every restored version layer back after a late V4 failure", async () => {
+  it("rolls every restored version layer back after a late V5 failure", async () => {
     await syncAndMapEth();
     const payload = new BackupService(database!.context).exportBackup();
     const target = createTestDatabase();
@@ -753,6 +769,38 @@ describe("EVM wallet sync persistence", () => {
       expect(restored.externalConnections).toEqual([]);
       expect(restored.evmWalletConnections).toEqual([]);
       expect(restored.evmCandidateDetails).toEqual([]);
+      expect(restored.evmL2GasFeeDetails).toEqual([]);
+    } finally {
+      target.close();
+    }
+  });
+
+  it("upgrades a schemaVersion 4 Ethereum backup to V5 without inventing L2 facts", async () => {
+    await syncAndMapEth();
+    const current = new BackupService(database!.context).exportBackup();
+    const legacyV4 = structuredClone(current) as unknown as {
+      schemaVersion: number;
+      data: Record<string, unknown> & {
+        evmCandidateDetails: Array<Record<string, unknown>>;
+      };
+    };
+    legacyV4.schemaVersion = 4;
+    delete legacyV4.data.evmL2GasFeeDetails;
+    for (const detail of legacyV4.data.evmCandidateDetails) {
+      delete detail.nativeTraceStatus;
+    }
+
+    const target = createTestDatabase();
+    try {
+      const preview = new BackupService(target.context).restore(legacyV4);
+      expect(preview.schemaVersion).toBe(5);
+      const restored = readBackupData(target.context.db);
+      expect(restored.evmL2GasFeeDetails).toEqual([]);
+      expect(
+        restored.evmCandidateDetails.every(
+          (detail) => detail.nativeTraceStatus === "not_required",
+        ),
+      ).toBe(true);
     } finally {
       target.close();
     }
@@ -805,6 +853,7 @@ describe("EVM wallet sync persistence", () => {
     delete legacyV3.data.evmWalletConnections;
     delete legacyV3.data.evmBalanceObservationDetails;
     delete legacyV3.data.evmCandidateDetails;
+    delete legacyV3.data.evmL2GasFeeDetails;
     for (const connection of legacyV3.data.externalConnections) {
       delete connection.sourceKey;
     }
@@ -812,7 +861,7 @@ describe("EVM wallet sync persistence", () => {
     const target = createTestDatabase();
     try {
       const preview = new BackupService(target.context).restore(legacyV3);
-      expect(preview.schemaVersion).toBe(4);
+      expect(preview.schemaVersion).toBe(5);
       expect(
         readBackupData(target.context.db).externalConnections,
       ).toMatchObject([{ provider: "kraken", sourceKey: "kraken:primary" }]);

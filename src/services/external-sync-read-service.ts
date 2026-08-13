@@ -8,6 +8,7 @@ import {
   findExternalConnectionState,
   findEvmBalanceObservationDetail,
   findEvmCandidateDetail,
+  findEvmL2GasFeeDetail,
   findEvmWalletConnection,
   findEvmWalletConnectionState,
   findExternalImportLink,
@@ -24,6 +25,7 @@ import {
   listExternalConnections,
   queryBalanceAt,
 } from "../db/queries";
+import { evmChainIdentity } from "../domain/evm";
 import { formatAtomic } from "../domain/money";
 import { krakenReportedNonzeroTradeFee } from "../providers/kraken/candidates";
 import { ServiceError } from "./errors";
@@ -250,6 +252,9 @@ export class ExternalSyncReadService {
           return {
             ...candidate,
             evmDetail: evmDetail ?? null,
+            evmL2GasFee: evmDetail
+              ? (findEvmL2GasFeeDetail(this.context.db, candidate.id) ?? null)
+              : null,
             legs: listExternalCandidateLegs(this.context.db, candidate.id).map(
               (leg) => ({
                 role: leg.role,
@@ -401,6 +406,9 @@ export class ExternalSyncReadService {
           })
         : null;
     const evmDetail = findEvmCandidateDetail(this.context.db, candidate.id);
+    const evmL2GasFee = evmDetail
+      ? (findEvmL2GasFeeDetail(this.context.db, candidate.id) ?? null)
+      : null;
     const allowedEventTypes:
       Array<"exchange" | "transfer" | "income" | "expense"> | undefined =
       evmDetail
@@ -419,8 +427,11 @@ export class ExternalSyncReadService {
       connectionName: connection.name,
       provider: connection.provider,
       providerName:
-        connection.provider === "evm_wallet" ? "Ethereum" : "Kraken",
+        connection.provider === "evm_wallet" && evmDetail
+          ? evmChainIdentity(evmDetail.chainId).displayName
+          : "Kraken",
       evmDetail: evmDetail ?? null,
+      evmL2GasFee,
       allowedEventTypes,
       sources,
       legs,

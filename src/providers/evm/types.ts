@@ -1,3 +1,10 @@
+import type {
+  EvmChainId,
+  EvmFeeModel,
+  EvmHistoryCoverage,
+  EvmTraceCapability,
+} from "../../domain/evm";
+
 export type AlchemyReadMethod =
   | "eth_chainId"
   | "eth_blockNumber"
@@ -5,6 +12,9 @@ export type AlchemyReadMethod =
   | "eth_getBalance"
   | "eth_getTransactionByHash"
   | "eth_getTransactionReceipt"
+  | "eth_getRawTransactionByHash"
+  | "eth_call"
+  | "debug_traceTransaction"
   | "alchemy_getTokenBalances"
   | "alchemy_getTokenMetadata"
   | "alchemy_getAssetTransfers";
@@ -74,15 +84,58 @@ export interface EvmReceiptRecord {
   effectiveGasPriceHex: string | null;
   blobGasUsedHex: string | null;
   blobGasPriceHex: string | null;
+  gasUsedForL1Hex: string | null;
   blockNumberText: string | null;
+}
+
+export type EvmNativeTraceFrameType =
+  "CALL" | "CREATE" | "CREATE2" | "SELFDESTRUCT";
+
+export interface EvmNativeTraceFrame {
+  path: string;
+  type: EvmNativeTraceFrameType;
+  fromAddressLower: string;
+  toAddressLower: string | null;
+  rawAmountAtomicText: string;
+  reverted: boolean;
+}
+
+export interface EvmNativeTrace {
+  status: "exact";
+  frames: EvmNativeTraceFrame[];
+}
+
+export type EvmL2GasFeeStatus = "exact" | "unresolved";
+
+export interface EvmL2GasFeeBreakdown {
+  chainId: 8453 | 42161;
+  feeModel: Exclude<EvmFeeModel, "ethereum">;
+  status: EvmL2GasFeeStatus;
+  executionFeeAtomicText: string | null;
+  parentDataFeeAtomicText: string | null;
+  operatorFeeAtomicText: string | null;
+  totalFeeAtomicText: string | null;
+  evidenceJson: string;
 }
 
 export interface EvmEnrichedTransaction {
   transaction: EvmTransactionRecord;
   receipt: EvmReceiptRecord;
+  nativeTrace: EvmNativeTrace | null;
+  l2GasFee: EvmL2GasFeeBreakdown | null;
+}
+
+export type EvmActivityStatus = "complete" | "trace_unavailable";
+
+export interface EvmActivityCapability {
+  historyCoverage: EvmHistoryCoverage;
+  traceCapability: EvmTraceCapability;
+  activityStatus: EvmActivityStatus;
+  activityStartBlockText: string;
 }
 
 export interface EvmSyncSnapshot {
+  chainId: EvmChainId;
   balanceObservedAt: string;
   syncCompletedAt: string;
   addressLower: string;
@@ -93,12 +146,15 @@ export interface EvmSyncSnapshot {
   balances: EvmBalanceRecord[];
   transfers: EvmTransferRecord[];
   transactions: EvmEnrichedTransaction[];
+  activityCapability: EvmActivityCapability;
 }
 
 export interface EvmSyncInput {
+  chainId: EvmChainId;
   address: string;
   historyStartAt: string;
   lastFinalizedBlockText?: string | null;
+  previousTraceCapability?: EvmTraceCapability;
 }
 
 export interface EvmReadOnlyProvider {

@@ -13,6 +13,7 @@ import {
 } from "@/components/sync/mutation-controls";
 import { safeKrakenConfigurationView } from "@/providers/kraken/server-factory";
 import { safeAlchemyConfigurationView } from "@/providers/evm/server-factory";
+import { evmChainIdentity } from "@/domain/evm";
 import { ExternalSyncReadService } from "@/services/external-sync-read-service";
 
 import { withDatabase } from "../server-runtime";
@@ -84,6 +85,9 @@ function connectionStatus(connection: {
   }
   if (connection.state?.lastErrorCode === "EVM_TOKEN_BALANCE_PARTIAL") {
     return { tone: "warning", label: "Token 余额部分完成" };
+  }
+  if (connection.state?.lastErrorCode === "EVM_L2_TRACE_UNAVAILABLE") {
+    return { tone: "warning", label: "仅余额可用" };
   }
   if (connection.state?.lastErrorCode) {
     return { tone: "warning", label: "最近同步失败" };
@@ -160,26 +164,46 @@ export default async function SyncPage({
         <section className="content-section evm-add-wallet-card">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Ethereum Mainnet · Address only</p>
+              <p className="eyebrow">Ethereum · Base · Arbitrum</p>
               <h2>添加只读钱包</h2>
             </div>
-            <span className="evm-chain-chip">chainId 1</span>
+            <span className="evm-chain-chip">3 个固定主网</span>
+          </div>
+          <div className="evm-network-rail" aria-label="支持的 EVM 网络">
+            <span>
+              Ethereum <code>1</code>
+            </span>
+            <span>
+              Base <code>8453</code>
+            </span>
+            <span>
+              Arbitrum <code>42161</code>
+            </span>
           </div>
           <p className="sync-safety-copy">
             只接受公共地址。不要输入 private key、mnemonic 或 seed phrase；Talli
-            不签名，也不会调用 write RPC。
+            不签名，也不会调用 write RPC。L2 历史活动始终标记为 discovery
+            limited。
           </p>
           <SettingsActionForm
             action={createEvmWalletAction}
             className="sync-connect-form evm-wallet-form"
-            submitLabel="添加 Ethereum 只读钱包"
+            submitLabel="添加 EVM 只读钱包"
           >
+            <label className="field">
+              <span>网络</span>
+              <select defaultValue="1" name="chainId" required>
+                <option value="1">Ethereum Mainnet · chainId 1</option>
+                <option value="8453">Base Mainnet · chainId 8453</option>
+                <option value="42161">Arbitrum One · chainId 42161</option>
+              </select>
+            </label>
             <label className="field">
               <span>钱包名称</span>
               <input name="name" placeholder="例如：Main wallet" required />
             </label>
             <label className="field">
-              <span>Public Ethereum address</span>
+              <span>Public EVM address</span>
               <input
                 autoComplete="off"
                 inputMode="text"
@@ -205,6 +229,9 @@ export default async function SyncPage({
 
       {connections.map((connection) => {
         const isEvm = connection.provider === "evm_wallet";
+        const evmChain = connection.evmWallet
+          ? evmChainIdentity(connection.evmWallet.chainId)
+          : null;
         const status = connectionStatus(connection);
         const candidates = connection.candidates.filter((candidate) =>
           candidateMatchesQueue(candidate.status, queue),
@@ -240,8 +267,8 @@ export default async function SyncPage({
               <div className="sync-connection-heading">
                 <div>
                   <p className="eyebrow">
-                    {isEvm
-                      ? "Ethereum Mainnet · Read only"
+                    {evmChain
+                      ? `${evmChain.displayName} · Read only`
                       : "Kraken Spot · Read only"}
                   </p>
                   <h2>{connection.name}</h2>
@@ -263,9 +290,11 @@ export default async function SyncPage({
                 />
               </div>
               <p className="sync-safety-copy">
-                {isEvm
-                  ? "当前余额读取 latest；transfer、transaction 与 receipt 历史只同步到 finalized block，movement 和 gas 分开审核。"
-                  : "此按钮只抓取 Balance、Ledgers 与 Trades History；Import 或 Reconcile 仍需单独确认。"}
+                {evmChain?.historyCoverage === "discovery_limited"
+                  ? "余额读取 latest；历史 activity 只发现 external / ERC-20 tx，再以 exact debug trace 审核 native movement。Bridge 不会自动跨链关联。"
+                  : isEvm
+                    ? "当前余额读取 latest；transfer、transaction 与 receipt 历史只同步到 finalized block，movement 和 gas 分开审核。"
+                    : "此按钮只抓取 Balance、Ledgers 与 Trades History；Import 或 Reconcile 仍需单独确认。"}
               </p>
               <dl className="credential-facts">
                 <div>
@@ -287,6 +316,16 @@ export default async function SyncPage({
                       {connection.evmWallet.historyStartAt.slice(0, 10)} →{" "}
                       {connection.evmState?.lastFinalizedBlockText ??
                         "等待同步"}
+                    </dd>
+                  </div>
+                ) : null}
+                {evmChain ? (
+                  <div>
+                    <dt>History coverage</dt>
+                    <dd>
+                      {evmChain.historyCoverage === "discovery_limited"
+                        ? `discovery limited${evmChain.chainId === 42161 ? " · activity ≥ block 22,207,815" : ""}`
+                        : "complete transfer index"}
                     </dd>
                   </div>
                 ) : null}
@@ -313,26 +352,38 @@ export default async function SyncPage({
                   </span>
                 </div>
               ) : (
-                <div
-                  className="permission-checks"
-                  aria-label="Ethereum 安全边界"
-                >
-                  <span>✓ chainId 1 only</span>
+                <div className="permission-checks" aria-label="EVM 安全边界">
+                  <span>✓ chainId {evmChain?.chainId}</span>
                   <span>✓ public address only</span>
                   <span>✓ no sign / send / write RPC</span>
+                  {evmChain?.requiresDebugForMovement ? (
+                    <span>
+                      {connection.evmState?.traceCapabilityStatus ===
+                      "trace_available"
+                        ? "✓ exact activity trace"
+                        : connection.evmState?.traceCapabilityStatus ===
+                            "trace_unavailable"
+                          ? "! balance-only · trace unavailable"
+                          : "○ trace capability pending"}
+                    </span>
+                  ) : null}
                 </div>
               )}
               {connection.state?.lastErrorCode ? (
                 <p
                   className={
                     connection.state.lastErrorCode ===
-                    "EVM_TOKEN_BALANCE_PARTIAL"
+                      "EVM_TOKEN_BALANCE_PARTIAL" ||
+                    connection.state.lastErrorCode ===
+                      "EVM_L2_TRACE_UNAVAILABLE"
                       ? "sync-partial-warning"
                       : "form-error"
                   }
                   role={
                     connection.state.lastErrorCode ===
-                    "EVM_TOKEN_BALANCE_PARTIAL"
+                      "EVM_TOKEN_BALANCE_PARTIAL" ||
+                    connection.state.lastErrorCode ===
+                      "EVM_L2_TRACE_UNAVAILABLE"
                       ? "status"
                       : "alert"
                   }
@@ -340,7 +391,10 @@ export default async function SyncPage({
                   {connection.state.lastErrorCode ===
                   "EVM_TOKEN_BALANCE_PARTIAL"
                     ? "本次同步存在 token balance issue；失败 token 未按 0 写入，其他余额与完整 activity 已保存。"
-                    : `${connection.state.lastErrorCode} · ${connection.state.lastErrorMessage}`}
+                    : connection.state.lastErrorCode ===
+                        "EVM_L2_TRACE_UNAVAILABLE"
+                      ? "Alchemy Debug API unavailable for reviewed L2 activity. Balance sync remains available；本次未保存 activity，也未推进 cursor。"
+                      : `${connection.state.lastErrorCode} · ${connection.state.lastErrorMessage}`}
                 </p>
               ) : null}
             </section>
@@ -554,7 +608,11 @@ export default async function SyncPage({
                           accountId={observation.accountId}
                           disabled={observation.reconciled}
                           observationId={observation.id}
-                          providerName={isEvm ? "Ethereum on-chain" : "Kraken"}
+                          providerName={
+                            evmChain
+                              ? `${evmChain.displayName} on-chain`
+                              : "Kraken"
+                          }
                         />
                       ) : null}
                     </article>
@@ -601,7 +659,13 @@ export default async function SyncPage({
                           <li key={candidate.id}>
                             <Link href={"/sync/candidates/" + candidate.id}>
                               <span className="candidate-provider-mark">
-                                {isEvm ? "Ξ" : "K"}
+                                {evmChain?.chainId === 8453
+                                  ? "B"
+                                  : evmChain?.chainId === 42161
+                                    ? "A"
+                                    : isEvm
+                                      ? "Ξ"
+                                      : "K"}
                               </span>
                               <span className="candidate-copy">
                                 <strong>
@@ -634,6 +698,10 @@ export default async function SyncPage({
                                     "建议"}{" "}
                                   ·{" "}
                                   {eventTypeLabel(candidate.suggestedEventType)}
+                                  {candidate.evmL2GasFee?.feeStatus ===
+                                  "unresolved"
+                                    ? " · Fee incomplete"
+                                    : ""}
                                 </small>
                               </span>
                             </Link>

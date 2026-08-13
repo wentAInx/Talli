@@ -1,6 +1,6 @@
 import "server-only";
 
-import { EVM_ALCHEMY_CREDENTIAL_REF } from "../../domain/evm";
+import { EVM_ALCHEMY_CREDENTIAL_REF, type EvmChainId } from "../../domain/evm";
 import { AlchemyReadOnlyClient } from "./client";
 import { EvmProviderError } from "./errors";
 import { FetchEvmJsonRpcTransport } from "./fetch-http-transport";
@@ -30,7 +30,7 @@ export function safeAlchemyConfigurationView(): SafeAlchemyConfigurationView {
   };
 }
 
-export function createServerEvmProvider() {
+export function createServerEvmProvider(chainId: EvmChainId) {
   if (isEvmFixtureMode()) {
     return new DeterministicEvmFixtureProvider();
   }
@@ -49,5 +49,6 @@ export function createServerEvmProvider() {
   }
   return new AlchemyReadOnlyClient(new FetchEvmJsonRpcTransport(), {
     apiKey: configuration.apiKey,
+    chainId,
   });
 }

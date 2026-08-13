@@ -67,14 +67,18 @@ function transaction(
       effectiveGasPriceHex: "0x3b9aca00",
       blobGasUsedHex: input.blobGasUsed ?? null,
       blobGasPriceHex: input.blobGasPrice ?? null,
+      gasUsedForL1Hex: null,
       blockNumberText: "100",
     },
+    nativeTrace: null,
+    l2GasFee: null,
   };
 }
 
 describe("EVM activity normalization", () => {
   it("splits a simple exchange movement and its gas into two candidates", () => {
     const normalized = normalizeEvmActivity({
+      chainId: 1,
       walletAddressLower: WALLET,
       transfers: [
         transfer({
@@ -130,6 +134,7 @@ describe("EVM activity normalization", () => {
 
   it("classifies inbound/outbound without guessing income or expense", () => {
     const inbound = normalizeEvmActivity({
+      chainId: 1,
       walletAddressLower: WALLET,
       transfers: [
         transfer({ uniqueId: "in", from: OTHER, to: WALLET, raw: 1n }),
@@ -143,6 +148,7 @@ describe("EVM activity normalization", () => {
     });
 
     const outbound = normalizeEvmActivity({
+      chainId: 1,
       walletAddressLower: WALLET,
       transfers: [
         transfer({ uniqueId: "out", from: WALLET, to: OTHER, raw: 1n }),
@@ -158,6 +164,7 @@ describe("EVM activity normalization", () => {
 
   it("does not create movement for self net-zero but keeps paid gas", () => {
     const normalized = normalizeEvmActivity({
+      chainId: 1,
       walletAddressLower: WALLET,
       transfers: [
         transfer({ uniqueId: "self", from: WALLET, to: WALLET, raw: 10n }),
@@ -170,6 +177,7 @@ describe("EVM activity normalization", () => {
 
   it("keeps a zero-value contract deployment source and only emits exact gas", () => {
     const normalized = normalizeEvmActivity({
+      chainId: 1,
       walletAddressLower: WALLET,
       transfers: [
         transfer({
@@ -203,6 +211,7 @@ describe("EVM activity normalization", () => {
 
   it("keeps complex, missing-decimal, and failed movement unimportable", () => {
     const complex = normalizeEvmActivity({
+      chainId: 1,
       walletAddressLower: WALLET,
       transfers: [
         transfer({ uniqueId: "eth-out", from: WALLET, to: OTHER, raw: 1n }),
@@ -229,6 +238,7 @@ describe("EVM activity normalization", () => {
     });
 
     const unresolved = normalizeEvmActivity({
+      chainId: 1,
       walletAddressLower: WALLET,
       transfers: [
         transfer({
@@ -248,6 +258,7 @@ describe("EVM activity normalization", () => {
     });
 
     const failed = normalizeEvmActivity({
+      chainId: 1,
       walletAddressLower: WALLET,
       transfers: [
         transfer({ uniqueId: "failed-out", from: WALLET, to: OTHER, raw: 1n }),
@@ -266,6 +277,7 @@ describe("EVM activity normalization", () => {
 
   it("marks incomplete blob fee unresolved instead of undercounting", () => {
     const normalized = normalizeEvmActivity({
+      chainId: 1,
       walletAddressLower: WALLET,
       transfers: [
         transfer({ uniqueId: "blob-out", from: WALLET, to: OTHER, raw: 1n }),

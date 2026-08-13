@@ -98,6 +98,19 @@ export const evmGasFeeStatuses = [
   "not_applicable",
   "unresolved",
 ] as const;
+export const evmTraceCapabilityStatuses = [
+  "unknown",
+  "trace_available",
+  "trace_unavailable",
+] as const;
+export const evmNativeTraceStatuses = [
+  "not_required",
+  "exact",
+  "trace_unavailable",
+  "trace_invalid",
+] as const;
+export const evmL2FeeModels = ["base_op_stack", "arbitrum_nitro"] as const;
+export const evmL2FeeStatuses = ["exact", "unresolved"] as const;
 
 export const books = sqliteTable(
   "books",
@@ -572,11 +585,13 @@ export const evmWalletConnections = sqliteTable(
     connectionId: text("connection_id")
       .primaryKey()
       .references(() => externalConnections.id, { onDelete: "cascade" }),
-    chainId: integer("chain_id").notNull(),
-    networkId: text("network_id").notNull(),
+    chainId: integer("chain_id").$type<1 | 8453 | 42161>().notNull(),
+    networkId: text("network_id", {
+      enum: ["eth-mainnet", "base-mainnet", "arb-mainnet"],
+    }).notNull(),
     addressLower: text("address_lower").notNull(),
     addressDisplay: text("address_display").notNull(),
-    dataProvider: text("data_provider").notNull(),
+    dataProvider: text("data_provider", { enum: ["alchemy"] }).notNull(),
     historyStartAt: text("history_start_at").notNull(),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
@@ -586,10 +601,9 @@ export const evmWalletConnections = sqliteTable(
       table.chainId,
       table.addressLower,
     ),
-    check("evm_wallet_connections_chain_check", sql`${table.chainId} = 1`),
     check(
-      "evm_wallet_connections_network_check",
-      sql`${table.networkId} = 'eth-mainnet'`,
+      "evm_wallet_connections_chain_network_check",
+      sql`(${table.chainId} = 1 and ${table.networkId} = 'eth-mainnet') or (${table.chainId} = 8453 and ${table.networkId} = 'base-mainnet') or (${table.chainId} = 42161 and ${table.networkId} = 'arb-mainnet')`,
     ),
     check(
       "evm_wallet_connections_provider_check",
@@ -609,8 +623,20 @@ export const evmWalletConnectionState = sqliteTable(
     lastFinalizedBlockText: text("last_finalized_block_text"),
     lastBalanceSyncAt: text("last_balance_sync_at"),
     lastActivitySyncAt: text("last_activity_sync_at"),
+    traceCapabilityStatus: text("trace_capability_status", {
+      enum: evmTraceCapabilityStatuses,
+    })
+      .notNull()
+      .default("unknown"),
+    traceCheckedAt: text("trace_checked_at"),
     updatedAt: text("updated_at").notNull(),
   },
+  (table) => [
+    check(
+      "evm_wallet_state_trace_capability_check",
+      sql`${table.traceCapabilityStatus} in ('unknown', 'trace_available', 'trace_unavailable')`,
+    ),
+  ],
 );
 
 export const externalAssetMappings = sqliteTable(
@@ -785,7 +811,7 @@ export const evmBalanceObservationDetails = sqliteTable(
       .references(() => externalBalanceObservations.id, {
         onDelete: "cascade",
       }),
-    chainId: integer("chain_id").notNull(),
+    chainId: integer("chain_id").$type<1 | 8453 | 42161>().notNull(),
     assetKind: text("asset_kind", { enum: evmAssetKinds }).notNull(),
     contractAddressLower: text("contract_address_lower"),
     rawAmountAtomicText: text("raw_amount_atomic_text").notNull(),
@@ -793,7 +819,10 @@ export const evmBalanceObservationDetails = sqliteTable(
     syncHeadBlockText: text("sync_head_block_text"),
   },
   (table) => [
-    check("evm_balance_details_chain_check", sql`${table.chainId} = 1`),
+    check(
+      "evm_balance_details_chain_check",
+      sql`${table.chainId} in (1, 8453, 42161)`,
+    ),
     check(
       "evm_balance_details_kind_check",
       sql`${table.assetKind} in ('native', 'erc20')`,
@@ -804,7 +833,7 @@ export const evmBalanceObservationDetails = sqliteTable(
     ),
     check(
       "evm_balance_details_contract_check",
-      sql`(${table.assetKind} = 'native' and ${table.contractAddressLower} is null) or (${table.assetKind} = 'erc20' and ${table.contractAddressLower} is not null)`,
+      sql`(${table.assetKind} = 'native' and ${table.contractAddressLower} is null and ${table.tokenDecimals} = 18) or (${table.assetKind} = 'erc20' and ${table.contractAddressLower} is not null)`,
     ),
   ],
 );
@@ -921,7 +950,7 @@ export const evmCandidateDetails = sqliteTable(
       .references(() => externalTransactionCandidates.id, {
         onDelete: "cascade",
       }),
-    chainId: integer("chain_id").notNull(),
+    chainId: integer("chain_id").$type<1 | 8453 | 42161>().notNull(),
     txHash: text("tx_hash").notNull(),
     candidateKind: text("candidate_kind", {
       enum: evmCandidateKinds,
@@ -938,6 +967,11 @@ export const evmCandidateDetails = sqliteTable(
     gasFeeStatus: text("gas_fee_status", {
       enum: evmGasFeeStatuses,
     }).notNull(),
+    nativeTraceStatus: text("native_trace_status", {
+      enum: evmNativeTraceStatuses,
+    })
+      .notNull()
+      .default("not_required"),
   },
   (table) => [
     uniqueIndex("evm_candidate_details_tx_kind_unique").on(
@@ -945,7 +979,10 @@ export const evmCandidateDetails = sqliteTable(
       table.txHash,
       table.candidateKind,
     ),
-    check("evm_candidate_details_chain_check", sql`${table.chainId} = 1`),
+    check(
+      "evm_candidate_details_chain_check",
+      sql`${table.chainId} in (1, 8453, 42161)`,
+    ),
     check(
       "evm_candidate_details_kind_check",
       sql`${table.candidateKind} in ('movement', 'gas')`,
@@ -961,6 +998,43 @@ export const evmCandidateDetails = sqliteTable(
     check(
       "evm_candidate_details_gas_status_check",
       sql`${table.gasFeeStatus} in ('exact', 'not_applicable', 'unresolved')`,
+    ),
+    check(
+      "evm_candidate_details_trace_status_check",
+      sql`${table.nativeTraceStatus} in ('not_required', 'exact', 'trace_unavailable', 'trace_invalid')`,
+    ),
+  ],
+);
+
+export const evmL2GasFeeDetails = sqliteTable(
+  "evm_l2_gas_fee_details",
+  {
+    candidateId: text("candidate_id")
+      .primaryKey()
+      .references(() => externalTransactionCandidates.id, {
+        onDelete: "cascade",
+      }),
+    chainId: integer("chain_id").$type<8453 | 42161>().notNull(),
+    feeModel: text("fee_model", { enum: evmL2FeeModels }).notNull(),
+    executionFeeAtomicText: text("execution_fee_atomic_text"),
+    parentDataFeeAtomicText: text("parent_data_fee_atomic_text"),
+    operatorFeeAtomicText: text("operator_fee_atomic_text"),
+    totalFeeAtomicText: text("total_fee_atomic_text"),
+    feeStatus: text("fee_status", { enum: evmL2FeeStatuses }).notNull(),
+    evidenceJson: text("evidence_json").notNull(),
+  },
+  (table) => [
+    check(
+      "evm_l2_gas_fee_chain_model_check",
+      sql`(${table.chainId} = 8453 and ${table.feeModel} = 'base_op_stack') or (${table.chainId} = 42161 and ${table.feeModel} = 'arbitrum_nitro')`,
+    ),
+    check(
+      "evm_l2_gas_fee_exact_fields_check",
+      sql`(${table.feeStatus} = 'exact' and ${table.executionFeeAtomicText} is not null and ${table.parentDataFeeAtomicText} is not null and ${table.totalFeeAtomicText} is not null) or (${table.feeStatus} = 'unresolved' and ${table.totalFeeAtomicText} is null)`,
+    ),
+    check(
+      "evm_l2_gas_fee_operator_check",
+      sql`(${table.chainId} = 8453 and ((${table.feeStatus} = 'exact' and ${table.operatorFeeAtomicText} is not null) or ${table.feeStatus} = 'unresolved')) or (${table.chainId} = 42161 and ${table.operatorFeeAtomicText} is null)`,
     ),
   ],
 );
@@ -1019,4 +1093,5 @@ export type ExternalTransactionCandidateRow =
 export type ExternalTransactionLegRow =
   typeof externalTransactionLegs.$inferSelect;
 export type EvmCandidateDetailRow = typeof evmCandidateDetails.$inferSelect;
+export type EvmL2GasFeeDetailRow = typeof evmL2GasFeeDetails.$inferSelect;
 export type ExternalImportLinkRow = typeof externalImportLinks.$inferSelect;

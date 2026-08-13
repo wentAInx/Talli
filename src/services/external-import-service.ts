@@ -19,6 +19,7 @@ import {
   canonicalExternalDecimalText,
   canonicalExternalJson,
 } from "../domain/external-sync";
+import { evmChainIdentity } from "../domain/evm";
 import { krakenReportedNonzeroTradeFee } from "../providers/kraken/candidates";
 import type { LedgerMutationInput, OptionalFeeInput } from "./contracts";
 import { assertService } from "./errors";
@@ -145,13 +146,18 @@ function prepareCommand(
     "EXTERNAL_CONNECTION_NOT_FOUND",
     "External connection was not found.",
   );
+  let evmChainName: string | null = null;
   if (connection.provider === "evm_wallet") {
     const detail = findEvmCandidateDetail(executor, candidate.id);
     assertService(
       detail,
       "EXTERNAL_CANDIDATE_INTEGRITY_ERROR",
-      "Ethereum candidate details are missing.",
+      "EVM candidate details are missing.",
     );
+    evmChainName =
+      detail.chainId === 1
+        ? "Ethereum"
+        : evmChainIdentity(detail.chainId).displayName;
     const choiceAllowed =
       (detail.candidateKind === "gas" &&
         detail.classification === "gas_only" &&
@@ -170,7 +176,7 @@ function prepareCommand(
     assertService(
       choiceAllowed,
       "EVM_IMPORT_EVENT_TYPE_INVALID",
-      "The selected Ledger event type is not supported for this Ethereum candidate.",
+      "The selected Ledger event type is not supported for this EVM candidate.",
     );
   }
   const legs = listExternalCandidateLegs(executor, candidate.id);
@@ -333,9 +339,7 @@ function prepareCommand(
         categoryId: input.categoryId ?? null,
         payee:
           connection.provider === "evm_wallet"
-            ? candidate.stableKey.includes(":gas:")
-              ? "Ethereum Network"
-              : "Ethereum Wallet"
+            ? `${evmChainName} ${candidate.stableKey.includes(":gas:") ? "Network" : "Wallet"}`
             : "Kraken",
       },
     };

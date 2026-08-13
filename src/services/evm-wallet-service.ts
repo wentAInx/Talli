@@ -28,15 +28,17 @@ import {
   updateExternalConnectionState,
   updateExternalSourceObject,
   upsertEvmCandidateDetail,
+  upsertEvmL2GasFeeDetail,
   upsertExternalAssetMapping,
 } from "../db/queries";
 import {
   EVM_ALCHEMY_CREDENTIAL_REF,
-  EVM_MAINNET_CHAIN_ID,
-  EVM_MAINNET_NETWORK_ID,
+  evmChainIdentity,
   evmWalletSourceKey,
+  isEvmChainId,
   normalizeEvmAddress,
   parseEvmAssetKey,
+  type EvmChainId,
 } from "../domain/evm";
 import {
   canonicalExternalJson,
@@ -64,7 +66,10 @@ import {
 
 const activeWalletConnections = new Set<string>();
 
-export type EvmProviderFactory = (connectionId: string) => EvmReadOnlyProvider;
+export type EvmProviderFactory = (
+  connectionId: string,
+  chainId: EvmChainId,
+) => EvmReadOnlyProvider;
 
 export interface EvmSyncResult {
   runId: string;
@@ -74,9 +79,13 @@ export interface EvmSyncResult {
   sourceObjectsSeen: number;
   candidatesCreated: number;
   candidatesUpdated: number;
+  activityStatus: "complete" | "trace_unavailable";
 }
 
 const TOKEN_BALANCE_PARTIAL_CODE = "EVM_TOKEN_BALANCE_PARTIAL";
+const L2_TRACE_UNAVAILABLE_CODE = "EVM_L2_TRACE_UNAVAILABLE";
+const L2_TRACE_UNAVAILABLE_MESSAGE =
+  "Alchemy Debug API unavailable for reviewed L2 activity. Balance sync remains available.";
 
 function balanceIssueSummary(snapshot: EvmSyncSnapshot): string | null {
   const issueCount = snapshot.balanceIssues.length;
@@ -115,7 +124,7 @@ function assetMetadata(input: {
   return {
     displayCode,
     payloadJson: canonicalExternalJson({
-      chainId: 1,
+      chainId: identity.chainId,
       assetKind: identity.kind,
       contractAddress: identity.contractAddressLower,
       decimals: input.balance?.decimals ?? input.transfer?.decimals ?? null,
@@ -237,7 +246,7 @@ function persistBalances(input: {
       balance.decimals === null ? null : (asset?.scale ?? null),
     );
     const payloadJson = canonicalExternalJson({
-      chainId: 1,
+      chainId: input.snapshot.chainId,
       providerAssetKey: balance.providerAssetKey,
       rawAmountAtomic: balance.rawAmountAtomicText,
       decimals: balance.decimals,
@@ -262,7 +271,7 @@ function persistBalances(input: {
     });
     insertEvmBalanceObservationDetail(input.executor, {
       observationId,
-      chainId: 1,
+      chainId: input.snapshot.chainId,
       assetKind: balance.assetKind,
       contractAddressLower: balance.contractAddressLower,
       rawAmountAtomicText: balance.rawAmountAtomicText,
@@ -340,6 +349,30 @@ function candidateSourceLinks(
   ];
 }
 
+function persistEvmCandidateExtension(
+  executor: DatabaseExecutor,
+  candidateId: string,
+  draft: EvmCandidateDraft,
+): void {
+  upsertEvmCandidateDetail(executor, {
+    candidateId,
+    ...draft.detail,
+  });
+  if (draft.l2GasFee) {
+    upsertEvmL2GasFeeDetail(executor, {
+      candidateId,
+      chainId: draft.l2GasFee.chainId,
+      feeModel: draft.l2GasFee.feeModel,
+      executionFeeAtomicText: draft.l2GasFee.executionFeeAtomicText,
+      parentDataFeeAtomicText: draft.l2GasFee.parentDataFeeAtomicText,
+      operatorFeeAtomicText: draft.l2GasFee.operatorFeeAtomicText,
+      totalFeeAtomicText: draft.l2GasFee.totalFeeAtomicText,
+      feeStatus: draft.l2GasFee.status,
+      evidenceJson: draft.l2GasFee.evidenceJson,
+    });
+  }
+}
+
 function persistCandidates(input: {
   executor: DatabaseExecutor;
   connectionId: string;
@@ -390,10 +423,7 @@ function persistCandidates(input: {
         candidateSourceLinks(draft, input.sourceIds),
         legs,
       );
-      upsertEvmCandidateDetail(input.executor, {
-        candidateId: id,
-        ...draft.detail,
-      });
+      persistEvmCandidateExtension(input.executor, id, draft);
       candidatesCreated += 1;
       continue;
     }
@@ -427,10 +457,7 @@ function persistCandidates(input: {
         candidateSourceLinks(draft, input.sourceIds),
         legs,
       );
-      upsertEvmCandidateDetail(input.executor, {
-        candidateId: id,
-        ...draft.detail,
-      });
+      persistEvmCandidateExtension(input.executor, id, draft);
     }
     candidatesUpdated += 1;
   }
@@ -447,9 +474,11 @@ export class EvmWalletService {
   async createWallet(input: {
     bookId: string;
     name: string;
+    chainId: EvmChainId;
     publicAddress: string;
     historyStartAt: string;
   }): Promise<string> {
+    const chain = evmChainIdentity(input.chainId);
     const addressLower = normalizeEvmAddress(input.publicAddress);
     canonicalUtcInstantValue(input.historyStartAt);
     const name = input.name.trim();
@@ -466,9 +495,13 @@ export class EvmWalletService {
           "Book was not found.",
         );
         assertService(
-          !findEvmWalletConnectionByAddress(transaction, addressLower),
+          !findEvmWalletConnectionByAddress(
+            transaction,
+            input.chainId,
+            addressLower,
+          ),
           "EVM_WALLET_DUPLICATE",
-          "This Ethereum Mainnet public address already exists.",
+          `This ${chain.displayName} public address already exists.`,
         );
         const now = runtimeNow(this.runtime);
         const connectionId = this.runtime.id();
@@ -476,7 +509,7 @@ export class EvmWalletService {
           id: connectionId,
           bookId: input.bookId,
           provider: "evm_wallet",
-          sourceKey: evmWalletSourceKey(addressLower),
+          sourceKey: evmWalletSourceKey(input.chainId, addressLower),
           name,
           credentialRef: EVM_ALCHEMY_CREDENTIAL_REF,
           isEnabled: true,
@@ -485,8 +518,8 @@ export class EvmWalletService {
         });
         insertEvmWalletConnection(transaction, {
           connectionId,
-          chainId: EVM_MAINNET_CHAIN_ID,
-          networkId: EVM_MAINNET_NETWORK_ID,
+          chainId: chain.chainId,
+          networkId: chain.networkId,
           addressLower,
           addressDisplay: input.publicAddress.trim(),
           dataProvider: "alchemy",
@@ -525,7 +558,12 @@ export class EvmWalletService {
               connection.provider === "evm_wallet" &&
               connection.isEnabled,
             "EXTERNAL_CONNECTION_DISABLED",
-            "Ethereum wallet connection is missing or disabled.",
+            "EVM wallet connection is missing or disabled.",
+          );
+          assertService(
+            isEvmChainId(subtype.chainId),
+            "EVM_CHAIN_UNSUPPORTED",
+            "EVM wallet chain is unsupported.",
           );
           ensureExternalConnectionState(transaction, connectionId, startedAt);
           ensureEvmWalletConnectionState(transaction, connectionId, startedAt);
@@ -545,26 +583,81 @@ export class EvmWalletService {
             lastErrorMessage: null,
             updatedAt: startedAt,
           });
-          return { subtype, state };
+          return { subtype, state, chainId: subtype.chainId };
         },
         { behavior: "immediate" },
       );
       runStarted = true;
 
-      const snapshot = await this.providerFactory(connectionId).fetchSnapshot({
+      const snapshot = await this.providerFactory(
+        connectionId,
+        wallet.chainId,
+      ).fetchSnapshot({
+        chainId: wallet.chainId,
         address: wallet.subtype.addressLower,
         historyStartAt: wallet.subtype.historyStartAt,
         lastFinalizedBlockText: wallet.state.lastFinalizedBlockText,
+        previousTraceCapability: wallet.state.traceCapabilityStatus,
       });
+      assertService(
+        snapshot.chainId === wallet.chainId &&
+          snapshot.addressLower === wallet.subtype.addressLower,
+        "EVM_SNAPSHOT_IDENTITY_MISMATCH",
+        "EVM provider snapshot identity is inconsistent with its wallet.",
+      );
+      const chain = evmChainIdentity(wallet.chainId);
+      const traceUnavailable =
+        snapshot.activityCapability.activityStatus === "trace_unavailable";
+      assertService(
+        snapshot.activityCapability.historyCoverage === chain.historyCoverage,
+        "EVM_HISTORY_COVERAGE_MISMATCH",
+        "EVM provider history coverage is inconsistent with its chain.",
+      );
+      assertService(
+        !traceUnavailable || chain.requiresDebugForMovement,
+        "EVM_TRACE_CAPABILITY_INVALID",
+        "Trace-unavailable activity is only valid for an L2 wallet.",
+      );
+      if (chain.requiresDebugForMovement) {
+        assertService(
+          traceUnavailable
+            ? snapshot.activityCapability.traceCapability ===
+                "trace_unavailable"
+            : snapshot.activityCapability.traceCapability !==
+                "trace_unavailable" &&
+                snapshot.transactions.every(
+                  (transaction) => transaction.nativeTrace?.status === "exact",
+                ),
+          "EVM_L2_TRACE_CAPABILITY_INVALID",
+          "Every discovered L2 transaction requires an exact call trace.",
+        );
+      }
       const normalized = normalizeEvmActivity({
+        chainId: wallet.chainId,
         walletAddressLower: wallet.subtype.addressLower,
         transfers: snapshot.transfers,
         transactions: snapshot.transactions,
       });
-      const partialMessage = balanceIssueSummary(snapshot);
-      const syncStatus: EvmSyncResult["status"] = snapshot.balanceComplete
-        ? "success"
-        : "partial";
+      const balancePartialMessage = balanceIssueSummary(snapshot);
+      assertService(
+        !traceUnavailable ||
+          (snapshot.transfers.length === 0 &&
+            snapshot.transactions.length === 0 &&
+            normalized.sources.length === 0 &&
+            normalized.candidates.length === 0),
+        "EVM_L2_TRACE_PARTIAL_ACTIVITY",
+        "Trace-unavailable L2 snapshots must not contain activity facts.",
+      );
+      const partialMessage = traceUnavailable
+        ? L2_TRACE_UNAVAILABLE_MESSAGE
+        : balancePartialMessage;
+      const partialCode = traceUnavailable
+        ? L2_TRACE_UNAVAILABLE_CODE
+        : snapshot.balanceComplete
+          ? null
+          : TOKEN_BALANCE_PARTIAL_CODE;
+      const syncStatus: EvmSyncResult["status"] =
+        snapshot.balanceComplete && !traceUnavailable ? "success" : "partial";
       return this.context.db.transaction(
         (transaction) => {
           ensureMappings({
@@ -601,6 +694,7 @@ export class EvmWalletService {
             balancesSeen: snapshot.balances.length,
             sourceObjectsSeen: normalized.sources.length,
             ...counts,
+            activityStatus: snapshot.activityCapability.activityStatus,
           };
           finishExternalSyncRun(transaction, runId!, {
             finishedAt: snapshot.syncCompletedAt,
@@ -609,23 +703,39 @@ export class EvmWalletService {
             sourceObjectsSeen: result.sourceObjectsSeen,
             candidatesCreated: result.candidatesCreated,
             candidatesUpdated: result.candidatesUpdated,
-            errorCode:
-              syncStatus === "partial" ? TOKEN_BALANCE_PARTIAL_CODE : null,
+            errorCode: partialCode,
             errorMessage: partialMessage,
           });
           updateExternalConnectionState(transaction, connectionId, {
             lastSuccessAt: snapshot.syncCompletedAt,
-            lastErrorCode:
-              syncStatus === "partial" ? TOKEN_BALANCE_PARTIAL_CODE : null,
+            lastErrorCode: partialCode,
             lastErrorMessage: partialMessage,
             updatedAt: snapshot.syncCompletedAt,
           });
-          updateEvmWalletConnectionState(transaction, connectionId, {
-            lastFinalizedBlockText: snapshot.finalizedBlockText,
-            lastBalanceSyncAt: snapshot.balanceObservedAt,
-            lastActivitySyncAt: snapshot.syncCompletedAt,
-            updatedAt: snapshot.syncCompletedAt,
-          });
+          updateEvmWalletConnectionState(
+            transaction,
+            connectionId,
+            traceUnavailable
+              ? {
+                  traceCapabilityStatus:
+                    snapshot.activityCapability.traceCapability,
+                  traceCheckedAt: snapshot.syncCompletedAt,
+                  lastBalanceSyncAt: snapshot.balanceObservedAt,
+                  updatedAt: snapshot.syncCompletedAt,
+                }
+              : {
+                  lastFinalizedBlockText: snapshot.finalizedBlockText,
+                  lastBalanceSyncAt: snapshot.balanceObservedAt,
+                  lastActivitySyncAt: snapshot.syncCompletedAt,
+                  traceCapabilityStatus:
+                    snapshot.activityCapability.traceCapability,
+                  traceCheckedAt:
+                    snapshot.activityCapability.traceCapability === "unknown"
+                      ? wallet.state.traceCheckedAt
+                      : snapshot.syncCompletedAt,
+                  updatedAt: snapshot.syncCompletedAt,
+                },
+          );
           return result;
         },
         { behavior: "immediate" },

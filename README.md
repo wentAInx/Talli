@@ -7,10 +7,12 @@ observation and review layer with Kraken Spot read-only integration; it still
 cannot post ledger facts without an explicit Import or Reconcile confirmation.
 V4 adds Ethereum Mainnet public-address wallet observations, finalized on-chain
 activity, and separate movement/gas review candidates under the same boundary.
+V4.1 extends that read-only model to Base Mainnet and Arbitrum One with exact
+debug-traced native movement and chain-specific fee provenance.
 
-## V4 implementation status
+## V4.1 implementation status
 
-The frozen V1 ledger and additive V2/V3 baselines remain intact; the V4.0
+The frozen V1 ledger and additive V2/V3/V4.0 baselines remain intact; the V4.1
 task-package phases are implemented:
 
 - Next.js 16, strict TypeScript, Tailwind CSS, ESLint, Prettier, Vitest, and
@@ -66,7 +68,7 @@ task-package phases are implemented:
 - Ethereum Mainnet (`chainId=1`) wallet connections accept public addresses
   only. Address, native asset, and ERC-20 chain/contract identities are
   canonical; symbol is display metadata and never an auto-mapping key.
-- Alchemy access uses a fixed server-only Mainnet origin and a read-method
+- Alchemy access uses a fixed server-only chain registry and a read-method
   allowlist through an injectable transport. Current native/ERC-20 balances,
   finalized paginated transfers, transaction/receipt enrichment, and a 32-block
   reorg overlap are supported without provider I/O inside SQLite transactions.
@@ -80,6 +82,21 @@ task-package phases are implemented:
 - Lossless `schemaVersion=4` backup adds EVM wallet, raw balance-detail, and
   candidate-detail user facts while continuing to restore versions 1/2/3/4.
   Alchemy secrets, sync runs, and finalized cursors remain excluded.
+- Base Mainnet (`chainId=8453`) and Arbitrum One (`chainId=42161`) reuse the
+  public-address-only wallet boundary. Wallet, native asset, ERC-20, movement,
+  and fee identities always include the chain; bridge activity is never
+  automatically correlated across chains.
+- L2 activity discovery requests only `external` and `erc20` Transfers rows and
+  is permanently labeled `discovery_limited`. Every discovered transaction
+  requires an exact sanitized `debug_traceTransaction` projection before a
+  movement candidate can be reviewed. If Debug is unavailable, balance facts
+  remain usable while activity facts and the finalized cursor remain unchanged.
+- Base exact fees combine execution, historical GasPriceOracle `getL1Fee`, and
+  historical `getOperatorFee` after Isthmus. Arbitrum decomposes the receipt
+  total with `gasUsedForL1` and never adds the parent component twice.
+- Lossless `schemaVersion=5` backup adds L2 gas-fee component/evidence rows and
+  accepts versions 1/2/3/4/5. Operational trace capability, cursors, sync runs,
+  provider cache, and all credentials remain excluded.
 
 ## Local development
 
@@ -146,7 +163,7 @@ RPC path. Automated tests use an injected fixture and do not call Alchemy.
   asset makes the estimate incomplete; it is never silently treated as zero.
 - The dashboard keeps native quantities primary and marks Home values with `≈`.
 - Valuation is current-only. V2.0 has no historical chart, cost basis, P&L,
-  background price collector, or stablecoin shortcut. V3/V4 external sync
+  background price collector, or stablecoin shortcut. V3/V4.1 external sync
   remains a separate native-asset observation/review layer and never supplies
   valuation prices.
 
@@ -159,12 +176,12 @@ RPC path. Automated tests use an injected fixture and do not call Alchemy.
   CSV is not a restore format.
 - The backup wire identifier remains `multi-asset-ledger-backup` after the
   Talli rename so existing V1 backups stay compatible.
-- V4 exports use `schemaVersion=4`. They retain V2/V3 user facts and add
-  `externalConnections.sourceKey`, EVM wallet subtypes, raw on-chain balance
-  details, and EVM candidate details. V1/V2/V3 backups are upgraded in memory
-  and fully validated before any write.
+- V4.1 exports use `schemaVersion=5`. They retain V2/V3/V4 user facts and add
+  multi-chain EVM wallet identities, raw on-chain balance/candidate details,
+  and exact or explicitly unresolved L2 fee provenance. V1/V2/V3/V4 backups
+  are upgraded in memory and fully validated before any write.
 - `latest_price_quotes`, `price_provider_state`, and API keys are intentionally
-  excluded because they are derived or operational data. V4 also excludes
+  excluded because they are derived or operational data. V4.1 also excludes
   `external_connection_state`, `external_sync_runs`, and
   `evm_wallet_connection_state`.
 - `POST /api/data/restore` supports preview and commit. The complete payload,
@@ -214,7 +231,7 @@ Runtime configuration:
 | `COINGECKO_API_KEY` | empty | Server-only CoinGecko Demo key; never stored in SQLite or backup. |
 | `KRAKEN_API_KEY` | empty | Dedicated server-only Kraken Spot read-only API key. |
 | `KRAKEN_API_SECRET` | empty | Dedicated server-only Kraken signing secret. |
-| `ALCHEMY_API_KEY` | empty | Server-only Ethereum Mainnet Alchemy API key. |
+| `ALCHEMY_API_KEY` | empty | Server-only Alchemy key for fixed Ethereum/Base/Arbitrum Mainnet origins. |
 
 Before upgrading, download and verify a JSON backup. For an additional raw
 volume snapshot, stop writes (normally stop the container) before copying the

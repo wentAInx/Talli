@@ -16,6 +16,7 @@ import {
 } from "./external-sync";
 import {
   EVM_ALCHEMY_CREDENTIAL_REF,
+  assertEvmChainNetwork,
   evmRawAtomicToDecimalText,
   evmGasStableKey,
   evmMovementStableKey,
@@ -31,7 +32,8 @@ export const BACKUP_FORMAT = "multi-asset-ledger-backup";
 export const BACKUP_LEGACY_SCHEMA_VERSION = 1;
 export const BACKUP_V2_SCHEMA_VERSION = 2;
 export const BACKUP_V3_SCHEMA_VERSION = 3;
-export const BACKUP_SCHEMA_VERSION = 4;
+export const BACKUP_V4_SCHEMA_VERSION = 4;
+export const BACKUP_SCHEMA_VERSION = 5;
 
 export class BackupValidationError extends Error {
   constructor(
@@ -368,7 +370,7 @@ const externalSourceObjectSchema = v3ExternalSourceObjectSchema.extend({
   ]),
 });
 
-const evmWalletConnectionSchema = z
+const v4EvmWalletConnectionSchema = z
   .object({
     connectionId: id,
     chainId: z
@@ -385,7 +387,7 @@ const evmWalletConnectionSchema = z
   })
   .strict();
 
-const evmBalanceObservationDetailSchema = z
+const v4EvmBalanceObservationDetailSchema = z
   .object({
     observationId: id,
     chainId: z
@@ -400,7 +402,7 @@ const evmBalanceObservationDetailSchema = z
   })
   .strict();
 
-const evmCandidateDetailSchema = z
+const v4EvmCandidateDetailSchema = z
   .object({
     candidateId: id,
     chainId: z
@@ -424,6 +426,92 @@ const evmCandidateDetailSchema = z
     toAddressLower: z.string().nullable(),
     gasFeeAtomicText: z.string().regex(/^\d+$/).nullable(),
     gasFeeStatus: z.enum(["exact", "not_applicable", "unresolved"]),
+  })
+  .strict();
+
+const evmChainIdSchema = z.union([
+  z.literal(1),
+  z.literal(8453),
+  z.literal(42161),
+]);
+
+const evmWalletConnectionSchema = z
+  .object({
+    connectionId: id,
+    chainId: evmChainIdSchema,
+    networkId: z.enum(["eth-mainnet", "base-mainnet", "arb-mainnet"]),
+    addressLower: z.string(),
+    addressDisplay: z.string(),
+    dataProvider: z.literal("alchemy"),
+    historyStartAt: canonicalInstant,
+    createdAt: canonicalInstant,
+    updatedAt: canonicalInstant,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    try {
+      assertEvmChainNetwork(value.chainId, value.networkId);
+    } catch {
+      context.addIssue({
+        code: "custom",
+        message: "EVM chain and network identity are inconsistent.",
+      });
+    }
+  });
+
+const evmBalanceObservationDetailSchema = z
+  .object({
+    observationId: id,
+    chainId: evmChainIdSchema,
+    assetKind: z.enum(["native", "erc20"]),
+    contractAddressLower: z.string().nullable(),
+    rawAmountAtomicText: z.string().regex(/^\d+$/),
+    tokenDecimals: z.number().int().min(0).max(255).nullable(),
+    syncHeadBlockText: z.string().regex(/^\d+$/).nullable(),
+  })
+  .strict();
+
+const evmCandidateDetailSchema = z
+  .object({
+    candidateId: id,
+    chainId: evmChainIdSchema,
+    txHash: z.string(),
+    candidateKind: z.enum(["movement", "gas"]),
+    classification: z.enum([
+      "simple_in",
+      "simple_out",
+      "simple_exchange",
+      "gas_only",
+      "complex",
+      "unsupported",
+    ]),
+    txStatus: z.enum(["success", "failed", "unknown"]),
+    blockNumberText: z.string().regex(/^\d+$/).nullable(),
+    blockTimestamp: canonicalInstant.nullable(),
+    fromAddressLower: z.string(),
+    toAddressLower: z.string().nullable(),
+    gasFeeAtomicText: z.string().regex(/^\d+$/).nullable(),
+    gasFeeStatus: z.enum(["exact", "not_applicable", "unresolved"]),
+    nativeTraceStatus: z.enum([
+      "not_required",
+      "exact",
+      "trace_unavailable",
+      "trace_invalid",
+    ]),
+  })
+  .strict();
+
+const evmL2GasFeeDetailSchema = z
+  .object({
+    candidateId: id,
+    chainId: z.union([z.literal(8453), z.literal(42161)]),
+    feeModel: z.enum(["base_op_stack", "arbitrum_nitro"]),
+    executionFeeAtomicText: z.string().regex(/^\d+$/).nullable(),
+    parentDataFeeAtomicText: z.string().regex(/^\d+$/).nullable(),
+    operatorFeeAtomicText: z.string().regex(/^\d+$/).nullable(),
+    totalFeeAtomicText: z.string().regex(/^\d+$/).nullable(),
+    feeStatus: z.enum(["exact", "unresolved"]),
+    evidenceJson: jsonText,
   })
   .strict();
 
@@ -539,9 +627,18 @@ const v4DataSchema = v3DataSchema
   .extend({
     externalConnections: z.array(externalConnectionSchema),
     externalSourceObjects: z.array(externalSourceObjectSchema),
+    evmWalletConnections: z.array(v4EvmWalletConnectionSchema),
+    evmBalanceObservationDetails: z.array(v4EvmBalanceObservationDetailSchema),
+    evmCandidateDetails: z.array(v4EvmCandidateDetailSchema),
+  })
+  .strict();
+
+const v5DataSchema = v4DataSchema
+  .extend({
     evmWalletConnections: z.array(evmWalletConnectionSchema),
     evmBalanceObservationDetails: z.array(evmBalanceObservationDetailSchema),
     evmCandidateDetails: z.array(evmCandidateDetailSchema),
+    evmL2GasFeeDetails: z.array(evmL2GasFeeDetailSchema),
   })
   .strict();
 
@@ -572,12 +669,21 @@ const v3BackupPayloadSchema = z
   })
   .strict();
 
+const v4BackupPayloadSchema = z
+  .object({
+    format: z.literal(BACKUP_FORMAT),
+    schemaVersion: z.literal(BACKUP_V4_SCHEMA_VERSION),
+    exportedAt: canonicalInstant,
+    data: v4DataSchema,
+  })
+  .strict();
+
 export const backupPayloadSchema = z
   .object({
     format: z.literal(BACKUP_FORMAT),
     schemaVersion: z.literal(BACKUP_SCHEMA_VERSION),
     exportedAt: canonicalInstant,
-    data: v4DataSchema,
+    data: v5DataSchema,
   })
   .strict();
 
@@ -586,6 +692,7 @@ export type BackupData = BackupPayload["data"];
 type LegacyBackupPayload = z.infer<typeof legacyBackupPayloadSchema>;
 type V2BackupPayload = z.infer<typeof v2BackupPayloadSchema>;
 type V3BackupPayload = z.infer<typeof v3BackupPayloadSchema>;
+type V4BackupPayload = z.infer<typeof v4BackupPayloadSchema>;
 
 function fail(code: string, message: string): never {
   throw new BackupValidationError(code, message);
@@ -803,6 +910,11 @@ function validateExternalRelations(data: BackupData): void {
     "EVM transaction candidate identity",
   );
   uniqueBy(
+    data.evmL2GasFeeDetails,
+    (row) => row.candidateId,
+    "EVM L2 gas fee detail",
+  );
+  uniqueBy(
     data.externalAssetMappings,
     (row) => `${row.connectionId}\u0000${row.providerAssetKey}`,
     "external asset mapping",
@@ -877,6 +989,9 @@ function validateExternalRelations(data: BackupData): void {
   const evmCandidateDetails = new Map(
     data.evmCandidateDetails.map((row) => [row.candidateId, row]),
   );
+  const evmL2GasFeeDetails = new Map(
+    data.evmL2GasFeeDetails.map((row) => [row.candidateId, row]),
+  );
   const mappingKey = (connectionId: string, providerAssetKey: string) =>
     `${connectionId}\u0000${providerAssetKey}`;
   const mappings = new Map(
@@ -925,14 +1040,15 @@ function validateExternalRelations(data: BackupData): void {
         if (
           wallet.addressLower !== normalizeEvmAddress(wallet.addressLower) ||
           normalizeEvmAddress(wallet.addressDisplay) !== wallet.addressLower ||
-          connection.sourceKey !== evmWalletSourceKey(wallet.addressLower)
+          connection.sourceKey !==
+            evmWalletSourceKey(wallet.chainId, wallet.addressLower)
         ) {
           throw new Error("identity mismatch");
         }
       } catch {
         fail(
           "BACKUP_EVM_IDENTITY_INVALID",
-          `EVM connection ${connection.id} has inconsistent mainnet identity.`,
+          `EVM connection ${connection.id} has inconsistent chain identity.`,
         );
       }
     }
@@ -955,7 +1071,10 @@ function validateExternalRelations(data: BackupData): void {
     }
     if (connection.provider === "evm_wallet") {
       try {
-        parseEvmAssetKey(mapping.providerAssetKey);
+        const assetIdentity = parseEvmAssetKey(mapping.providerAssetKey);
+        if (assetIdentity.chainId !== evmWallets.get(connection.id)?.chainId) {
+          throw new Error("chain mismatch");
+        }
       } catch {
         fail(
           "BACKUP_EVM_ASSET_KEY_INVALID",
@@ -1017,7 +1136,11 @@ function validateExternalRelations(data: BackupData): void {
       }
       try {
         const asset = parseEvmAssetKey(observation.providerAssetKey);
+        const wallet = evmWallets.get(observation.connectionId);
         if (
+          !wallet ||
+          asset.chainId !== wallet.chainId ||
+          detail.chainId !== wallet.chainId ||
           asset.kind !== detail.assetKind ||
           asset.contractAddressLower !== detail.contractAddressLower ||
           (detail.assetKind === "native" && detail.tokenDecimals !== 18)
@@ -1120,13 +1243,21 @@ function validateExternalRelations(data: BackupData): void {
       }
       try {
         const txHash = normalizeEvmTxHash(evmDetail.txHash);
+        const wallet = evmWallets.get(candidate.connectionId);
         const expectedStableKey =
           evmDetail.candidateKind === "gas"
-            ? evmGasStableKey(txHash)
-            : evmMovementStableKey(txHash);
+            ? evmGasStableKey(evmDetail.chainId, txHash)
+            : evmMovementStableKey(evmDetail.chainId, txHash);
         if (
+          !wallet ||
+          wallet.chainId !== evmDetail.chainId ||
           txHash !== evmDetail.txHash ||
           candidate.stableKey !== expectedStableKey ||
+          (evmDetail.chainId === 1 &&
+            evmDetail.nativeTraceStatus !== "not_required") ||
+          (evmDetail.chainId !== 1 &&
+            evmDetail.candidateKind === "movement" &&
+            evmDetail.nativeTraceStatus !== "exact") ||
           normalizeEvmAddress(evmDetail.fromAddressLower) !==
             evmDetail.fromAddressLower ||
           (evmDetail.toAddressLower !== null &&
@@ -1204,11 +1335,52 @@ function validateExternalRelations(data: BackupData): void {
       !candidate ||
       connections.get(candidate.connectionId)?.provider !== "evm_wallet" ||
       (detail.candidateKind === "gas") !==
-        (detail.classification === "gas_only")
+        (detail.classification === "gas_only") ||
+      (detail.chainId !== 1 && detail.candidateKind === "gas") !==
+        evmL2GasFeeDetails.has(detail.candidateId)
     ) {
       fail(
         "BACKUP_EVM_RELATION",
         `EVM candidate detail ${detail.candidateId} is orphaned or inconsistent.`,
+      );
+    }
+  }
+  for (const fee of data.evmL2GasFeeDetails) {
+    const detail = evmCandidateDetails.get(fee.candidateId);
+    const expectedModel =
+      fee.chainId === 8453 ? "base_op_stack" : "arbitrum_nitro";
+    let componentsAreExact = true;
+    if (fee.feeStatus === "exact") {
+      if (
+        fee.executionFeeAtomicText === null ||
+        fee.parentDataFeeAtomicText === null ||
+        fee.totalFeeAtomicText === null ||
+        (fee.chainId === 8453 && fee.operatorFeeAtomicText === null) ||
+        (fee.chainId === 42161 && fee.operatorFeeAtomicText !== null)
+      ) {
+        componentsAreExact = false;
+      } else {
+        const expectedTotal =
+          BigInt(fee.executionFeeAtomicText) +
+          BigInt(fee.parentDataFeeAtomicText) +
+          (fee.operatorFeeAtomicText === null
+            ? 0n
+            : BigInt(fee.operatorFeeAtomicText));
+        componentsAreExact = expectedTotal === BigInt(fee.totalFeeAtomicText);
+      }
+    } else if (fee.totalFeeAtomicText !== null) {
+      componentsAreExact = false;
+    }
+    if (
+      !detail ||
+      detail.candidateKind !== "gas" ||
+      detail.chainId !== fee.chainId ||
+      fee.feeModel !== expectedModel ||
+      !componentsAreExact
+    ) {
+      fail(
+        "BACKUP_EVM_L2_FEE_INVALID",
+        `EVM L2 gas fee detail ${fee.candidateId} is inconsistent.`,
       );
     }
   }
@@ -1242,7 +1414,10 @@ function validateExternalRelations(data: BackupData): void {
       : undefined;
     if (connection?.provider === "evm_wallet") {
       try {
-        parseEvmAssetKey(leg.providerAssetKey);
+        const assetIdentity = parseEvmAssetKey(leg.providerAssetKey);
+        if (assetIdentity.chainId !== evmWallets.get(connection.id)?.chainId) {
+          throw new Error("chain mismatch");
+        }
       } catch {
         fail(
           "BACKUP_EVM_ASSET_KEY_INVALID",
@@ -1620,10 +1795,10 @@ function upgradeV2Backup(payload: V2BackupPayload): V3BackupPayload {
   };
 }
 
-function upgradeV3Backup(payload: V3BackupPayload): BackupPayload {
+function upgradeV3Backup(payload: V3BackupPayload): V4BackupPayload {
   return {
     ...payload,
-    schemaVersion: BACKUP_SCHEMA_VERSION,
+    schemaVersion: BACKUP_V4_SCHEMA_VERSION,
     data: {
       ...payload.data,
       externalConnections: payload.data.externalConnections.map(
@@ -1635,6 +1810,33 @@ function upgradeV3Backup(payload: V3BackupPayload): BackupPayload {
       evmWalletConnections: [],
       evmBalanceObservationDetails: [],
       evmCandidateDetails: [],
+    },
+  };
+}
+
+function upgradeV4Backup(payload: V4BackupPayload): BackupPayload {
+  return {
+    ...payload,
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    data: {
+      ...payload.data,
+      evmWalletConnections: payload.data.evmWalletConnections.map((wallet) => ({
+        ...wallet,
+        chainId: 1 as const,
+        networkId: "eth-mainnet" as const,
+        dataProvider: "alchemy" as const,
+      })),
+      evmBalanceObservationDetails:
+        payload.data.evmBalanceObservationDetails.map((detail) => ({
+          ...detail,
+          chainId: 1 as const,
+        })),
+      evmCandidateDetails: payload.data.evmCandidateDetails.map((detail) => ({
+        ...detail,
+        chainId: 1 as const,
+        nativeTraceStatus: "not_required" as const,
+      })),
+      evmL2GasFeeDetails: [],
     },
   };
 }
@@ -1658,21 +1860,25 @@ export function parseBackupPayload(value: unknown): BackupPayload {
   if (schemaVersion === BACKUP_LEGACY_SCHEMA_VERSION) {
     const legacy = legacyBackupPayloadSchema.safeParse(value);
     if (!legacy.success) schemaFailure(legacy);
-    normalized = upgradeV3Backup(
-      upgradeV2Backup(upgradeLegacyBackup(legacy.data)),
+    normalized = upgradeV4Backup(
+      upgradeV3Backup(upgradeV2Backup(upgradeLegacyBackup(legacy.data))),
     );
   } else if (schemaVersion === BACKUP_V2_SCHEMA_VERSION) {
     const v2 = v2BackupPayloadSchema.safeParse(value);
     if (!v2.success) schemaFailure(v2);
-    normalized = upgradeV3Backup(upgradeV2Backup(v2.data));
+    normalized = upgradeV4Backup(upgradeV3Backup(upgradeV2Backup(v2.data)));
   } else if (schemaVersion === BACKUP_V3_SCHEMA_VERSION) {
     const v3 = v3BackupPayloadSchema.safeParse(value);
     if (!v3.success) schemaFailure(v3);
-    normalized = upgradeV3Backup(v3.data);
-  } else {
-    const v4 = backupPayloadSchema.safeParse(value);
+    normalized = upgradeV4Backup(upgradeV3Backup(v3.data));
+  } else if (schemaVersion === BACKUP_V4_SCHEMA_VERSION) {
+    const v4 = v4BackupPayloadSchema.safeParse(value);
     if (!v4.success) schemaFailure(v4);
-    normalized = v4.data;
+    normalized = upgradeV4Backup(v4.data);
+  } else {
+    const v5 = backupPayloadSchema.safeParse(value);
+    if (!v5.success) schemaFailure(v5);
+    normalized = v5.data;
   }
   validateRelations(normalized.data);
   return normalized;

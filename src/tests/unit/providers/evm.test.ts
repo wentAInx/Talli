@@ -295,7 +295,7 @@ function provider(
   let timeIndex = 0;
   return new AlchemyReadOnlyClient(
     transport,
-    { apiKey: "alchemy-test-key" },
+    { apiKey: "alchemy-test-key", chainId: 1 },
     {
       id: () => "unused",
       now: () => times[Math.min(timeIndex++, times.length - 1)]!,
@@ -307,6 +307,7 @@ describe("Alchemy read-only provider", () => {
   it("paginates balances/activity, dedupes transfers, and uses raw values", async () => {
     const transport = new ScriptedAlchemyTransport();
     const snapshot = await provider(transport).fetchSnapshot({
+      chainId: 1,
       address: WALLET,
       historyStartAt: "1970-01-01T00:00:50.000Z",
     });
@@ -356,6 +357,7 @@ describe("Alchemy read-only provider", () => {
     const snapshot = await provider(
       new ScriptedAlchemyTransport({ contractDeployment: true }),
     ).fetchSnapshot({
+      chainId: 1,
       address: WALLET,
       historyStartAt: "1970-01-01T00:00:50.000Z",
     });
@@ -380,6 +382,7 @@ describe("Alchemy read-only provider", () => {
       provider(
         new ScriptedAlchemyTransport({ invalidTransferTo: true }),
       ).fetchSnapshot({
+        chainId: 1,
         address: WALLET,
         historyStartAt: "1970-01-01T00:00:50.000Z",
       }),
@@ -391,6 +394,7 @@ describe("Alchemy read-only provider", () => {
       "2026-08-12T12:00:00.000Z",
       "2026-08-12T12:05:00.000Z",
     ]).fetchSnapshot({
+      chainId: 1,
       address: WALLET,
       historyStartAt: "1970-01-01T00:00:50.000Z",
     });
@@ -403,6 +407,7 @@ describe("Alchemy read-only provider", () => {
     const snapshot = await provider(
       new ScriptedAlchemyTransport({ tokenBalanceError: true }),
     ).fetchSnapshot({
+      chainId: 1,
       address: WALLET,
       historyStartAt: "1970-01-01T00:00:50.000Z",
     });
@@ -432,6 +437,7 @@ describe("Alchemy read-only provider", () => {
     const snapshot = await provider(
       new ScriptedAlchemyTransport({ unknownTokenDecimals: true }),
     ).fetchSnapshot({
+      chainId: 1,
       address: WALLET,
       historyStartAt: "1970-01-01T00:00:50.000Z",
     });
@@ -451,6 +457,7 @@ describe("Alchemy read-only provider", () => {
     const transport = new ScriptedAlchemyTransport({ chainId: "0x2" });
     await expect(
       provider(transport).fetchSnapshot({
+        chainId: 1,
         address: WALLET,
         historyStartAt: "1970-01-01T00:00:50.000Z",
       }),
@@ -465,6 +472,7 @@ describe("Alchemy read-only provider", () => {
     let caught: unknown;
     try {
       await provider(transport).fetchSnapshot({
+        chainId: 1,
         address: WALLET,
         historyStartAt: "1970-01-01T00:00:50.000Z",
       });

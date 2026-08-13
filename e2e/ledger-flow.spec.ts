@@ -26,7 +26,7 @@ async function expectRestorePreviewToBeReadOnly(page: Page) {
     ok: true,
     mode: "preview",
     result: {
-      schemaVersion: 4,
+      schemaVersion: 5,
       target: "seed-only",
     },
   });
@@ -324,7 +324,7 @@ test("filters, native-asset reports, settings, and exports form a V1 loop", asyn
     data: { ledgerEntries: { amountAtomic: string }[] };
   };
   expect(backup.format).toBe("multi-asset-ledger-backup");
-  expect(backup.schemaVersion).toBe(4);
+  expect(backup.schemaVersion).toBe(5);
   expect(
     backup.data.ledgerEntries.every(
       (entry) => typeof entry.amountAtomic === "string",

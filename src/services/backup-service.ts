@@ -61,6 +61,7 @@ export interface BackupSummary {
   externalSources: number;
   externalCandidates: number;
   evmCandidateDetails: number;
+  evmL2GasFeeDetails: number;
   externalImportLinks: number;
 }
 
@@ -94,6 +95,7 @@ function summary(data: BackupData): BackupSummary {
     externalSources: data.externalSourceObjects.length,
     externalCandidates: data.externalTransactionCandidates.length,
     evmCandidateDetails: data.evmCandidateDetails.length,
+    evmL2GasFeeDetails: data.evmL2GasFeeDetails.length,
     externalImportLinks: data.externalImportLinks.length,
   };
 }

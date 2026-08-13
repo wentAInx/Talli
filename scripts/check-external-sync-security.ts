@@ -77,6 +77,31 @@ assertAbsent(
 const evmProviderFiles = filesUnder(join(root, "src/providers/evm")).filter(
   (file) => /\.(?:ts|tsx)$/.test(file),
 );
+
+const evmProviderFilesOutsideRegistry = evmProviderFiles.filter(
+  (file) => !file.endsWith("/chain-registry.ts"),
+);
+assertAbsent(
+  evmProviderFilesOutsideRegistry,
+  [
+    /https:\/\/eth-mainnet\.g\.alchemy\.com/,
+    /https:\/\/base-mainnet\.g\.alchemy\.com/,
+    /https:\/\/arb-mainnet\.g\.alchemy\.com/,
+  ],
+  "Alchemy fixed origin outside EVM chain registry",
+);
+
+const applicationSourceFiles = filesUnder(join(root, "src")).filter((file) =>
+  /\.(?:ts|tsx)$/.test(file),
+);
+assertAbsent(
+  applicationSourceFiles,
+  [
+    /process\.env\.[A-Z0-9_]*(?:RPC_URL|RPC_ORIGIN|RPC_HOST)/,
+    /process\.env\[["'][A-Z0-9_]*(?:RPC_URL|RPC_ORIGIN|RPC_HOST)["']\]/,
+  ],
+  "Arbitrary EVM RPC environment configuration",
+);
 assertAbsent(
   evmProviderFiles,
   [

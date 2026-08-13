@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { CandidateReviewForm } from "@/components/sync/mutation-controls";
+import { evmChainIdentity } from "@/domain/evm";
 import { ExternalSyncReadService } from "@/services/external-sync-read-service";
 
 import { withDatabase } from "../../../server-runtime";
@@ -37,6 +38,9 @@ export default async function CandidateDetailPage({
     }
   });
   if (!candidate) notFound();
+  const evmChain = candidate.evmDetail
+    ? evmChainIdentity(candidate.evmDetail.chainId)
+    : null;
   const importable =
     (candidate.status === "pending" || candidate.status === "needs_mapping") &&
     (candidate.allowedEventTypes === undefined ||
@@ -95,7 +99,9 @@ export default async function CandidateDetailPage({
         <section className="content-section evm-candidate-facts">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Ethereum transaction identity</p>
+              <p className="eyebrow">
+                {evmChain?.displayName ?? "EVM"} transaction identity
+              </p>
               <h2>
                 {candidate.evmDetail.candidateKind === "gas"
                   ? "Network fee"
@@ -105,6 +111,12 @@ export default async function CandidateDetailPage({
             <span>{candidate.evmDetail.classification}</span>
           </div>
           <dl className="credential-facts">
+            <div>
+              <dt>Chain</dt>
+              <dd>
+                {evmChain?.displayName} · chainId {candidate.evmDetail.chainId}
+              </dd>
+            </div>
             <div>
               <dt>Tx hash</dt>
               <dd>{candidate.evmDetail.txHash}</dd>
@@ -124,7 +136,62 @@ export default async function CandidateDetailPage({
                 {candidate.evmDetail.toAddressLower ?? "contract creation"}
               </dd>
             </div>
+            <div>
+              <dt>Native trace</dt>
+              <dd>{candidate.evmDetail.nativeTraceStatus}</dd>
+            </div>
           </dl>
+        </section>
+      ) : null}
+
+      {candidate.evmL2GasFee ? (
+        <section className="content-section evm-fee-breakdown">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Exact fee provenance · wei</p>
+              <h2>
+                {candidate.evmL2GasFee.feeStatus === "exact"
+                  ? "Network fee breakdown"
+                  : "Fee incomplete"}
+              </h2>
+            </div>
+            <span>{candidate.evmL2GasFee.feeModel}</span>
+          </div>
+          {candidate.evmL2GasFee.feeStatus === "exact" ? (
+            <dl className="credential-facts evm-fee-facts">
+              <div>
+                <dt>
+                  {candidate.evmL2GasFee.chainId === 42161
+                    ? "Child execution"
+                    : "L2 execution"}
+                </dt>
+                <dd>{candidate.evmL2GasFee.executionFeeAtomicText} wei</dd>
+              </div>
+              <div>
+                <dt>
+                  {candidate.evmL2GasFee.chainId === 42161
+                    ? "Parent calldata"
+                    : "L1 data / security"}
+                </dt>
+                <dd>{candidate.evmL2GasFee.parentDataFeeAtomicText} wei</dd>
+              </div>
+              {candidate.evmL2GasFee.chainId === 8453 ? (
+                <div>
+                  <dt>Operator fee</dt>
+                  <dd>{candidate.evmL2GasFee.operatorFeeAtomicText} wei</dd>
+                </div>
+              ) : null}
+              <div className="evm-fee-total">
+                <dt>Total network fee</dt>
+                <dd>{candidate.evmL2GasFee.totalFeeAtomicText} wei</dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="sync-partial-warning" role="status">
+              至少一个链上 fee component 无法精确取回；此候选不可导入，且不会以
+              execution-only 冒充总费用。
+            </p>
+          )}
         </section>
       ) : null}
 

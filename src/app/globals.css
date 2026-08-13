@@ -1621,11 +1621,40 @@ button:disabled {
   margin-bottom: 7px;
 }
 
+.evm-network-rail {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid #cdd5f8;
+  border-radius: 10px;
+  background: #f8f9ff;
+}
+
+.evm-network-rail span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 11px;
+  color: #354477;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.evm-network-rail span + span {
+  border-left: 1px solid #dfe4fa;
+}
+
+.evm-network-rail code {
+  color: #6573aa;
+  font-size: 9px;
+}
+
 .evm-wallet-form {
-  grid-template-columns: minmax(140px, 0.7fr) minmax(260px, 1.5fr) minmax(
-      150px,
-      0.7fr
-    );
+  grid-template-columns:
+    minmax(190px, 0.9fr) minmax(140px, 0.7fr) minmax(260px, 1.5fr)
+    minmax(150px, 0.7fr);
 }
 
 .evm-wallet-form .action-form-status,
@@ -2218,6 +2247,20 @@ button:disabled {
   gap: 14px;
 }
 
+.evm-fee-breakdown {
+  border-left: 4px solid #627eea;
+}
+
+.evm-fee-facts .evm-fee-total {
+  border-color: #b8c4f7;
+  background: #f4f6ff;
+}
+
+.evm-fee-facts dd {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
 .candidate-review-actions {
   display: flex;
   gap: 9px;
@@ -2297,6 +2340,15 @@ button:disabled {
 }
 
 @media (max-width: 760px) {
+  .evm-network-rail {
+    grid-template-columns: 1fr;
+  }
+
+  .evm-network-rail span + span {
+    border-top: 1px solid #dfe4fa;
+    border-left: 0;
+  }
+
   .sidebar,
   .global-add {
     display: none;

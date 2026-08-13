@@ -23,6 +23,7 @@ import {
   externalTransactionLegs,
   evmBalanceObservationDetails,
   evmCandidateDetails,
+  evmL2GasFeeDetails,
   evmWalletConnectionState,
   evmWalletConnections,
   ledgerEntries,
@@ -140,6 +141,11 @@ export function readBackupData(executor: DatabaseExecutor): BackupData {
       .from(evmCandidateDetails)
       .orderBy(asc(evmCandidateDetails.candidateId))
       .all(),
+    evmL2GasFeeDetails: executor
+      .select()
+      .from(evmL2GasFeeDetails)
+      .orderBy(asc(evmL2GasFeeDetails.candidateId))
+      .all(),
     externalCandidateSourceObjects: executor
       .select()
       .from(externalCandidateSourceObjects)
@@ -181,6 +187,7 @@ export function clearRestoreTarget(executor: DatabaseExecutor): void {
   executor.delete(externalImportLinks).run();
   executor.delete(externalCandidateSourceObjects).run();
   executor.delete(externalTransactionLegs).run();
+  executor.delete(evmL2GasFeeDetails).run();
   executor.delete(evmCandidateDetails).run();
   executor.delete(externalTransactionCandidates).run();
   executor.delete(evmBalanceObservationDetails).run();
@@ -305,6 +312,9 @@ export function insertBackupData(
   }
   if (data.evmCandidateDetails.length > 0) {
     executor.insert(evmCandidateDetails).values(data.evmCandidateDetails).run();
+  }
+  if (data.evmL2GasFeeDetails.length > 0) {
+    executor.insert(evmL2GasFeeDetails).values(data.evmL2GasFeeDetails).run();
   }
   if (data.externalCandidateSourceObjects.length > 0) {
     executor

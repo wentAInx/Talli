@@ -1,7 +1,7 @@
 import {
-  EVM_NATIVE_ASSET_KEY,
   evmDecimalsFromHex,
   evmErc20AssetKey,
+  evmNativeAssetKey,
   evmQuantityHex,
   evmRawAtomicToDecimalText,
   normalizeEvmAddress,
@@ -15,6 +15,13 @@ import {
   type ServiceRuntime,
 } from "../../services/runtime";
 import { EvmProviderError } from "./errors";
+import { evmChainConfig, type EvmChainConfig } from "./chain-registry";
+import {
+  BASE_GAS_PRICE_ORACLE,
+  calculateArbitrumGasFee,
+  calculateBaseGasFee,
+} from "./fees";
+import { parseAlchemyCallTrace } from "./trace";
 import type {
   AlchemyReadMethod,
   EvmBalanceIssue,
@@ -30,13 +37,15 @@ import type {
   EvmTransferRecord,
 } from "./types";
 
-const ALCHEMY_ORIGIN = "https://eth-mainnet.g.alchemy.com";
-const TRANSFER_CATEGORIES = ["external", "internal", "erc20"] as const;
+const ETHEREUM_TRANSFER_CATEGORIES = ["external", "internal", "erc20"] as const;
+const L2_TRANSFER_CATEGORIES = ["external", "erc20"] as const;
 const NATIVE_DECIMALS = 18;
 const REORG_OVERLAP_BLOCKS = 32n;
+const ARBITRUM_NITRO_START_BLOCK = 22_207_815n;
 
 interface AlchemyClientOptions {
   apiKey: string;
+  chainId: 1 | 8453 | 42161;
   timeoutMs?: number;
 }
 
@@ -93,10 +102,13 @@ function addressOrNullField(
   return normalizeEvmAddress(candidate);
 }
 
-function safeTokenIssueAssetKey(value: unknown): string | null {
+function safeTokenIssueAssetKey(
+  chainId: 1 | 8453 | 42161,
+  value: unknown,
+): string | null {
   if (typeof value !== "string") return null;
   try {
-    return evmErc20AssetKey(normalizeEvmAddress(value));
+    return evmErc20AssetKey(chainId, normalizeEvmAddress(value));
   } catch {
     return null;
   }
@@ -119,7 +131,35 @@ function retryAfterSeconds(headers: Headers): number | null {
   return Number(value);
 }
 
-function throwHttpError(status: number, headers: Headers): never {
+function isDebugCapabilityUnavailable(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    (normalized.includes("debug") &&
+      (normalized.includes("unavailable") ||
+        normalized.includes("not available") ||
+        normalized.includes("not enabled") ||
+        normalized.includes("upgrade") ||
+        normalized.includes("plan"))) ||
+    normalized.includes("method not found")
+  );
+}
+
+function throwHttpError(
+  status: number,
+  headers: Headers,
+  method: AlchemyReadMethod,
+  responseText: string,
+): never {
+  if (
+    method === "debug_traceTransaction" &&
+    (status === 402 || status === 403) &&
+    isDebugCapabilityUnavailable(responseText)
+  ) {
+    throw new EvmProviderError(
+      "TRACE_UNAVAILABLE",
+      "Alchemy Debug API is unavailable for reviewed L2 activity.",
+    );
+  }
   if (status === 401 || status === 403) {
     throw new EvmProviderError(
       "AUTH_ERROR",
@@ -139,9 +179,21 @@ function throwHttpError(status: number, headers: Headers): never {
   );
 }
 
-function throwRpcError(value: Record<string, unknown>): never {
+function throwRpcError(
+  value: Record<string, unknown>,
+  method: AlchemyReadMethod,
+): never {
   const message = typeof value.message === "string" ? value.message : "";
   const normalized = message.toLowerCase();
+  if (
+    method === "debug_traceTransaction" &&
+    isDebugCapabilityUnavailable(message)
+  ) {
+    throw new EvmProviderError(
+      "TRACE_UNAVAILABLE",
+      "Alchemy Debug API is unavailable for reviewed L2 activity.",
+    );
+  }
   if (normalized.includes("page") && normalized.includes("expired")) {
     throw new EvmProviderError(
       "PAGINATION_EXPIRED",
@@ -176,6 +228,7 @@ function maxBigInt(left: bigint, right: bigint): bigint {
 
 export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
   private readonly timeoutMs: number;
+  private readonly chain: EvmChainConfig;
   private requestId = 0;
 
   constructor(
@@ -184,6 +237,7 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
     private readonly runtime: ServiceRuntime = defaultServiceRuntime,
   ) {
     this.timeoutMs = options.timeoutMs ?? 10_000;
+    this.chain = evmChainConfig(options.chainId);
     if (!options.apiKey.trim()) {
       throw new EvmProviderError(
         "CONFIG_ERROR",
@@ -203,12 +257,12 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
       params,
     });
     const response = await this.transport.request({
-      url: new URL(`/v2/${this.options.apiKey}`, ALCHEMY_ORIGIN),
+      url: new URL(`/v2/${this.options.apiKey}`, this.chain.alchemyOrigin),
       body,
       timeoutMs: this.timeoutMs,
     });
     if (response.status < 200 || response.status >= 300) {
-      throwHttpError(response.status, response.headers);
+      throwHttpError(response.status, response.headers, method, response.text);
     }
     let parsed: unknown;
     try {
@@ -221,7 +275,7 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
     }
     const envelope = record(parsed, "Alchemy JSON-RPC envelope");
     if ("error" in envelope)
-      throwRpcError(record(envelope.error, "Alchemy error"));
+      throwRpcError(record(envelope.error, "Alchemy error"), method);
     if (!("result" in envelope)) {
       throw new EvmProviderError(
         "INVALID_PAYLOAD",
@@ -231,12 +285,12 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
     return envelope.result;
   }
 
-  private async assertMainnet(): Promise<void> {
+  private async assertChain(): Promise<void> {
     const chainId = await this.rpc("eth_chainId", []);
-    if (chainId !== "0x1") {
+    if (chainId !== this.chain.chainIdHex) {
       throw new EvmProviderError(
         "CHAIN_MISMATCH",
-        "Alchemy endpoint is not Ethereum Mainnet.",
+        `Alchemy endpoint is not ${this.chain.displayName}.`,
       );
     }
   }
@@ -298,7 +352,10 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
       for (const raw of result.tokenBalances) {
         const row = record(raw, "Alchemy token balance");
         if (row.error !== null && row.error !== undefined) {
-          const providerAssetKey = safeTokenIssueAssetKey(row.contractAddress);
+          const providerAssetKey = safeTokenIssueAssetKey(
+            this.chain.chainId,
+            row.contractAddress,
+          );
           issues.push({
             code: "TOKEN_BALANCE_UNAVAILABLE",
             providerAssetKey,
@@ -321,7 +378,10 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
           (await this.tokenMetadata(contractAddressLower));
         metadata.set(contractAddressLower, tokenMetadata);
         balances.push({
-          providerAssetKey: evmErc20AssetKey(contractAddressLower),
+          providerAssetKey: evmErc20AssetKey(
+            this.chain.chainId,
+            contractAddressLower,
+          ),
           assetKind: "erc20",
           contractAddressLower,
           rawAmountAtomicText: rawAtomic.toString(),
@@ -367,14 +427,14 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
       head,
       balances: [
         {
-          providerAssetKey: EVM_NATIVE_ASSET_KEY,
+          providerAssetKey: evmNativeAssetKey(this.chain.chainId),
           assetKind: "native",
           contractAddressLower: null,
           rawAmountAtomicText: nativeAtomic.toString(),
           decimals: NATIVE_DECIMALS,
           amountText: evmRawAtomicToDecimalText(nativeAtomic, NATIVE_DECIMALS),
-          displayCode: "ETH",
-          name: "Ethereum",
+          displayCode: this.chain.nativeSymbol,
+          name: this.chain.displayName,
         },
         ...tokens.balances,
       ],
@@ -438,7 +498,10 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
         fromBlock: evmQuantityHex(input.fromBlock),
         toBlock: evmQuantityHex(input.toBlock),
         [input.direction]: input.addressLower,
-        category: TRANSFER_CATEGORIES,
+        category:
+          this.chain.chainId === 1
+            ? ETHEREUM_TRANSFER_CATEGORIES
+            : L2_TRANSFER_CATEGORIES,
         withMetadata: true,
         excludeZeroValue: false,
         order: "asc",
@@ -470,11 +533,11 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
   ): Promise<EvmTransferRecord> {
     const row = record(input, "Alchemy transfer");
     const category = stringField(row, "category", "Alchemy transfer");
-    if (
-      !TRANSFER_CATEGORIES.includes(
-        category as (typeof TRANSFER_CATEGORIES)[number],
-      )
-    ) {
+    const allowedCategories: readonly string[] =
+      this.chain.chainId === 1
+        ? ETHEREUM_TRANSFER_CATEGORIES
+        : L2_TRANSFER_CATEGORIES;
+    if (!allowedCategories.includes(category)) {
       throw new EvmProviderError(
         "INVALID_PAYLOAD",
         "Alchemy transfer category is unsupported.",
@@ -520,8 +583,8 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
       ),
       toAddressLower: addressOrNullField(row, "to", "Alchemy transfer"),
       providerAssetKey: contractAddressLower
-        ? evmErc20AssetKey(contractAddressLower)
-        : EVM_NATIVE_ASSET_KEY,
+        ? evmErc20AssetKey(this.chain.chainId, contractAddressLower)
+        : evmNativeAssetKey(this.chain.chainId),
       contractAddressLower,
       rawAmountAtomicText: rawAtomic.toString(),
       decimals: resolvedDecimals,
@@ -543,7 +606,51 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
     };
   }
 
-  private async transaction(txHash: string): Promise<EvmEnrichedTransaction> {
+  private async traceTransaction(txHash: string) {
+    return parseAlchemyCallTrace(
+      await this.rpc("debug_traceTransaction", [
+        txHash,
+        {
+          tracer: "callTracer",
+          tracerConfig: { onlyTopCall: false },
+        },
+      ]),
+    );
+  }
+
+  private async rawTransaction(txHash: string): Promise<string | null> {
+    const result = await this.rpc("eth_getRawTransactionByHash", [txHash]);
+    if (result === null) return null;
+    if (typeof result !== "string") {
+      throw new EvmProviderError(
+        "INVALID_PAYLOAD",
+        "Alchemy raw transaction response is invalid.",
+      );
+    }
+    return result;
+  }
+
+  private async historicalGasPriceOracleCall(input: {
+    data: string;
+    blockNumberText: string;
+  }): Promise<string> {
+    const result = await this.rpc("eth_call", [
+      { to: BASE_GAS_PRICE_ORACLE, data: input.data },
+      evmQuantityHex(BigInt(input.blockNumberText)),
+    ]);
+    if (typeof result !== "string") {
+      throw new EvmProviderError(
+        "INVALID_PAYLOAD",
+        "Alchemy GasPriceOracle response is invalid.",
+      );
+    }
+    return result;
+  }
+
+  private async transaction(
+    txHash: string,
+    walletAddressLower: string,
+  ): Promise<EvmEnrichedTransaction> {
     const [rawTransaction, rawReceipt] = await Promise.all([
       this.rpc("eth_getTransactionByHash", [txHash]),
       this.rpc("eth_getTransactionReceipt", [txHash]),
@@ -580,6 +687,7 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
       effectiveGasPriceHex: nullableStringField(receipt, "effectiveGasPrice"),
       blobGasUsedHex: nullableStringField(receipt, "blobGasUsed"),
       blobGasPriceHex: nullableStringField(receipt, "blobGasPrice"),
+      gasUsedForL1Hex: nullableStringField(receipt, "gasUsedForL1"),
       blockNumberText: nullableStringField(receipt, "blockNumber")
         ? parseEvmHexQuantity(
             nullableStringField(receipt, "blockNumber")!,
@@ -596,12 +704,64 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
         "Alchemy transaction enrichment hash is inconsistent.",
       );
     }
-    return { transaction: parsedTransaction, receipt: parsedReceipt };
+    if (this.chain.chainId === 1) {
+      return {
+        transaction: parsedTransaction,
+        receipt: parsedReceipt,
+        nativeTrace: null,
+        l2GasFee: null,
+      };
+    }
+    const nativeTrace = await this.traceTransaction(txHash);
+    if (parsedTransaction.fromAddressLower !== walletAddressLower) {
+      return {
+        transaction: parsedTransaction,
+        receipt: parsedReceipt,
+        nativeTrace,
+        l2GasFee: null,
+      };
+    }
+    if (this.chain.chainId === 42161) {
+      return {
+        transaction: parsedTransaction,
+        receipt: parsedReceipt,
+        nativeTrace,
+        l2GasFee: calculateArbitrumGasFee({
+          transaction: parsedTransaction,
+          receipt: parsedReceipt,
+        }),
+      };
+    }
+    const blockNumber =
+      parsedReceipt.blockNumberText ?? parsedTransaction.blockNumberText;
+    const transactionBlock = blockNumber
+      ? await this.block(evmQuantityHex(BigInt(blockNumber)))
+      : null;
+    const l2GasFee = await calculateBaseGasFee({
+      transaction: parsedTransaction,
+      receipt: parsedReceipt,
+      blockTimestampSeconds: transactionBlock?.timestampSeconds ?? 0n,
+      readRawTransaction: (hash) => this.rawTransaction(hash),
+      historicalGasPriceOracleCall: (call) =>
+        this.historicalGasPriceOracleCall(call),
+    });
+    return {
+      transaction: parsedTransaction,
+      receipt: parsedReceipt,
+      nativeTrace,
+      l2GasFee,
+    };
   }
 
   async fetchSnapshot(input: EvmSyncInput): Promise<EvmSyncSnapshot> {
+    if (input.chainId !== this.chain.chainId) {
+      throw new EvmProviderError(
+        "CONFIG_ERROR",
+        "EVM provider chain does not match the requested wallet chain.",
+      );
+    }
     const addressLower = normalizeEvmAddress(input.address);
-    await this.assertMainnet();
+    await this.assertChain();
     const metadata = new Map<string, EvmTokenMetadata>();
     const current = await this.currentBalances(addressLower, metadata);
     const balanceObservedAt = runtimeNow(this.runtime);
@@ -610,32 +770,39 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
       input.historyStartAt,
       finalized.number,
     );
+    const activityStart =
+      this.chain.chainId === 42161
+        ? maxBigInt(initialStart, ARBITRUM_NITRO_START_BLOCK)
+        : initialStart;
     const previousFinalized = input.lastFinalizedBlockText
       ? BigInt(input.lastFinalizedBlockText)
       : null;
     const overlapStart =
       previousFinalized === null
-        ? initialStart
+        ? activityStart
         : maxBigInt(
-            initialStart,
+            activityStart,
             previousFinalized > REORG_OVERLAP_BLOCKS
               ? previousFinalized - REORG_OVERLAP_BLOCKS
               : 0n,
           );
-    const rawTransfers = [
-      ...(await this.transferPages({
-        direction: "fromAddress",
-        addressLower,
-        fromBlock: overlapStart,
-        toBlock: finalized.number,
-      })),
-      ...(await this.transferPages({
-        direction: "toAddress",
-        addressLower,
-        fromBlock: overlapStart,
-        toBlock: finalized.number,
-      })),
-    ];
+    const rawTransfers =
+      overlapStart > finalized.number
+        ? []
+        : [
+            ...(await this.transferPages({
+              direction: "fromAddress",
+              addressLower,
+              fromBlock: overlapStart,
+              toBlock: finalized.number,
+            })),
+            ...(await this.transferPages({
+              direction: "toAddress",
+              addressLower,
+              fromBlock: overlapStart,
+              toBlock: finalized.number,
+            })),
+          ];
     const deduplicated = new Map<string, unknown>();
     for (const rawTransfer of rawTransfers) {
       const row = record(rawTransfer, "Alchemy transfer");
@@ -649,10 +816,66 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
       transfers.push(await this.parseTransfer(rawTransfer, metadata));
     }
     const txHashes = [...new Set(transfers.map((transfer) => transfer.txHash))];
-    const transactions = await Promise.all(
-      txHashes.map((txHash) => this.transaction(txHash)),
-    );
+    const transactions: EvmEnrichedTransaction[] = [];
+    try {
+      for (const txHash of txHashes) {
+        transactions.push(await this.transaction(txHash, addressLower));
+      }
+    } catch (error) {
+      if (
+        this.chain.requiresDebugForMovement &&
+        error instanceof EvmProviderError &&
+        error.code === "TRACE_UNAVAILABLE"
+      ) {
+        return {
+          chainId: this.chain.chainId,
+          balanceObservedAt,
+          syncCompletedAt: runtimeNow(this.runtime),
+          addressLower,
+          syncHeadBlockText: current.head.toString(),
+          finalizedBlockText: finalized.number.toString(),
+          balanceComplete: current.issues.length === 0,
+          balanceIssues: current.issues,
+          balances: current.balances,
+          transfers: [],
+          transactions: [],
+          activityCapability: {
+            historyCoverage: this.chain.historyCoverage,
+            traceCapability: "trace_unavailable",
+            activityStatus: "trace_unavailable",
+            activityStartBlockText: activityStart.toString(),
+          },
+        };
+      }
+      throw error;
+    }
+    if (
+      this.chain.requiresDebugForMovement &&
+      transactions.length === 0 &&
+      input.previousTraceCapability === "trace_unavailable"
+    ) {
+      return {
+        chainId: this.chain.chainId,
+        balanceObservedAt,
+        syncCompletedAt: runtimeNow(this.runtime),
+        addressLower,
+        syncHeadBlockText: current.head.toString(),
+        finalizedBlockText: finalized.number.toString(),
+        balanceComplete: current.issues.length === 0,
+        balanceIssues: current.issues,
+        balances: current.balances,
+        transfers: [],
+        transactions: [],
+        activityCapability: {
+          historyCoverage: this.chain.historyCoverage,
+          traceCapability: "trace_unavailable",
+          activityStatus: "trace_unavailable",
+          activityStartBlockText: activityStart.toString(),
+        },
+      };
+    }
     return {
+      chainId: this.chain.chainId,
       balanceObservedAt,
       syncCompletedAt: runtimeNow(this.runtime),
       addressLower,
@@ -663,6 +886,15 @@ export class AlchemyReadOnlyClient implements EvmReadOnlyProvider {
       balances: current.balances,
       transfers,
       transactions,
+      activityCapability: {
+        historyCoverage: this.chain.historyCoverage,
+        traceCapability:
+          this.chain.requiresDebugForMovement && transactions.length > 0
+            ? "trace_available"
+            : (input.previousTraceCapability ?? "unknown"),
+        activityStatus: "complete",
+        activityStartBlockText: activityStart.toString(),
+      },
     };
   }
 }

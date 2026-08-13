@@ -1,14 +1,91 @@
 import { assertDomain } from "./errors";
 
+export const EVM_ALCHEMY_CREDENTIAL_REF = "env:alchemy.primary" as const;
+
+export type EvmChainId = 1 | 8453 | 42161;
+export type EvmNetworkId = "eth-mainnet" | "base-mainnet" | "arb-mainnet";
+export type EvmFeeModel = "ethereum" | "base_op_stack" | "arbitrum_nitro";
+export type EvmHistoryCoverage = "complete" | "discovery_limited";
+export type EvmTraceCapability =
+  "unknown" | "trace_available" | "trace_unavailable";
+
+export interface EvmChainIdentity {
+  chainId: EvmChainId;
+  chainIdHex: "0x1" | "0x2105" | "0xa4b1";
+  networkId: EvmNetworkId;
+  displayName: "Ethereum Mainnet" | "Base" | "Arbitrum One";
+  nativeSymbol: "ETH";
+  nativeDecimals: 18;
+  feeModel: EvmFeeModel;
+  historyCoverage: EvmHistoryCoverage;
+  requiresDebugForMovement: boolean;
+}
+
+const EVM_CHAIN_IDENTITIES: Record<EvmChainId, EvmChainIdentity> = {
+  1: {
+    chainId: 1,
+    chainIdHex: "0x1",
+    networkId: "eth-mainnet",
+    displayName: "Ethereum Mainnet",
+    nativeSymbol: "ETH",
+    nativeDecimals: 18,
+    feeModel: "ethereum",
+    historyCoverage: "complete",
+    requiresDebugForMovement: false,
+  },
+  8453: {
+    chainId: 8453,
+    chainIdHex: "0x2105",
+    networkId: "base-mainnet",
+    displayName: "Base",
+    nativeSymbol: "ETH",
+    nativeDecimals: 18,
+    feeModel: "base_op_stack",
+    historyCoverage: "discovery_limited",
+    requiresDebugForMovement: true,
+  },
+  42161: {
+    chainId: 42161,
+    chainIdHex: "0xa4b1",
+    networkId: "arb-mainnet",
+    displayName: "Arbitrum One",
+    nativeSymbol: "ETH",
+    nativeDecimals: 18,
+    feeModel: "arbitrum_nitro",
+    historyCoverage: "discovery_limited",
+    requiresDebugForMovement: true,
+  },
+};
+
 export const EVM_MAINNET_CHAIN_ID = 1 as const;
 export const EVM_MAINNET_NETWORK_ID = "eth-mainnet" as const;
-export const EVM_ALCHEMY_CREDENTIAL_REF = "env:alchemy.primary" as const;
-export const EVM_NATIVE_ASSET_KEY = "eip155:1/native" as const;
+
+export function isEvmChainId(value: number): value is EvmChainId {
+  return value === 1 || value === 8453 || value === 42161;
+}
+
+export function evmChainIdentity(chainId: EvmChainId): EvmChainIdentity {
+  return EVM_CHAIN_IDENTITIES[chainId];
+}
+
+export function assertEvmChainNetwork(
+  chainId: EvmChainId,
+  networkId: string,
+): EvmNetworkId {
+  const chain = evmChainIdentity(chainId);
+  assertDomain(
+    networkId === chain.networkId,
+    "INVALID_EVM_CHAIN_NETWORK",
+    "EVM chain and network identity are inconsistent.",
+  );
+  return chain.networkId;
+}
 
 const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 const EVM_TX_HASH_PATTERN = /^0x[0-9a-fA-F]{64}$/;
 const HEX_QUANTITY_PATTERN = /^0x[0-9a-fA-F]+$/;
-const ERC20_ASSET_KEY_PATTERN = /^eip155:1\/erc20:(0x[0-9a-f]{40})$/;
+const EVM_ASSET_KEY_PATTERN =
+  /^eip155:(1|8453|42161)\/(native|erc20:(0x[0-9a-f]{40}))$/;
 
 export type EvmAssetKind = "native" | "erc20";
 export type EvmTransactionStatus = "success" | "failed" | "unknown";
@@ -29,8 +106,11 @@ export function normalizeEvmAddress(input: string): string {
   return address.toLowerCase();
 }
 
-export function evmWalletSourceKey(address: string): string {
-  return `eip155:1:${normalizeEvmAddress(address)}`;
+export function evmWalletSourceKey(
+  chainId: EvmChainId,
+  address: string,
+): string {
+  return `eip155:${chainId}:${normalizeEvmAddress(address)}`;
 }
 
 export function normalizeEvmTxHash(input: string): string {
@@ -53,24 +133,37 @@ export function normalizeEvmUniqueId(input: string): string {
   return uniqueId;
 }
 
-export function evmErc20AssetKey(contractAddress: string): string {
-  return `eip155:1/erc20:${normalizeEvmAddress(contractAddress)}`;
+export function evmNativeAssetKey(chainId: EvmChainId): string {
+  return `eip155:${chainId}/native`;
+}
+
+export function evmErc20AssetKey(
+  chainId: EvmChainId,
+  contractAddress: string,
+): string {
+  return `eip155:${chainId}/erc20:${normalizeEvmAddress(contractAddress)}`;
 }
 
 export function parseEvmAssetKey(input: string): {
+  chainId: EvmChainId;
   kind: EvmAssetKind;
   contractAddressLower: string | null;
 } {
-  if (input === EVM_NATIVE_ASSET_KEY) {
-    return { kind: "native", contractAddressLower: null };
-  }
-  const match = ERC20_ASSET_KEY_PATTERN.exec(input);
+  const match = EVM_ASSET_KEY_PATTERN.exec(input);
   assertDomain(
     match,
     "INVALID_EVM_ASSET_KEY",
-    "EVM asset identity must use the Ethereum native or ERC-20 namespace.",
+    "EVM asset identity must include a supported chain and native or ERC-20 namespace.",
   );
-  return { kind: "erc20", contractAddressLower: match[1]! };
+  const chainId = Number(match[1]);
+  assertDomain(
+    isEvmChainId(chainId),
+    "INVALID_EVM_CHAIN",
+    "EVM chain is unsupported.",
+  );
+  return match[2] === "native"
+    ? { chainId, kind: "native", contractAddressLower: null }
+    : { chainId, kind: "erc20", contractAddressLower: match[3]! };
 }
 
 export function parseEvmHexQuantity(input: string, label: string): bigint {
@@ -123,12 +216,15 @@ export function evmRawAtomicToDecimalText(
   return fraction ? `${whole}.${fraction}` : whole;
 }
 
-export function evmMovementStableKey(txHash: string): string {
-  return `evm:1:movement:${normalizeEvmTxHash(txHash)}`;
+export function evmMovementStableKey(
+  chainId: EvmChainId,
+  txHash: string,
+): string {
+  return `evm:${chainId}:movement:${normalizeEvmTxHash(txHash)}`;
 }
 
-export function evmGasStableKey(txHash: string): string {
-  return `evm:1:gas:${normalizeEvmTxHash(txHash)}`;
+export function evmGasStableKey(chainId: EvmChainId, txHash: string): string {
+  return `evm:${chainId}:gas:${normalizeEvmTxHash(txHash)}`;
 }
 
 export function evmTransactionStatus(

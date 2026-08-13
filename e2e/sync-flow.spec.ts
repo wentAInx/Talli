@@ -216,11 +216,18 @@ test("Ethereum Mainnet wallet keeps on-chain balance, gas, and movement outside 
   const address = "0x1111111111111111111111111111111111111111";
   if (testInfo.project.name === "sync-mobile") {
     await page.goto("/sync?queue=imported");
+    const ethereumWorkbench = page.locator(".evm-workbench").filter({
+      has: page.getByRole("heading", { name: "V4 Main wallet" }),
+    });
     await expect(
-      page.getByRole("heading", { name: "V4 Main wallet" }),
+      ethereumWorkbench.getByRole("heading", { name: "V4 Main wallet" }),
     ).toBeVisible();
-    await expect(page.getByText("◇ 0x111111…111111")).toBeVisible();
-    await expect(page.getByText("Network fee", { exact: true })).toBeVisible();
+    await expect(
+      ethereumWorkbench.getByText("◇ 0x111111…111111"),
+    ).toBeVisible();
+    await expect(
+      ethereumWorkbench.getByText("Network fee", { exact: true }),
+    ).toBeVisible();
     const noHorizontalOverflow = await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
     );
@@ -246,9 +253,9 @@ test("Ethereum Mainnet wallet keeps on-chain balance, gas, and movement outside 
 
   await page.goto("/sync");
   await page.getByLabel("钱包名称").fill("V4 Main wallet");
-  await page.getByLabel("Public Ethereum address").fill(address);
+  await page.getByLabel("Public EVM address").fill(address);
   await page.getByLabel(/History start date/).fill("2026-01-01");
-  await page.getByRole("button", { name: "添加 Ethereum 只读钱包" }).click();
+  await page.getByRole("button", { name: "添加 EVM 只读钱包" }).click();
   await expect(
     page.getByRole("heading", { name: "V4 Main wallet" }),
   ).toBeVisible();
@@ -344,7 +351,7 @@ test("Ethereum Mainnet wallet keeps on-chain balance, gas, and movement outside 
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "导入到 Talli" }).click();
   await expect(page.getByRole("heading", { name: "编辑兑换" })).toBeVisible();
-  await page.getByRole("link", { name: "查看 Ethereum 候选" }).click();
+  await page.getByRole("link", { name: "查看 EVM 候选" }).click();
   await expect(
     page.getByRole("heading", { name: "已导入 Talli" }),
   ).toBeVisible();
@@ -367,7 +374,7 @@ test("Ethereum Mainnet wallet keeps on-chain balance, gas, and movement outside 
   await expect(
     page.getByRole("heading", { name: "编辑Ethereum Network" }),
   ).toBeVisible();
-  await page.getByRole("link", { name: "查看 Ethereum 候选" }).click();
+  await page.getByRole("link", { name: "查看 EVM 候选" }).click();
   await expect(
     page.getByRole("heading", { name: "已导入 Talli" }),
   ).toBeVisible();
@@ -378,7 +385,7 @@ test("Ethereum Mainnet wallet keeps on-chain balance, gas, and movement outside 
     schemaVersion: number;
     data: { ledgerEvents: unknown[]; externalImportLinks: unknown[] };
   };
-  expect(beforeResync.schemaVersion).toBe(4);
+  expect(beforeResync.schemaVersion).toBe(5);
   await page.goto("/sync?queue=imported");
   await page
     .locator(".evm-workbench .sync-connection-card")
@@ -397,5 +404,269 @@ test("Ethereum Mainnet wallet keeps on-chain balance, gas, and movement outside 
   );
   expect(afterResync.data.externalImportLinks).toHaveLength(
     beforeResync.data.externalImportLinks.length,
+  );
+});
+
+test("Base and Arbitrum expose discovery limits, exact traces, and exact fee components", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(60_000);
+  const sharedAddress = "0x5555555555555555555555555555555555555555";
+  const networks = [
+    {
+      chainId: "8453",
+      name: "V4.1 Base wallet",
+      networkName: "Base",
+      coverage: "discovery limited",
+      nativeKey: "eip155:8453/native",
+      usdcKey: "eip155:8453/erc20:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      ethAccount: "V4.1 Base ETH",
+      usdcAccount: "V4.1 Base USDC",
+    },
+    {
+      chainId: "42161",
+      name: "V4.1 Arbitrum wallet",
+      networkName: "Arbitrum One",
+      coverage: "discovery limited · activity ≥ block 22,207,815",
+      nativeKey: "eip155:42161/native",
+      usdcKey: "eip155:42161/erc20:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      ethAccount: "V4.1 Arbitrum ETH",
+      usdcAccount: "V4.1 Arbitrum USDC",
+    },
+  ] as const;
+
+  if (testInfo.project.name === "sync-mobile") {
+    await page.goto("/sync");
+    for (const network of networks) {
+      const workbench = page.locator(".evm-workbench").filter({
+        has: page.getByRole("heading", { name: network.name, exact: true }),
+      });
+      await expect(
+        workbench.getByText(network.coverage, { exact: true }),
+      ).toBeVisible();
+      await expect(
+        workbench.getByText("✓ exact activity trace", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        workbench
+          .locator(".sync-mapping-table")
+          .getByText(network.nativeKey, { exact: true }),
+      ).toBeVisible();
+    }
+    const unavailableWorkbench = page.locator(".evm-workbench").filter({
+      has: page.getByRole("heading", {
+        name: "V4.1 Base balance-only",
+        exact: true,
+      }),
+    });
+    await expect(
+      unavailableWorkbench.getByText("! balance-only · trace unavailable", {
+        exact: true,
+      }),
+    ).toBeVisible();
+
+    for (const network of networks) {
+      await page.goto("/sync?queue=imported");
+      const workbench = page.locator(".evm-workbench").filter({
+        has: page.getByRole("heading", { name: network.name, exact: true }),
+      });
+      await workbench.getByRole("link", { name: /Network fee/ }).click();
+      await expect(
+        page.getByRole("heading", {
+          name: "Network fee breakdown",
+          exact: true,
+        }),
+      ).toBeVisible();
+    }
+    const noHorizontalOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    );
+    expect(noHorizontalOverflow).toBe(true);
+    return;
+  }
+
+  for (const network of networks) {
+    await createAccount(page, {
+      name: network.ethAccount,
+      assetId: "seed-asset-eth",
+      initialBalance: "0",
+    });
+    await createAccount(page, {
+      name: network.usdcAccount,
+      assetId: "seed-asset-usdc",
+      initialBalance: "0",
+    });
+  }
+
+  for (const network of networks) {
+    await page.goto("/sync");
+    await page.locator('select[name="chainId"]').selectOption(network.chainId);
+    await page.getByLabel("钱包名称").fill(network.name);
+    await page.getByLabel("Public EVM address").fill(sharedAddress);
+    await page.getByLabel(/History start date/).fill("2026-01-01");
+    await page.getByRole("button", { name: "添加 EVM 只读钱包" }).click();
+
+    const beforeSync = (await (
+      await page.request.get("/api/data/backup")
+    ).json()) as {
+      data: { ledgerEvents: unknown[]; externalImportLinks: unknown[] };
+    };
+    const workbench = page.locator(".evm-workbench").filter({
+      has: page.getByRole("heading", { name: network.name, exact: true }),
+    });
+    await workbench.getByRole("button", { name: "立即同步" }).click();
+    await expect(
+      workbench.getByText("只读同步正常", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      workbench.getByText(network.coverage, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      workbench.getByText("✓ exact activity trace", { exact: true }),
+    ).toBeVisible();
+    const afterSync = (await (
+      await page.request.get("/api/data/backup")
+    ).json()) as {
+      data: { ledgerEvents: unknown[]; externalImportLinks: unknown[] };
+    };
+    expect(afterSync.data.ledgerEvents).toHaveLength(
+      beforeSync.data.ledgerEvents.length,
+    );
+    expect(afterSync.data.externalImportLinks).toHaveLength(
+      beforeSync.data.externalImportLinks.length,
+    );
+
+    await page.goto("/sync?queue=needs_mapping");
+    await workbench.getByRole("link", { name: /Network fee/ }).click();
+    await expect(
+      page.getByRole("heading", { name: "Network fee breakdown", exact: true }),
+    ).toBeVisible();
+    if (network.chainId === "8453") {
+      await expect(
+        page.getByText("L2 execution", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("L1 data / security", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Operator fee", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("25000000000000 wei", { exact: true }),
+      ).toBeVisible();
+    } else {
+      await expect(
+        page.getByText("Child execution", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Parent calldata", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("21000000000000 wei", { exact: true }),
+      ).toBeVisible();
+    }
+
+    await page.goto("/sync?queue=needs_mapping");
+    await mapAsset(page, {
+      raw: network.nativeKey,
+      assetId: "seed-asset-eth",
+      accountLabel: `${network.ethAccount} · ETH`,
+    });
+    await mapAsset(page, {
+      raw: network.usdcKey,
+      assetId: "seed-asset-usdc",
+      accountLabel: `${network.usdcAccount} · USDC`,
+    });
+    await workbench.getByRole("button", { name: "立即同步" }).click();
+
+    await page.goto("/sync");
+    await workbench.getByRole("link", { name: /Movement/ }).click();
+    await expect(page.getByLabel("导入为")).toHaveValue("exchange");
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "导入到 Talli" }).click();
+    await expect(page.getByRole("heading", { name: "编辑兑换" })).toBeVisible();
+    await page.getByRole("link", { name: "查看 EVM 候选" }).click();
+    await expect(
+      page.getByRole("heading", { name: "已导入 Talli" }),
+    ).toBeVisible();
+
+    await page.goto("/sync");
+    await workbench.getByRole("link", { name: /Network fee/ }).click();
+    await expect(page.getByLabel("导入为")).toHaveValue("expense");
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "导入到 Talli" }).click();
+    await expect(
+      page.getByRole("heading", {
+        name: `编辑${network.networkName} Network`,
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.getByRole("link", { name: "查看 EVM 候选" }).click();
+    await expect(
+      page.getByRole("heading", { name: "已导入 Talli" }),
+    ).toBeVisible();
+
+    const afterImport = (await (
+      await page.request.get("/api/data/backup")
+    ).json()) as {
+      schemaVersion: number;
+      data: { ledgerEvents: unknown[]; externalImportLinks: unknown[] };
+    };
+    expect(afterImport.schemaVersion).toBe(5);
+    expect(afterImport.data.ledgerEvents).toHaveLength(
+      beforeSync.data.ledgerEvents.length + 2,
+    );
+    expect(afterImport.data.externalImportLinks).toHaveLength(
+      beforeSync.data.externalImportLinks.length + 2,
+    );
+
+    await page.goto("/sync?queue=imported");
+    await workbench.getByRole("button", { name: "立即同步" }).click();
+    const afterResync = (await (
+      await page.request.get("/api/data/backup")
+    ).json()) as {
+      data: { ledgerEvents: unknown[]; externalImportLinks: unknown[] };
+    };
+    expect(afterResync.data.ledgerEvents).toHaveLength(
+      afterImport.data.ledgerEvents.length,
+    );
+    expect(afterResync.data.externalImportLinks).toHaveLength(
+      afterImport.data.externalImportLinks.length,
+    );
+  }
+
+  await page.goto("/sync");
+  await page.locator('select[name="chainId"]').selectOption("8453");
+  await page.getByLabel("钱包名称").fill("V4.1 Base balance-only");
+  await page
+    .getByLabel("Public EVM address")
+    .fill("0x9999999999999999999999999999999999999999");
+  await page.getByLabel(/History start date/).fill("2026-01-01");
+  await page.getByRole("button", { name: "添加 EVM 只读钱包" }).click();
+  const unavailableWorkbench = page.locator(".evm-workbench").filter({
+    has: page.getByRole("heading", {
+      name: "V4.1 Base balance-only",
+      exact: true,
+    }),
+  });
+  const beforeUnavailableSync = (await (
+    await page.request.get("/api/data/backup")
+  ).json()) as { data: { ledgerEvents: unknown[] } };
+  await unavailableWorkbench.getByRole("button", { name: "立即同步" }).click();
+  await expect(
+    unavailableWorkbench.getByText("! balance-only · trace unavailable", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(unavailableWorkbench).toContainText(
+    "本次未保存 activity，也未推进 cursor",
+  );
+  await expect(unavailableWorkbench).toContainText("等待同步");
+  await expect(unavailableWorkbench).toContainText("0 个候选");
+  const afterUnavailableSync = (await (
+    await page.request.get("/api/data/backup")
+  ).json()) as { data: { ledgerEvents: unknown[] } };
+  expect(afterUnavailableSync.data.ledgerEvents).toHaveLength(
+    beforeUnavailableSync.data.ledgerEvents.length,
   );
 });

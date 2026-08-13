@@ -6,7 +6,8 @@ export type EvmProviderErrorCode =
   | "UPSTREAM_ERROR"
   | "INVALID_PAYLOAD"
   | "NETWORK_ERROR"
-  | "PAGINATION_EXPIRED";
+  | "PAGINATION_EXPIRED"
+  | "TRACE_UNAVAILABLE";
 
 export class EvmProviderError extends Error {
   constructor(
@@ -33,7 +34,7 @@ export function safeEvmFailure(error: unknown): {
   }
   return {
     code: "UPSTREAM_ERROR",
-    message: "Ethereum read-only sync failed.",
+    message: "EVM read-only sync failed.",
     retryAfterSeconds: null,
   };
 }

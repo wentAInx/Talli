@@ -138,6 +138,7 @@ describe("V3 to V4 forward migration", () => {
     ).toEqual([
       { name: "evm_balance_observation_details" },
       { name: "evm_candidate_details" },
+      { name: "evm_l2_gas_fee_details" },
       { name: "evm_wallet_connection_state" },
       { name: "evm_wallet_connections" },
     ]);

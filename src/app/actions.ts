@@ -81,7 +81,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   EXTERNAL_ASSET_REQUIRED: "映射时必须选择一个 Talli 资产。",
   EXTERNAL_ASSET_MAPPING_NOT_FOUND: "请先同步外部资产再设置映射。",
   EXTERNAL_CONNECTION_NOT_FOUND: "没有找到外部连接。",
-  EVM_WALLET_DUPLICATE: "这个 Ethereum Mainnet 公共地址已经存在。",
+  EVM_WALLET_DUPLICATE: "这个网络下的公共地址已经存在。",
   EVM_WALLET_NAME_REQUIRED: "钱包名称不能为空。",
   SNAPSHOT_TIME_CONFLICT: "该账户在同一时刻已经存在余额锚点。",
   TAG_ARCHIVED: "选择的标签已归档。",
@@ -781,11 +781,21 @@ export async function createEvmWalletAction(
       .regex(/^\d{4}-\d{2}-\d{2}$/, "历史起点日期无效。")
       .parse(formData.get("historyStartDate"));
     const historyStartAt = `${historyStartDate}T00:00:00.000Z`;
+    const chainId = z
+      .enum(["1", "8453", "42161"], { error: "请选择支持的 EVM 网络。" })
+      .transform((value) => Number(value) as 1 | 8453 | 42161)
+      .parse(formData.get("chainId"));
     await withDatabase((context) => {
       const bookId = new ReferenceDataService(context).getDefaultBookId();
       return new EvmWalletService(context, () => {
         throw new Error("Provider is not used while creating a wallet.");
-      }).createWallet({ bookId, name, publicAddress, historyStartAt });
+      }).createWallet({
+        bookId,
+        name,
+        chainId,
+        publicAddress,
+        historyStartAt,
+      });
     });
   } catch (error) {
     return actionError(error);

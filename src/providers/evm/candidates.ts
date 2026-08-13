@@ -2,11 +2,13 @@ import { createHash } from "node:crypto";
 
 import {
   calculateEthereumGasFee,
-  EVM_NATIVE_ASSET_KEY,
+  evmChainIdentity,
   evmGasStableKey,
   evmMovementStableKey,
+  evmNativeAssetKey,
   evmRawAtomicToDecimalText,
   evmTransactionStatus,
+  type EvmChainId,
 } from "../../domain/evm";
 import {
   canonicalExternalJson,
@@ -14,7 +16,11 @@ import {
   type ExternalCandidateLegDraft,
   type ExternalCandidateStatus,
 } from "../../domain/external-sync";
-import type { EvmEnrichedTransaction, EvmTransferRecord } from "./types";
+import type {
+  EvmEnrichedTransaction,
+  EvmL2GasFeeBreakdown,
+  EvmTransferRecord,
+} from "./types";
 
 export interface EvmSourceObjectDraft {
   objectType: "evm_transaction" | "evm_transfer";
@@ -33,7 +39,7 @@ export type EvmCandidateClassification =
   | "unsupported";
 
 export interface EvmCandidateDetailDraft {
-  chainId: 1;
+  chainId: EvmChainId;
   txHash: string;
   candidateKind: "movement" | "gas";
   classification: EvmCandidateClassification;
@@ -44,6 +50,7 @@ export interface EvmCandidateDetailDraft {
   toAddressLower: string | null;
   gasFeeAtomicText: string | null;
   gasFeeStatus: "exact" | "not_applicable" | "unresolved";
+  nativeTraceStatus: "not_required" | "exact";
 }
 
 export interface EvmCandidateDraft {
@@ -62,6 +69,7 @@ export interface EvmCandidateDraft {
   legs: ExternalCandidateLegDraft[];
   warnings: string[];
   detail: EvmCandidateDetailDraft;
+  l2GasFee: EvmL2GasFeeBreakdown | null;
 }
 
 export interface NormalizedEvmActivity {
@@ -107,8 +115,37 @@ function transactionSource(
       effectiveGasPrice: enriched.receipt.effectiveGasPriceHex,
       blobGasUsed: enriched.receipt.blobGasUsedHex,
       blobGasPrice: enriched.receipt.blobGasPriceHex,
+      gasUsedForL1: enriched.receipt.gasUsedForL1Hex,
       blockNumber: enriched.receipt.blockNumberText,
     },
+    nativeTrace: enriched.nativeTrace
+      ? {
+          status: enriched.nativeTrace.status,
+          frames: enriched.nativeTrace.frames.map((frame) => ({
+            path: frame.path,
+            type: frame.type,
+            from: frame.fromAddressLower,
+            to: frame.toAddressLower,
+            valueAtomicText: frame.rawAmountAtomicText,
+            reverted: frame.reverted,
+          })),
+        }
+      : null,
+    l2GasFee: enriched.l2GasFee
+      ? {
+          chainId: enriched.l2GasFee.chainId,
+          feeModel: enriched.l2GasFee.feeModel,
+          status: enriched.l2GasFee.status,
+          executionFeeAtomicText: enriched.l2GasFee.executionFeeAtomicText,
+          parentDataFeeAtomicText: enriched.l2GasFee.parentDataFeeAtomicText,
+          operatorFeeAtomicText: enriched.l2GasFee.operatorFeeAtomicText,
+          totalFeeAtomicText: enriched.l2GasFee.totalFeeAtomicText,
+          evidence: JSON.parse(enriched.l2GasFee.evidenceJson) as Record<
+            string,
+            string | number | boolean | null
+          >,
+        }
+      : null,
   });
   return {
     objectType: "evm_transaction",
@@ -155,9 +192,15 @@ interface NetMovement {
 function netMovements(
   transfers: readonly EvmTransferRecord[],
   walletAddress: string,
+  chainId: EvmChainId,
+  enriched: EvmEnrichedTransaction,
 ): NetMovement[] {
   const net = new Map<string, NetMovement>();
-  for (const transfer of transfers) {
+  const authoritativeTransfers =
+    chainId === 1
+      ? transfers
+      : transfers.filter((transfer) => transfer.category === "erc20");
+  for (const transfer of authoritativeTransfers) {
     const existing = net.get(transfer.providerAssetKey) ?? {
       providerAssetKey: transfer.providerAssetKey,
       rawAtomic: 0n,
@@ -176,6 +219,24 @@ function netMovements(
       existing.rawAtomic += rawAtomic;
     }
     net.set(transfer.providerAssetKey, existing);
+  }
+  if (chainId !== 1 && enriched.nativeTrace?.status === "exact") {
+    const providerAssetKey = evmNativeAssetKey(chainId);
+    for (const frame of enriched.nativeTrace.frames) {
+      if (frame.reverted) continue;
+      const rawAtomic = BigInt(frame.rawAmountAtomicText);
+      const existing = net.get(providerAssetKey) ?? {
+        providerAssetKey,
+        rawAtomic: 0n,
+        decimals: 18,
+        inconsistentDecimals: false,
+      };
+      if (frame.fromAddressLower === walletAddress)
+        existing.rawAtomic -= rawAtomic;
+      if (frame.toAddressLower === walletAddress)
+        existing.rawAtomic += rawAtomic;
+      net.set(providerAssetKey, existing);
+    }
   }
   return [...net.values()]
     .filter((movement) => movement.rawAtomic !== 0n)
@@ -242,10 +303,12 @@ function movementLegs(
 }
 
 export function normalizeEvmActivity(input: {
+  chainId: EvmChainId;
   walletAddressLower: string;
   transfers: readonly EvmTransferRecord[];
   transactions: readonly EvmEnrichedTransaction[];
 }): NormalizedEvmActivity {
+  const chain = evmChainIdentity(input.chainId);
   const transfersByHash = new Map<string, EvmTransferRecord[]>();
   for (const transfer of input.transfers) {
     const group = transfersByHash.get(transfer.txHash) ?? [];
@@ -272,7 +335,17 @@ export function normalizeEvmActivity(input: {
     sources.push(primary, ...crossChecks);
     const candidateSources = [primary, ...crossChecks];
     const txStatus = evmTransactionStatus(enriched.receipt.statusHex);
-    const movements = netMovements(transfers, input.walletAddressLower);
+    const hasRequiredTrace =
+      input.chainId === 1 || enriched.nativeTrace?.status === "exact";
+    const movements =
+      !hasRequiredTrace || (input.chainId !== 1 && txStatus !== "success")
+        ? []
+        : netMovements(
+            transfers,
+            input.walletAddressLower,
+            input.chainId,
+            enriched,
+          );
     if (movements.length > 0) {
       const shape = movementShape(movements);
       const movement = movementLegs(movements, shape.classification);
@@ -282,11 +355,11 @@ export function normalizeEvmActivity(input: {
         movement.hasUnresolvedDecimals ||
         txStatus !== "success";
       candidates.push({
-        stableKey: evmMovementStableKey(txHash),
+        stableKey: evmMovementStableKey(input.chainId, txHash),
         suggestedEventType: shape.suggestedEventType,
         initialStatus: unsupported ? "unsupported" : "pending",
         occurredAt,
-        title: `Ethereum movement ${txHash.slice(0, 10)}…`,
+        title: `${chain.displayName} movement ${txHash.slice(0, 10)}…`,
         normalizationVersion: 1,
         sourceFingerprint: sourceFingerprint(candidateSources),
         primarySourceExternalIds: [txHash],
@@ -309,7 +382,7 @@ export function normalizeEvmActivity(input: {
             : []),
         ],
         detail: {
-          chainId: 1,
+          chainId: input.chainId,
           txHash,
           candidateKind: "movement",
           classification: shape.classification,
@@ -322,30 +395,43 @@ export function normalizeEvmActivity(input: {
           toAddressLower: enriched.transaction.toAddressLower,
           gasFeeAtomicText: null,
           gasFeeStatus: "not_applicable",
+          nativeTraceStatus: input.chainId === 1 ? "not_required" : "exact",
         },
+        l2GasFee: null,
       });
     }
 
-    const gas = calculateEthereumGasFee({
-      walletAddress: input.walletAddressLower,
-      transactionFrom: enriched.transaction.fromAddressLower,
-      transactionType: enriched.transaction.typeHex,
-      gasUsed: enriched.receipt.gasUsedHex,
-      effectiveGasPrice: enriched.receipt.effectiveGasPriceHex,
-      blobGasUsed: enriched.receipt.blobGasUsedHex,
-      blobGasPrice: enriched.receipt.blobGasPriceHex,
-    });
+    const gas =
+      input.chainId === 1
+        ? calculateEthereumGasFee({
+            walletAddress: input.walletAddressLower,
+            transactionFrom: enriched.transaction.fromAddressLower,
+            transactionType: enriched.transaction.typeHex,
+            gasUsed: enriched.receipt.gasUsedHex,
+            effectiveGasPrice: enriched.receipt.effectiveGasPriceHex,
+            blobGasUsed: enriched.receipt.blobGasUsedHex,
+            blobGasPrice: enriched.receipt.blobGasPriceHex,
+          })
+        : enriched.transaction.fromAddressLower !== input.walletAddressLower ||
+            enriched.l2GasFee === null
+          ? ({ status: "not_applicable", amountAtomic: null } as const)
+          : enriched.l2GasFee.status === "exact"
+            ? ({
+                status: "exact",
+                amountAtomic: BigInt(enriched.l2GasFee.totalFeeAtomicText!),
+              } as const)
+            : ({ status: "unresolved", amountAtomic: null } as const);
     if (
       gas.status === "exact" &&
       gas.amountAtomic !== null &&
       gas.amountAtomic > 0n
     ) {
       candidates.push({
-        stableKey: evmGasStableKey(txHash),
+        stableKey: evmGasStableKey(input.chainId, txHash),
         suggestedEventType: "expense",
         initialStatus: "pending",
         occurredAt,
-        title: `Ethereum network fee ${txHash.slice(0, 10)}…`,
+        title: `${chain.displayName} network fee ${txHash.slice(0, 10)}…`,
         normalizationVersion: 1,
         sourceFingerprint: sourceFingerprint([primary]),
         primarySourceExternalIds: [txHash],
@@ -353,14 +439,17 @@ export function normalizeEvmActivity(input: {
         legs: [
           {
             role: "external_out",
-            providerAssetKey: EVM_NATIVE_ASSET_KEY,
+            providerAssetKey: evmNativeAssetKey(input.chainId),
             amountText: `-${evmRawAtomicToDecimalText(gas.amountAtomic, 18)}`,
-            note: "Ethereum execution and blob fee, when applicable.",
+            note:
+              input.chainId === 1
+                ? "Ethereum execution and blob fee, when applicable."
+                : "Exact L2 execution and parent-chain fee components.",
           },
         ],
         warnings: [],
         detail: {
-          chainId: 1,
+          chainId: input.chainId,
           txHash,
           candidateKind: "gas",
           classification: "gas_only",
@@ -373,23 +462,27 @@ export function normalizeEvmActivity(input: {
           toAddressLower: enriched.transaction.toAddressLower,
           gasFeeAtomicText: gas.amountAtomic.toString(),
           gasFeeStatus: "exact",
+          nativeTraceStatus: input.chainId === 1 ? "not_required" : "exact",
         },
+        l2GasFee: enriched.l2GasFee,
       });
     } else if (gas.status === "unresolved") {
       candidates.push({
-        stableKey: evmGasStableKey(txHash),
+        stableKey: evmGasStableKey(input.chainId, txHash),
         suggestedEventType: "expense",
         initialStatus: "unsupported",
         occurredAt,
-        title: `Ethereum network fee ${txHash.slice(0, 10)}…`,
+        title: `${chain.displayName} network fee ${txHash.slice(0, 10)}…`,
         normalizationVersion: 1,
         sourceFingerprint: sourceFingerprint([primary]),
         primarySourceExternalIds: [txHash],
         crossCheckSourceExternalIds: [],
         legs: [],
-        warnings: ["Gas fee fields are incomplete; import is unavailable."],
+        warnings: [
+          "Network fee components are incomplete; import is unavailable.",
+        ],
         detail: {
-          chainId: 1,
+          chainId: input.chainId,
           txHash,
           candidateKind: "gas",
           classification: "gas_only",
@@ -402,7 +495,9 @@ export function normalizeEvmActivity(input: {
           toAddressLower: enriched.transaction.toAddressLower,
           gasFeeAtomicText: null,
           gasFeeStatus: "unresolved",
+          nativeTraceStatus: input.chainId === 1 ? "not_required" : "exact",
         },
+        l2GasFee: enriched.l2GasFee,
       });
     }
   }
