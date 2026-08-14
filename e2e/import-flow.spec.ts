@@ -261,7 +261,11 @@ test("OFX closing balance remains an observation until explicit reconcile", asyn
       ),
     );
   await page.getByRole("button", { name: "Preview file" }).click();
-  await expect(page.getByText("••••6789", { exact: true })).toBeVisible();
+  await expect(
+    page
+      .locator(".statement-fingerprint")
+      .getByText("••••6789", { exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByText(/Closing closing_ledger: 1465.25 USD/),
   ).toBeVisible();
