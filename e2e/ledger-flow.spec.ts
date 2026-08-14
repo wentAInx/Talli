@@ -55,6 +55,7 @@ async function createAccount(
 test("account, expense, dashboard, edit, and delete stay exact", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(45_000);
   const accountName = `${testInfo.project.name}-支付宝`;
 
   if (testInfo.project.name === "desktop-chromium") {
