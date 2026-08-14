@@ -6,7 +6,11 @@ const EXTERNAL_DECIMAL_PATTERN = /^[+-]?\d+(?:\.\d+)?$/;
 export type ExternalPrecisionStatus = "exact" | "excess_precision" | "unmapped";
 
 export type ExternalObjectType =
-  "kraken_ledger" | "kraken_trade" | "evm_transaction" | "evm_transfer";
+  | "kraken_ledger"
+  | "kraken_trade"
+  | "evm_transaction"
+  | "evm_transfer"
+  | "file_transaction";
 
 export type CanonicalJsonValue =
   | null

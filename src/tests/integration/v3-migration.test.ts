@@ -31,7 +31,8 @@ describe("V3 additive migration", () => {
         "select name from sqlite_master where type = 'table' and name like 'external_%' order by name",
       )
       .all()
-      .map((row) => (row as { name: string }).name);
+      .map((row) => (row as { name: string }).name)
+      .filter((name) => V3_TABLES.includes(name as (typeof V3_TABLES)[number]));
 
     expect(tableNames).toEqual([...V3_TABLES]);
     expect(

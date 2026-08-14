@@ -6,11 +6,14 @@ import {
   findExternalAccountMapping,
   findExternalAssetMapping,
   findExternalCandidate,
+  findExternalCandidateMatchLink,
   findExternalConnection,
   findEvmCandidateDetail,
   findEvmL2GasFeeDetail,
   findExternalImportLink,
   findExternalSourceObjectById,
+  findFileImportCandidateDetail,
+  findFileImportProfile,
   insertExternalImportLink,
   listExternalCandidateLegs,
   listExternalCandidateSourceLinks,
@@ -120,6 +123,126 @@ function explicitUnresolvedFeeAmount(
   return krakenReportedNonzeroTradeFee(sources[0]!);
 }
 
+function prepareFileImportCommand(input: {
+  executor: DatabaseExecutor;
+  candidate: NonNullable<ReturnType<typeof findExternalCandidate>>;
+  connection: NonNullable<ReturnType<typeof findExternalConnection>>;
+  request: CandidateImportInput;
+  legs: ReturnType<typeof listExternalCandidateLegs>;
+}): { command: LedgerMutationInput; sourceFingerprint: string } {
+  const { executor, candidate, connection, request, legs } = input;
+  const detail = findFileImportCandidateDetail(executor, candidate.id);
+  const external = legs[0];
+  assertService(
+    detail &&
+      legs.length === 1 &&
+      external &&
+      (external.role === "external_in" || external.role === "external_out") &&
+      external.amountAtomic !== null &&
+      external.precisionStatus === "exact",
+    "FILE_IMPORT_CANDIDATE_INTEGRITY_ERROR",
+    "File-import candidate details or exact amount provenance are missing.",
+  );
+  const expectedDirection = external.role === "external_out" ? "out" : "in";
+  assertService(
+    detail.direction === expectedDirection,
+    "FILE_IMPORT_CANDIDATE_INTEGRITY_ERROR",
+    "File-import candidate direction conflicts with its exact leg.",
+  );
+  const allowed =
+    (detail.direction === "out" &&
+      (request.chosenEventType === "expense" ||
+        request.chosenEventType === "transfer")) ||
+    (detail.direction === "in" &&
+      (request.chosenEventType === "income" ||
+        request.chosenEventType === "transfer"));
+  assertService(
+    allowed,
+    "FILE_IMPORT_EVENT_TYPE_INVALID",
+    "Outgoing rows allow Expense or Transfer; incoming rows allow Income or Transfer.",
+  );
+  const profile = findFileImportProfile(executor, candidate.connectionId);
+  const requestedTargetAccountId =
+    request.chosenEventType === "transfer"
+      ? detail.direction === "out"
+        ? request.sourceAccountId
+        : request.destinationAccountId
+      : request.mainAccountId;
+  assertService(
+    profile &&
+      profile.targetAccountId === detail.targetAccountId &&
+      requestedTargetAccountId === profile.targetAccountId,
+    "FILE_IMPORT_TARGET_ACCOUNT_MISMATCH",
+    "The statement leg must remain bound to the account selected by its explicit import profile.",
+  );
+  requireAccountForProviderLeg({
+    executor,
+    connectionId: candidate.connectionId,
+    providerAssetKey: external.providerAssetKey,
+    accountId: requestedTargetAccountId,
+    role: "statement target",
+  });
+  const common = {
+    occurredAt: candidate.occurredAt,
+    note: request.note ?? detail.memo,
+    tagIds: [] as string[],
+  };
+  if (request.chosenEventType === "transfer") {
+    assertService(
+      request.sourceAccountId && request.destinationAccountId,
+      "EXTERNAL_IMPORT_TRANSFER_ACCOUNTS_REQUIRED",
+      "Transfer import requires source and destination accounts.",
+    );
+    const otherAccountId =
+      detail.direction === "out"
+        ? request.destinationAccountId
+        : request.sourceAccountId;
+    const otherAccount = findAccountWithAsset(executor, otherAccountId);
+    const targetAccount = findAccountWithAsset(
+      executor,
+      detail.targetAccountId,
+    );
+    assertService(
+      otherAccount &&
+        targetAccount &&
+        !otherAccount.account.isArchived &&
+        !otherAccount.asset.isArchived &&
+        otherAccount.account.bookId === connection.bookId &&
+        otherAccount.account.assetId === targetAccount.account.assetId &&
+        request.sourceAccountId !== request.destinationAccountId,
+      "FILE_IMPORT_TRANSFER_ACCOUNT_INVALID",
+      "Transfer counterpart must be a different active account in the same book and asset.",
+    );
+    return {
+      command: {
+        eventType: "transfer",
+        input: {
+          ...common,
+          sourceAccountId: request.sourceAccountId,
+          destinationAccountId: request.destinationAccountId,
+          amount: magnitudeText(external.amountText),
+          fee: null,
+        },
+      },
+      sourceFingerprint: candidate.sourceFingerprint,
+    };
+  }
+  const ledgerInput = {
+    ...common,
+    accountId: request.mainAccountId!,
+    amount: magnitudeText(external.amountText),
+    categoryId: request.categoryId ?? null,
+    payee: detail.normalizedPayee ?? "Statement import",
+  };
+  return {
+    command:
+      request.chosenEventType === "expense"
+        ? { eventType: "expense", input: ledgerInput }
+        : { eventType: "income", input: ledgerInput },
+    sourceFingerprint: candidate.sourceFingerprint,
+  };
+}
+
 function prepareCommand(
   executor: DatabaseExecutor,
   input: CandidateImportInput,
@@ -141,6 +264,11 @@ function prepareCommand(
     "Candidate has already been imported.",
   );
   assertService(
+    !findExternalCandidateMatchLink(executor, input.candidateId),
+    "EXTERNAL_CANDIDATE_ALREADY_MATCHED",
+    "Candidate is already matched to an existing Ledger event.",
+  );
+  assertService(
     candidate.status === "pending" || candidate.status === "needs_mapping",
     "EXTERNAL_CANDIDATE_NOT_IMPORTABLE",
     "Candidate is not available for import.",
@@ -152,6 +280,15 @@ function prepareCommand(
     "External connection was not found.",
   );
   const legs = listExternalCandidateLegs(executor, candidate.id);
+  if (connection.provider === "file_import") {
+    return prepareFileImportCommand({
+      executor,
+      candidate,
+      connection,
+      request: input,
+      legs,
+    });
+  }
   let evmChainName: string | null = null;
   if (connection.provider === "evm_wallet") {
     const detail = findEvmCandidateDetail(executor, candidate.id);
@@ -444,9 +581,10 @@ export class ExternalImportService {
         );
         assertService(
           candidate.status !== "imported" &&
+            candidate.status !== "matched" &&
             candidate.status !== "source_changed",
           "EXTERNAL_CANDIDATE_NOT_IGNORABLE",
-          "Imported or source-changed candidates cannot be ignored.",
+          "Imported, matched, or source-changed candidates cannot be ignored.",
         );
         const now = runtimeNow(this.runtime);
         updateExternalCandidate(transaction, candidateId, {

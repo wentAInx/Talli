@@ -1,0 +1,79 @@
+你现在负责 Talli V5.0。
+
+Repository:
+wentAInx/Talli
+
+Frozen baseline:
+v4.1.0
+ef968976510e04f0532715c1e73f88595a607e89
+
+Main release CI:
+31700359476
+
+目标：
+Talli V5.0 — Financial File Import & Matching Foundation
+
+推荐分支：
+feat/v5-financial-file-import
+
+首批格式：
+CSV
+OFX/QFX Banking/CreditCard statement subset
+ISO 20022 camt.053
+
+请先完整阅读任务包 00 → 25 与 fixtures。
+
+最高红线：
+Imported file != Ledger
+
+文件 commit 只能创建 source / batch / candidate / observation / provenance，
+不得直接创建 Ledger event/snapshot。
+
+只有 Explicit Import / Explicit Match Existing / Explicit Reconcile
+才可进入相应写路径。
+
+关键：
+- Account-first explicit profile；
+- no asset auto-map by symbol；
+- exact amounts/no rounding；
+- strong+weak dedupe；
+- identical weak rows not collapsed；
+- no automatic Ledger match；
+- Match Existing does not edit Ledger；
+- OFX LEDGERBAL / CAMT CLBD observation only；
+- raw file/full account number not persisted；
+- DTD/ENTITY rejected；
+- parse outside DB tx；
+- atomic batch；
+- Backup schemaVersion6 accepts 1..6；
+- all V1/V2/V3/V4/V4.1 regressions pass。
+
+开始前：
+git status --short
+git branch --show-current
+git rev-parse HEAD
+git tag --points-at HEAD
+
+按 Phase 0→14 实施。
+
+Final gate：
+pnpm format:check
+pnpm lint
+pnpm typecheck
+pnpm db:check
+pnpm test:unit
+pnpm test:integration
+pnpm build
+pnpm security:check
+pnpm test:e2e
+
+不得伪造结果。
+完成后 push feature branch（用户要求时），不要 merge main/tag v5.0.0。
+
+返回：
+exact SHA
+Actions run ID
+migration
+parser dependency/version
+unit/integration/E2E counts
+known limitations

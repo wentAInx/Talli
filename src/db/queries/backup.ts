@@ -15,6 +15,7 @@ import {
   externalAccountMappings,
   externalAssetMappings,
   externalBalanceObservations,
+  externalCandidateMatchLinks,
   externalCandidateSourceObjects,
   externalConnections,
   externalImportLinks,
@@ -26,6 +27,12 @@ import {
   evmL2GasFeeDetails,
   evmWalletConnectionState,
   evmWalletConnections,
+  fileImportBalanceObservationDetails,
+  fileImportBatches,
+  fileImportBatchSourceObjects,
+  fileImportCandidateDetails,
+  fileImportProfiles,
+  fileImportSourceDetails,
   ledgerEntries,
   ledgerEvents,
   latestPriceQuotes,
@@ -94,7 +101,7 @@ export function readBackupData(executor: DatabaseExecutor): BackupData {
       .select()
       .from(externalConnections)
       .orderBy(asc(externalConnections.id))
-      .all(),
+      .all() as BackupData["externalConnections"],
     evmWalletConnections: executor
       .select()
       .from(evmWalletConnections)
@@ -164,6 +171,44 @@ export function readBackupData(executor: DatabaseExecutor): BackupData {
       .from(externalImportLinks)
       .orderBy(asc(externalImportLinks.candidateId))
       .all(),
+    fileImportProfiles: executor
+      .select()
+      .from(fileImportProfiles)
+      .orderBy(asc(fileImportProfiles.connectionId))
+      .all(),
+    fileImportBatches: executor
+      .select()
+      .from(fileImportBatches)
+      .orderBy(asc(fileImportBatches.id))
+      .all(),
+    fileImportSourceDetails: executor
+      .select()
+      .from(fileImportSourceDetails)
+      .orderBy(asc(fileImportSourceDetails.sourceObjectId))
+      .all(),
+    fileImportBatchSourceObjects: executor
+      .select()
+      .from(fileImportBatchSourceObjects)
+      .orderBy(
+        asc(fileImportBatchSourceObjects.batchId),
+        asc(fileImportBatchSourceObjects.rowIndex),
+      )
+      .all(),
+    fileImportCandidateDetails: executor
+      .select()
+      .from(fileImportCandidateDetails)
+      .orderBy(asc(fileImportCandidateDetails.candidateId))
+      .all(),
+    externalCandidateMatchLinks: executor
+      .select()
+      .from(externalCandidateMatchLinks)
+      .orderBy(asc(externalCandidateMatchLinks.candidateId))
+      .all(),
+    fileImportBalanceObservationDetails: executor
+      .select()
+      .from(fileImportBalanceObservationDetails)
+      .orderBy(asc(fileImportBalanceObservationDetails.observationId))
+      .all(),
   };
 }
 
@@ -184,19 +229,26 @@ export function upsertAppMetaValue(
 }
 
 export function clearRestoreTarget(executor: DatabaseExecutor): void {
+  executor.delete(externalCandidateMatchLinks).run();
   executor.delete(externalImportLinks).run();
+  executor.delete(fileImportCandidateDetails).run();
   executor.delete(externalCandidateSourceObjects).run();
   executor.delete(externalTransactionLegs).run();
   executor.delete(evmL2GasFeeDetails).run();
   executor.delete(evmCandidateDetails).run();
   executor.delete(externalTransactionCandidates).run();
+  executor.delete(fileImportBalanceObservationDetails).run();
   executor.delete(evmBalanceObservationDetails).run();
   executor.delete(externalBalanceObservations).run();
+  executor.delete(fileImportBatchSourceObjects).run();
+  executor.delete(fileImportSourceDetails).run();
   executor.delete(externalSourceObjects).run();
+  executor.delete(fileImportBatches).run();
   executor.delete(externalAccountMappings).run();
   executor.delete(externalAssetMappings).run();
   executor.delete(evmWalletConnectionState).run();
   executor.delete(evmWalletConnections).run();
+  executor.delete(fileImportProfiles).run();
   executor.delete(externalConnections).run();
   executor.delete(latestPriceQuotes).run();
   executor.delete(priceProviderState).run();
@@ -268,6 +320,9 @@ export function insertBackupData(
   if (data.externalConnections.length > 0) {
     executor.insert(externalConnections).values(data.externalConnections).run();
   }
+  if (data.fileImportProfiles.length > 0) {
+    executor.insert(fileImportProfiles).values(data.fileImportProfiles).run();
+  }
   if (data.evmWalletConnections.length > 0) {
     executor
       .insert(evmWalletConnections)
@@ -292,6 +347,9 @@ export function insertBackupData(
       .values(data.externalBalanceObservations)
       .run();
   }
+  if (data.fileImportBatches.length > 0) {
+    executor.insert(fileImportBatches).values(data.fileImportBatches).run();
+  }
   if (data.evmBalanceObservationDetails.length > 0) {
     executor
       .insert(evmBalanceObservationDetails)
@@ -304,10 +362,28 @@ export function insertBackupData(
       .values(data.externalSourceObjects)
       .run();
   }
+  if (data.fileImportSourceDetails.length > 0) {
+    executor
+      .insert(fileImportSourceDetails)
+      .values(data.fileImportSourceDetails)
+      .run();
+  }
+  if (data.fileImportBatchSourceObjects.length > 0) {
+    executor
+      .insert(fileImportBatchSourceObjects)
+      .values(data.fileImportBatchSourceObjects)
+      .run();
+  }
   if (data.externalTransactionCandidates.length > 0) {
     executor
       .insert(externalTransactionCandidates)
       .values(data.externalTransactionCandidates)
+      .run();
+  }
+  if (data.fileImportCandidateDetails.length > 0) {
+    executor
+      .insert(fileImportCandidateDetails)
+      .values(data.fileImportCandidateDetails)
       .run();
   }
   if (data.evmCandidateDetails.length > 0) {
@@ -330,5 +406,17 @@ export function insertBackupData(
   }
   if (data.externalImportLinks.length > 0) {
     executor.insert(externalImportLinks).values(data.externalImportLinks).run();
+  }
+  if (data.externalCandidateMatchLinks.length > 0) {
+    executor
+      .insert(externalCandidateMatchLinks)
+      .values(data.externalCandidateMatchLinks)
+      .run();
+  }
+  if (data.fileImportBalanceObservationDetails.length > 0) {
+    executor
+      .insert(fileImportBalanceObservationDetails)
+      .values(data.fileImportBalanceObservationDetails)
+      .run();
   }
 }

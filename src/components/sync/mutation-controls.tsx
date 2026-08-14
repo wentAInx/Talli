@@ -193,6 +193,30 @@ function AccountSelect({
   );
 }
 
+function ReadOnlyAccountField({
+  accounts,
+  accountId,
+  label,
+  name,
+}: {
+  accounts: CandidateAccountOption[];
+  accountId: string;
+  label: string;
+  name: "mainAccountId" | "sourceAccountId" | "destinationAccountId";
+}) {
+  return (
+    <div className="read-only-field">
+      <span>{label}</span>
+      <strong>
+        {accounts.find((account) => account.id === accountId)?.name ??
+          accountId}
+      </strong>
+      <input name={name} type="hidden" value={accountId} />
+      <small>Bound by the explicit file import profile.</small>
+    </div>
+  );
+}
+
 export function CandidateReviewForm({
   candidateId,
   suggestedEventType,
@@ -201,6 +225,8 @@ export function CandidateReviewForm({
   unresolvedFee,
   providerName = "Kraken",
   allowedEventTypes,
+  returnPath = "/sync",
+  lockedMainAccountId,
 }: {
   candidateId: string;
   suggestedEventType:
@@ -210,6 +236,8 @@ export function CandidateReviewForm({
   unresolvedFee: { amountText: string } | null;
   providerName?: string;
   allowedEventTypes?: Array<"exchange" | "transfer" | "income" | "expense">;
+  returnPath?: string;
+  lockedMainAccountId?: string;
 }) {
   const router = useRouter();
   const eventTypes =
@@ -263,9 +291,7 @@ export function CandidateReviewForm({
       );
       const ledgerEventId = response.result?.ledgerEventId;
       router.push(
-        ledgerEventId
-          ? `/transactions/${ledgerEventId}`
-          : `/sync/candidates/${candidateId}`,
+        ledgerEventId ? `/transactions/${ledgerEventId}` : returnPath,
       );
       router.refresh();
     } catch (requestError) {
@@ -291,7 +317,7 @@ export function CandidateReviewForm({
       await postJson(`/api/sync/candidates/${candidateId}/ignore`, {
         confirmed: true,
       });
-      router.push("/sync?queue=ignored");
+      router.push(`${returnPath}?queue=ignored`);
       router.refresh();
     } catch (requestError) {
       setError(
@@ -352,25 +378,52 @@ export function CandidateReviewForm({
         </div>
       ) : eventType === "transfer" ? (
         <div className="field-grid field-grid-two">
-          <AccountSelect
-            accounts={accounts}
-            defaultValue={
-              external?.role === "external_out"
-                ? external.mappedAccountId
-                : null
-            }
-            label="转出账户"
-            name="sourceAccountId"
-          />
-          <AccountSelect
-            accounts={accounts}
-            defaultValue={
-              external?.role === "external_in" ? external.mappedAccountId : null
-            }
-            label="转入账户"
-            name="destinationAccountId"
-          />
+          {lockedMainAccountId && external?.role === "external_out" ? (
+            <ReadOnlyAccountField
+              accountId={lockedMainAccountId}
+              accounts={accounts}
+              label="转出账户"
+              name="sourceAccountId"
+            />
+          ) : (
+            <AccountSelect
+              accounts={accounts}
+              defaultValue={
+                external?.role === "external_out"
+                  ? external.mappedAccountId
+                  : null
+              }
+              label="转出账户"
+              name="sourceAccountId"
+            />
+          )}
+          {lockedMainAccountId && external?.role === "external_in" ? (
+            <ReadOnlyAccountField
+              accountId={lockedMainAccountId}
+              accounts={accounts}
+              label="转入账户"
+              name="destinationAccountId"
+            />
+          ) : (
+            <AccountSelect
+              accounts={accounts}
+              defaultValue={
+                external?.role === "external_in"
+                  ? external.mappedAccountId
+                  : null
+              }
+              label="转入账户"
+              name="destinationAccountId"
+            />
+          )}
         </div>
+      ) : lockedMainAccountId ? (
+        <ReadOnlyAccountField
+          accountId={lockedMainAccountId}
+          accounts={accounts}
+          label={eventType === "income" ? "收入账户" : "支出账户"}
+          name="mainAccountId"
+        />
       ) : (
         <AccountSelect
           accounts={accounts}

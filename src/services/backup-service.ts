@@ -63,6 +63,12 @@ export interface BackupSummary {
   evmCandidateDetails: number;
   evmL2GasFeeDetails: number;
   externalImportLinks: number;
+  fileImportProfiles: number;
+  fileImportBatches: number;
+  fileImportSources: number;
+  fileImportCandidates: number;
+  externalMatchLinks: number;
+  fileImportBalanceDetails: number;
 }
 
 export interface RestorePreview {
@@ -97,6 +103,14 @@ function summary(data: BackupData): BackupSummary {
     evmCandidateDetails: data.evmCandidateDetails.length,
     evmL2GasFeeDetails: data.evmL2GasFeeDetails.length,
     externalImportLinks: data.externalImportLinks.length,
+    fileImportProfiles: data.fileImportProfiles.length,
+    fileImportBatches: data.fileImportBatches.length,
+    fileImportSources:
+      data.fileImportSourceDetails.length +
+      data.fileImportBatchSourceObjects.length,
+    fileImportCandidates: data.fileImportCandidateDetails.length,
+    externalMatchLinks: data.externalCandidateMatchLinks.length,
+    fileImportBalanceDetails: data.fileImportBalanceObservationDetails.length,
   };
 }
 
@@ -150,6 +164,13 @@ function targetKind(executor: DatabaseExecutor): "empty" | "seed-only" {
     data.externalCandidateSourceObjects.length === 0 &&
     data.externalTransactionLegs.length === 0 &&
     data.externalImportLinks.length === 0 &&
+    data.fileImportProfiles.length === 0 &&
+    data.fileImportBatches.length === 0 &&
+    data.fileImportSourceDetails.length === 0 &&
+    data.fileImportBatchSourceObjects.length === 0 &&
+    data.fileImportCandidateDetails.length === 0 &&
+    data.externalCandidateMatchLinks.length === 0 &&
+    data.fileImportBalanceObservationDetails.length === 0 &&
     targetTimeZoneOnly(data);
 
   if (

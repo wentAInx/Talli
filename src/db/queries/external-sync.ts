@@ -346,7 +346,11 @@ export function findExternalSourceObject(
   executor: DatabaseExecutor,
   connectionId: string,
   objectType:
-    "kraken_ledger" | "kraken_trade" | "evm_transaction" | "evm_transfer",
+    | "kraken_ledger"
+    | "kraken_trade"
+    | "evm_transaction"
+    | "evm_transfer"
+    | "file_transaction",
   externalId: string,
 ) {
   return executor

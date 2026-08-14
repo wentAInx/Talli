@@ -12,6 +12,7 @@ import {
   findExternalCandidate,
   findExternalConnection,
   findExternalImportLinkByLedgerEvent,
+  listExternalCandidateMatchLinksByLedgerEvent,
 } from "@/db/queries";
 import { LedgerReadService, SettingsService } from "@/services";
 
@@ -37,6 +38,13 @@ export default async function TransactionDetailPage({
       const connection = candidate
         ? findExternalConnection(context.db, candidate.connectionId)
         : null;
+      const matches = listExternalCandidateMatchLinksByLedgerEvent(
+        context.db,
+        id,
+      ).map((link) => ({
+        ...link,
+        candidate: findExternalCandidate(context.db, link.candidateId),
+      }));
       return {
         event,
         reference: service.getReferenceData(new Date().toISOString(), {
@@ -48,6 +56,7 @@ export default async function TransactionDetailPage({
         provenance: importLink
           ? { ...importLink, provider: connection?.provider ?? null }
           : null,
+        matches,
       };
     } catch {
       return null;
@@ -71,18 +80,41 @@ export default async function TransactionDetailPage({
           <p>保存后会在一个数据库 transaction 内原子替换事件与分录。</p>
         </div>
       </header>
-      <section className="form-card transaction-card">
-        <TransactionForm
-          action={updateAction}
-          accounts={view.reference.accounts}
-          categories={view.reference.categories}
-          tags={view.reference.tags}
-          initial={view.event}
-          allowReconcile={false}
-          timeZone={view.timeZone}
-          defaultOccurredAt={view.now}
-        />
-      </section>
+      {view.matches.length === 0 ? (
+        <section className="form-card transaction-card">
+          <TransactionForm
+            action={updateAction}
+            accounts={view.reference.accounts}
+            categories={view.reference.categories}
+            tags={view.reference.tags}
+            initial={view.event}
+            allowReconcile={false}
+            timeZone={view.timeZone}
+            defaultOccurredAt={view.now}
+          />
+        </section>
+      ) : (
+        <section className="content-section matched-event-lock">
+          <div>
+            <p className="eyebrow">Matched file provenance</p>
+            <h2>编辑与删除已锁定</h2>
+            <p>
+              先在对应 file candidate 中显式 Unlink match；Ledger 当前内容未被
+              Match Existing 修改。
+            </p>
+          </div>
+          <div className="linked-event-actions">
+            {view.matches.map((match) => (
+              <Link
+                key={match.candidateId}
+                href={`/import/candidates/${match.candidateId}`}
+              >
+                Review {match.candidate?.title ?? match.candidateId}
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
       {view.provenance ? (
         <section className="content-section imported-event-provenance">
           <div>
@@ -92,13 +124,21 @@ export default async function TransactionDetailPage({
               为保留候选与账本事件的一对一来源关系，已导入事件不允许直接删除。
             </p>
           </div>
-          <Link href={`/sync/candidates/${view.provenance.candidateId}`}>
-            {view.provenance.provider === "evm_wallet"
-              ? "查看 EVM 候选"
-              : "查看 Kraken 候选"}
+          <Link
+            href={
+              view.provenance.provider === "file_import"
+                ? `/import/candidates/${view.provenance.candidateId}`
+                : `/sync/candidates/${view.provenance.candidateId}`
+            }
+          >
+            {view.provenance.provider === "file_import"
+              ? "查看 file candidate"
+              : view.provenance.provider === "evm_wallet"
+                ? "查看 EVM 候选"
+                : "查看 Kraken 候选"}
           </Link>
         </section>
-      ) : (
+      ) : view.matches.length === 0 ? (
         <section className="danger-zone">
           <div>
             <h2>删除这笔流水</h2>
@@ -111,7 +151,7 @@ export default async function TransactionDetailPage({
             删除交易
           </ConfirmActionForm>
         </section>
-      )}
+      ) : null}
     </div>
   );
 }

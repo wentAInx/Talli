@@ -29,6 +29,38 @@ function assertAbsent(
   }
 }
 
+function assertPresent(
+  file: string,
+  patterns: readonly RegExp[],
+  label: string,
+) {
+  const content = readFileSync(file, "utf8");
+  for (const pattern of patterns) {
+    if (!pattern.test(content)) {
+      failures.push(
+        label + ": " + relative(root, file) + " missed " + pattern.source,
+      );
+    }
+  }
+}
+
+function assertOrdered(
+  file: string,
+  markers: readonly string[],
+  label: string,
+) {
+  const content = readFileSync(file, "utf8");
+  let cursor = -1;
+  for (const marker of markers) {
+    const index = content.indexOf(marker, cursor + 1);
+    if (index < 0) {
+      failures.push(label + ": " + relative(root, file) + " missed " + marker);
+      return;
+    }
+    cursor = index;
+  }
+}
+
 const sourceExtensions = /\.(?:ts|tsx|js|jsx|css)$/;
 const clientBoundaryFiles = [
   ...filesUnder(join(root, "src/app")),
@@ -43,6 +75,19 @@ assertAbsent(
     /\bapiSecret\b/,
   ],
   "Client/UI secret boundary",
+);
+
+const clientComponentFiles = clientBoundaryFiles.filter((file) =>
+  /^\s*["']use client["'];/m.test(readFileSync(file, "utf8")),
+);
+assertAbsent(
+  clientComponentFiles,
+  [
+    /fast-xml-parser/,
+    /csv-parse(?:\/sync)?/,
+    /(?:@\/|\.\.\/)+(?:providers\/file-import|services\/file-import-service)/,
+  ],
+  "Client financial-file parser boundary",
 );
 
 const persistenceFiles = [
@@ -76,6 +121,67 @@ assertAbsent(
 
 const evmProviderFiles = filesUnder(join(root, "src/providers/evm")).filter(
   (file) => /\.(?:ts|tsx)$/.test(file),
+);
+
+const fileImportProviderFiles = filesUnder(
+  join(root, "src/providers/file-import"),
+).filter((file) => /\.(?:ts|tsx)$/.test(file));
+assertAbsent(
+  fileImportProviderFiles,
+  [
+    /\bfetch\s*\(/,
+    /\bXMLHttpRequest\b/,
+    /\b(?:axios|got|undici)\b/,
+    /from\s+["']node:(?:http|https|net|tls)["']/,
+    /https?:\/\//,
+  ],
+  "Financial-file parser network isolation",
+);
+
+const fileImportIngressFiles = [
+  ...fileImportProviderFiles,
+  ...filesUnder(join(root, "src/app/api/import")),
+  join(root, "src/services/file-import-service.ts"),
+].filter((file) => /\.(?:ts|tsx)$/.test(file));
+assertAbsent(
+  fileImportIngressFiles,
+  [
+    /from\s+["']node:(?:fs|path)["']/,
+    /\b(?:readFile|readFileSync|createReadStream)\s*\(/,
+    /formData\.get\(["']url["']\)/i,
+    /\b(?:sourceUrl|fileUrl|importUrl)\b/i,
+  ],
+  "Financial-file upload-only ingress",
+);
+
+assertAbsent(
+  [join(root, "src/db/schema.ts")],
+  [
+    /\bblob\s*\(/i,
+    /text\(["'](?:raw_file|raw_xml|raw_csv|file_blob|file_contents)["']/i,
+  ],
+  "Financial-file raw blob persistence",
+);
+assertAbsent(
+  persistenceFiles,
+  [
+    /\baccountNumber\b/,
+    /\bfull(?:Account|Iban|IBAN)\b/,
+    /\braw(?:Account|Iban|IBAN)\b/,
+  ],
+  "Financial-file raw account persistence",
+);
+
+const fileImportXmlCommon = join(root, "src/providers/file-import/common.ts");
+assertPresent(
+  fileImportXmlCommon,
+  [/XML_FORBIDDEN_DECLARATION/, /DOCTYPE\|ENTITY/, /XML_XINCLUDE/],
+  "Financial-file XML declaration precheck",
+);
+assertOrdered(
+  fileImportXmlCommon,
+  ["assertSafeXmlText(text);", "XMLValidator.validate", "new XMLParser"],
+  "Financial-file XML validation order",
 );
 
 const evmProviderFilesOutsideRegistry = evmProviderFiles.filter(
@@ -140,6 +246,16 @@ assertAbsent(
     /c2VjcmV0LWJ5dGVz/,
   ],
   "Built client bundle secret boundary",
+);
+assertAbsent(
+  staticFiles,
+  [
+    /fast-xml-parser/,
+    /csv-parse\/sync/,
+    /parseCamt053Statement/,
+    /XML_DTD_FORBIDDEN/,
+  ],
+  "Built client financial-file parser boundary",
 );
 
 if (failures.length > 0) {

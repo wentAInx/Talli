@@ -32,12 +32,17 @@ export const eventTypes = [
 export const entryRoles = ["main", "source", "destination", "fee"] as const;
 export const priceProviderIds = ["coingecko", "ecb"] as const;
 export const externalQuoteKinds = ["spot", "reference"] as const;
-export const externalProviderIds = ["kraken", "evm_wallet"] as const;
+export const externalProviderIds = [
+  "kraken",
+  "evm_wallet",
+  "file_import",
+] as const;
 export const externalObjectTypes = [
   "kraken_ledger",
   "kraken_trade",
   "evm_transaction",
   "evm_transfer",
+  "file_transaction",
 ] as const;
 export const externalMappingStatuses = [
   "mapped",
@@ -62,6 +67,7 @@ export const externalCandidateStatuses = [
   "needs_mapping",
   "ignored",
   "imported",
+  "matched",
   "unsupported",
   "source_changed",
 ] as const;
@@ -111,6 +117,22 @@ export const evmNativeTraceStatuses = [
 ] as const;
 export const evmL2FeeModels = ["base_op_stack", "arbitrum_nitro"] as const;
 export const evmL2FeeStatuses = ["exact", "unresolved"] as const;
+export const fileImportFormats = ["csv", "ofx", "qfx", "camt053"] as const;
+export const fileImportIdentityStrengths = ["strong", "weak"] as const;
+export const fileImportSourceIdKinds = [
+  "fitid",
+  "acct_svcr_ref",
+  "tx_id",
+  "ntry_ref",
+  "csv_id",
+  "weak_signature",
+] as const;
+export const fileImportDatePrecisions = ["timestamp", "day"] as const;
+export const fileImportDirections = ["in", "out"] as const;
+export const fileImportBalanceKinds = [
+  "closing_ledger",
+  "closing_booked",
+] as const;
 
 export const books = sqliteTable(
   "books",
@@ -544,11 +566,102 @@ export const externalConnections = sqliteTable(
     ),
     check(
       "external_connections_provider_check",
-      sql`${table.provider} in ('kraken', 'evm_wallet')`,
+      sql`${table.provider} in ('kraken', 'evm_wallet', 'file_import')`,
     ),
     check(
       "external_connections_enabled_check",
       sql`${table.isEnabled} in (0, 1)`,
+    ),
+  ],
+);
+
+export const fileImportProfiles = sqliteTable(
+  "file_import_profiles",
+  {
+    connectionId: text("connection_id")
+      .primaryKey()
+      .references(() => externalConnections.id, { onDelete: "cascade" }),
+    targetAccountId: text("target_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    format: text("format", { enum: fileImportFormats }).notNull(),
+    parserConfigJson: text("parser_config_json").notNull(),
+    statementAccountFingerprint: text("statement_account_fingerprint"),
+    statementAccountLast4: text("statement_account_last4"),
+    statementCurrencyCode: text("statement_currency_code"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("file_import_profiles_target_account_idx").on(table.targetAccountId),
+    check(
+      "file_import_profiles_format_check",
+      sql`${table.format} in ('csv', 'ofx', 'qfx', 'camt053')`,
+    ),
+    check(
+      "file_import_profiles_config_check",
+      sql`length(${table.parserConfigJson}) > 0`,
+    ),
+    check(
+      "file_import_profiles_fingerprint_check",
+      sql`${table.statementAccountFingerprint} is null or (length(${table.statementAccountFingerprint}) = 64 and ${table.statementAccountFingerprint} not glob '*[^0-9a-f]*')`,
+    ),
+    check(
+      "file_import_profiles_last4_check",
+      sql`${table.statementAccountLast4} is null or (length(${table.statementAccountLast4}) between 1 and 4)`,
+    ),
+  ],
+);
+
+export const fileImportBatches = sqliteTable(
+  "file_import_batches",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => fileImportProfiles.connectionId, {
+        onDelete: "cascade",
+      }),
+    fileSha256: text("file_sha256").notNull(),
+    originalFilename: text("original_filename").notNull(),
+    format: text("format", { enum: fileImportFormats }).notNull(),
+    parserVersion: integer("parser_version").notNull(),
+    ingestedAt: text("ingested_at").notNull(),
+    sourceRowCount: integer("source_row_count").notNull(),
+    newCandidateCount: integer("new_candidate_count").notNull(),
+    duplicateCount: integer("duplicate_count").notNull(),
+    unsupportedCount: integer("unsupported_count").notNull(),
+    statementFromDate: text("statement_from_date"),
+    statementToDate: text("statement_to_date"),
+  },
+  (table) => [
+    uniqueIndex("file_import_batches_connection_hash_unique").on(
+      table.connectionId,
+      table.fileSha256,
+    ),
+    index("file_import_batches_connection_ingested_idx").on(
+      table.connectionId,
+      desc(table.ingestedAt),
+    ),
+    check(
+      "file_import_batches_hash_check",
+      sql`length(${table.fileSha256}) = 64 and ${table.fileSha256} not glob '*[^0-9a-f]*'`,
+    ),
+    check(
+      "file_import_batches_filename_check",
+      sql`length(${table.originalFilename}) between 1 and 255`,
+    ),
+    check(
+      "file_import_batches_format_check",
+      sql`${table.format} in ('csv', 'ofx', 'qfx', 'camt053')`,
+    ),
+    check(
+      "file_import_batches_parser_version_check",
+      sql`${table.parserVersion} > 0`,
+    ),
+    check(
+      "file_import_batches_counts_check",
+      sql`${table.sourceRowCount} >= 0 and ${table.newCandidateCount} >= 0 and ${table.duplicateCount} >= 0 and ${table.unsupportedCount} >= 0`,
     ),
   ],
 );
@@ -693,7 +806,7 @@ export const externalAccountMappings = sqliteTable(
       ],
       name: "external_account_mappings_asset_mapping_fk",
     }).onDelete("cascade"),
-    uniqueIndex("external_account_mappings_talli_account_unique").on(
+    index("external_account_mappings_talli_account_idx").on(
       table.talliAccountId,
     ),
     check(
@@ -759,7 +872,69 @@ export const externalSourceObjects = sqliteTable(
     ),
     check(
       "external_source_objects_type_check",
-      sql`${table.objectType} in ('kraken_ledger', 'kraken_trade', 'evm_transaction', 'evm_transfer')`,
+      sql`${table.objectType} in ('kraken_ledger', 'kraken_trade', 'evm_transaction', 'evm_transfer', 'file_transaction')`,
+    ),
+  ],
+);
+
+export const fileImportSourceDetails = sqliteTable(
+  "file_import_source_details",
+  {
+    sourceObjectId: text("source_object_id")
+      .primaryKey()
+      .references(() => externalSourceObjects.id, { onDelete: "cascade" }),
+    identityStrength: text("identity_strength", {
+      enum: fileImportIdentityStrengths,
+    }).notNull(),
+    sourceIdKind: text("source_id_kind", {
+      enum: fileImportSourceIdKinds,
+    }).notNull(),
+    originalDateText: text("original_date_text").notNull(),
+    datePrecision: text("date_precision", {
+      enum: fileImportDatePrecisions,
+    }).notNull(),
+    normalizedPayee: text("normalized_payee"),
+    memo: text("memo"),
+    statementCurrencyCode: text("statement_currency_code"),
+  },
+  (table) => [
+    check(
+      "file_import_source_details_strength_check",
+      sql`${table.identityStrength} in ('strong', 'weak')`,
+    ),
+    check(
+      "file_import_source_details_id_kind_check",
+      sql`${table.sourceIdKind} in ('fitid', 'acct_svcr_ref', 'tx_id', 'ntry_ref', 'csv_id', 'weak_signature')`,
+    ),
+    check(
+      "file_import_source_details_date_precision_check",
+      sql`${table.datePrecision} in ('timestamp', 'day')`,
+    ),
+  ],
+);
+
+export const fileImportBatchSourceObjects = sqliteTable(
+  "file_import_batch_source_objects",
+  {
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => fileImportBatches.id, { onDelete: "cascade" }),
+    sourceObjectId: text("source_object_id")
+      .notNull()
+      .references(() => externalSourceObjects.id, { onDelete: "cascade" }),
+    rowIndex: integer("row_index").notNull(),
+    rawRowSha256: text("raw_row_sha256").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.batchId, table.sourceObjectId] }),
+    uniqueIndex("file_import_batch_source_row_unique").on(
+      table.batchId,
+      table.rowIndex,
+    ),
+    check("file_import_batch_source_row_check", sql`${table.rowIndex} >= 0`),
+    check(
+      "file_import_batch_source_hash_check",
+      sql`length(${table.rawRowSha256}) = 64 and ${table.rawRowSha256} not glob '*[^0-9a-f]*'`,
     ),
   ],
 );
@@ -799,6 +974,39 @@ export const externalBalanceObservations = sqliteTable(
     check(
       "external_balance_observations_precision_check",
       sql`${table.precisionStatus} in ('exact', 'excess_precision', 'unmapped')`,
+    ),
+  ],
+);
+
+export const fileImportBalanceObservationDetails = sqliteTable(
+  "file_import_balance_observation_details",
+  {
+    observationId: text("observation_id")
+      .primaryKey()
+      .references(() => externalBalanceObservations.id, {
+        onDelete: "cascade",
+      }),
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => fileImportBatches.id, { onDelete: "cascade" }),
+    balanceKind: text("balance_kind", {
+      enum: fileImportBalanceKinds,
+    }).notNull(),
+    sourceDateText: text("source_date_text").notNull(),
+    datePrecision: text("date_precision", {
+      enum: fileImportDatePrecisions,
+    }).notNull(),
+    statementCurrencyCode: text("statement_currency_code").notNull(),
+  },
+  (table) => [
+    uniqueIndex("file_import_balance_batch_unique").on(table.batchId),
+    check(
+      "file_import_balance_kind_check",
+      sql`${table.balanceKind} in ('closing_ledger', 'closing_booked')`,
+    ),
+    check(
+      "file_import_balance_date_precision_check",
+      sql`${table.datePrecision} in ('timestamp', 'day')`,
     ),
   ],
 );
@@ -874,7 +1082,39 @@ export const externalTransactionCandidates = sqliteTable(
     ),
     check(
       "external_candidates_status_check",
-      sql`${table.status} in ('pending', 'needs_mapping', 'ignored', 'imported', 'unsupported', 'source_changed')`,
+      sql`${table.status} in ('pending', 'needs_mapping', 'ignored', 'imported', 'matched', 'unsupported', 'source_changed')`,
+    ),
+  ],
+);
+
+export const fileImportCandidateDetails = sqliteTable(
+  "file_import_candidate_details",
+  {
+    candidateId: text("candidate_id")
+      .primaryKey()
+      .references(() => externalTransactionCandidates.id, {
+        onDelete: "cascade",
+      }),
+    targetAccountId: text("target_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    direction: text("direction", { enum: fileImportDirections }).notNull(),
+    normalizedPayee: text("normalized_payee"),
+    memo: text("memo"),
+    sourceDateText: text("source_date_text").notNull(),
+    datePrecision: text("date_precision", {
+      enum: fileImportDatePrecisions,
+    }).notNull(),
+  },
+  (table) => [
+    index("file_import_candidate_target_account_idx").on(table.targetAccountId),
+    check(
+      "file_import_candidate_direction_check",
+      sql`${table.direction} in ('in', 'out')`,
+    ),
+    check(
+      "file_import_candidate_date_precision_check",
+      sql`${table.datePrecision} in ('timestamp', 'day')`,
     ),
   ],
 );
@@ -1060,6 +1300,25 @@ export const externalImportLinks = sqliteTable(
   ],
 );
 
+export const externalCandidateMatchLinks = sqliteTable(
+  "external_candidate_match_links",
+  {
+    candidateId: text("candidate_id")
+      .primaryKey()
+      .references(() => externalTransactionCandidates.id, {
+        onDelete: "restrict",
+      }),
+    ledgerEventId: text("ledger_event_id")
+      .notNull()
+      .references(() => ledgerEvents.id, { onDelete: "restrict" }),
+    matchedAt: text("matched_at").notNull(),
+    matchFingerprint: text("match_fingerprint").notNull(),
+  },
+  (table) => [
+    index("external_candidate_match_ledger_event_idx").on(table.ledgerEventId),
+  ],
+);
+
 export type BookRow = typeof books.$inferSelect;
 export type AssetRow = typeof assets.$inferSelect;
 export type AccountRow = typeof accounts.$inferSelect;
@@ -1095,3 +1354,15 @@ export type ExternalTransactionLegRow =
 export type EvmCandidateDetailRow = typeof evmCandidateDetails.$inferSelect;
 export type EvmL2GasFeeDetailRow = typeof evmL2GasFeeDetails.$inferSelect;
 export type ExternalImportLinkRow = typeof externalImportLinks.$inferSelect;
+export type FileImportProfileRow = typeof fileImportProfiles.$inferSelect;
+export type FileImportBatchRow = typeof fileImportBatches.$inferSelect;
+export type FileImportSourceDetailRow =
+  typeof fileImportSourceDetails.$inferSelect;
+export type FileImportBatchSourceObjectRow =
+  typeof fileImportBatchSourceObjects.$inferSelect;
+export type FileImportCandidateDetailRow =
+  typeof fileImportCandidateDetails.$inferSelect;
+export type FileImportBalanceObservationDetailRow =
+  typeof fileImportBalanceObservationDetails.$inferSelect;
+export type ExternalCandidateMatchLinkRow =
+  typeof externalCandidateMatchLinks.$inferSelect;

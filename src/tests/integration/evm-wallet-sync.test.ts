@@ -35,6 +35,20 @@ const BAD_TOKEN = "0x7777777777777777777777777777777777777777";
 const UNKNOWN_TOKEN = "0x8888888888888888888888888888888888888888";
 const EVM_NATIVE_ASSET_KEY = evmNativeAssetKey(1);
 
+const V6_FILE_IMPORT_DATA_KEYS = [
+  "fileImportProfiles",
+  "fileImportBatches",
+  "fileImportSourceDetails",
+  "fileImportBatchSourceObjects",
+  "fileImportCandidateDetails",
+  "externalCandidateMatchLinks",
+  "fileImportBalanceObservationDetails",
+] as const;
+
+function removeV6FileImportFacts(data: Record<string, unknown>): void {
+  for (const key of V6_FILE_IMPORT_DATA_KEYS) delete data[key];
+}
+
 function fixtureSnapshot(
   syncCompletedAt = "2026-08-12T08:00:00.000Z",
   balanceObservedAt = syncCompletedAt,
@@ -720,7 +734,7 @@ describe("EVM wallet sync persistence", () => {
     const payload = new BackupService(database!.context).exportBackup();
     const json = JSON.stringify(payload);
 
-    expect(payload.schemaVersion).toBe(5);
+    expect(payload.schemaVersion).toBe(6);
     expect(payload.data.evmWalletConnections).toHaveLength(1);
     expect(payload.data.evmBalanceObservationDetails).toHaveLength(2);
     expect(payload.data.evmCandidateDetails).toHaveLength(2);
@@ -775,7 +789,7 @@ describe("EVM wallet sync persistence", () => {
     }
   });
 
-  it("upgrades a schemaVersion 4 Ethereum backup to V5 without inventing L2 facts", async () => {
+  it("upgrades a schemaVersion 4 Ethereum backup to V6 without inventing L2 facts", async () => {
     await syncAndMapEth();
     const current = new BackupService(database!.context).exportBackup();
     const legacyV4 = structuredClone(current) as unknown as {
@@ -786,6 +800,7 @@ describe("EVM wallet sync persistence", () => {
     };
     legacyV4.schemaVersion = 4;
     delete legacyV4.data.evmL2GasFeeDetails;
+    removeV6FileImportFacts(legacyV4.data);
     for (const detail of legacyV4.data.evmCandidateDetails) {
       delete detail.nativeTraceStatus;
     }
@@ -793,7 +808,7 @@ describe("EVM wallet sync persistence", () => {
     const target = createTestDatabase();
     try {
       const preview = new BackupService(target.context).restore(legacyV4);
-      expect(preview.schemaVersion).toBe(5);
+      expect(preview.schemaVersion).toBe(6);
       const restored = readBackupData(target.context.db);
       expect(restored.evmL2GasFeeDetails).toEqual([]);
       expect(
@@ -854,6 +869,7 @@ describe("EVM wallet sync persistence", () => {
     delete legacyV3.data.evmBalanceObservationDetails;
     delete legacyV3.data.evmCandidateDetails;
     delete legacyV3.data.evmL2GasFeeDetails;
+    removeV6FileImportFacts(legacyV3.data);
     for (const connection of legacyV3.data.externalConnections) {
       delete connection.sourceKey;
     }
@@ -861,7 +877,7 @@ describe("EVM wallet sync persistence", () => {
     const target = createTestDatabase();
     try {
       const preview = new BackupService(target.context).restore(legacyV3);
-      expect(preview.schemaVersion).toBe(5);
+      expect(preview.schemaVersion).toBe(6);
       expect(
         readBackupData(target.context.db).externalConnections,
       ).toMatchObject([{ provider: "kraken", sourceKey: "kraken:primary" }]);

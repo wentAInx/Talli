@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.14">
+  <BkToCstmrStmt>
+    <GrpHdr><MsgId>MSG-202608</MsgId><CreDtTm>2026-08-31T23:59:59Z</CreDtTm></GrpHdr>
+    <Stmt>
+      <Id>STMT-202608</Id>
+      <FrToDt><FrDtTm>2026-08-01T00:00:00Z</FrDtTm><ToDtTm>2026-08-31T23:59:59Z</ToDtTm></FrToDt>
+      <Acct><Id><IBAN>DE89370400440532013000</IBAN></Id><Ccy>EUR</Ccy></Acct>
+      <Bal><Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">5157.50</Amt><CdtDbtInd>CRDT</CdtDbtInd><Dt><Dt>2026-08-31</Dt></Dt></Bal>
+      <Ntry>
+        <NtryRef>NTRY-3001</NtryRef><Amt Ccy="EUR">42.50</Amt><CdtDbtInd>DBIT</CdtDbtInd><Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-08-10</Dt></BookgDt><AcctSvcrRef>ASR-3001</AcctSvcrRef>
+        <NtryDtls><TxDtls><Refs><TxId>TX-3001</TxId></Refs><RltdPties><Cdtr><Pty><Nm>Coffee Shop</Nm></Pty></Cdtr></RltdPties><RmtInf><Ustrd>Breakfast</Ustrd></RmtInf></TxDtls></NtryDtls>
+      </Ntry>
+      <Ntry>
+        <NtryRef>NTRY-3002</NtryRef><Amt Ccy="EUR">1200.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-08-25</Dt></BookgDt><AcctSvcrRef>ASR-3002</AcctSvcrRef>
+        <NtryDtls><TxDtls><Refs><TxId>TX-3002</TxId></Refs><RltdPties><Dbtr><Pty><Nm>Employer GmbH</Nm></Pty></Dbtr></RltdPties><RmtInf><Ustrd>Salary August</Ustrd></RmtInf></TxDtls></NtryDtls>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

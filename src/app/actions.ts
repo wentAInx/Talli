@@ -11,6 +11,7 @@ import {
   AccountService,
   ExternalMappingService,
   EvmWalletService,
+  FileImportService,
   LedgerCommandService,
   ManualPriceService,
   ProviderMappingService,
@@ -801,6 +802,104 @@ export async function createEvmWalletAction(
     return actionError(error);
   }
   revalidatePath("/sync");
+  return { error: null };
+}
+
+export async function createFileImportProfileAction(
+  _previous: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  void _previous;
+  try {
+    const format = z
+      .enum(["csv", "ofx", "qfx", "camt053"], {
+        error: "请选择支持的 statement 格式。",
+      })
+      .parse(formData.get("format"));
+    const timezone = requiredFormText(formData, "timezone", "Statement 时区");
+    const parserConfig =
+      format === "csv"
+        ? {
+            hasHeader: formData.get("hasHeader") === "on",
+            encoding: z
+              .enum(["utf-8", "windows-1252", "gb18030"])
+              .parse(formData.get("encoding")),
+            delimiter: z
+              .enum([",", ";", "\t"])
+              .parse(formData.get("delimiter")),
+            dateColumn: requiredFormText(formData, "dateColumn", "日期列"),
+            dateFormat: z
+              .enum([
+                "YYYY-MM-DD",
+                "YYYY/MM/DD",
+                "YYYYMMDD",
+                "DD/MM/YYYY",
+                "MM/DD/YYYY",
+                "DD.MM.YYYY",
+              ])
+              .parse(formData.get("dateFormat")),
+            timeColumn: optionalFormText(formData, "timeColumn"),
+            timeFormat: z
+              .enum(["HH:mm", "HH:mm:ss"])
+              .nullable()
+              .parse(optionalFormText(formData, "timeFormat")),
+            amountMode:
+              formData.get("amountMode") === "debit_credit"
+                ? {
+                    kind: "debit_credit" as const,
+                    debitColumn: requiredFormText(
+                      formData,
+                      "debitColumn",
+                      "Debit 列",
+                    ),
+                    creditColumn: requiredFormText(
+                      formData,
+                      "creditColumn",
+                      "Credit 列",
+                    ),
+                  }
+                : {
+                    kind: "signed" as const,
+                    amountColumn: requiredFormText(
+                      formData,
+                      "amountColumn",
+                      "金额列",
+                    ),
+                  },
+            decimalSeparator: z
+              .enum([".", ","])
+              .parse(formData.get("decimalSeparator")),
+            thousandsSeparator: z
+              .enum([",", ".", " "])
+              .nullable()
+              .parse(optionalFormText(formData, "thousandsSeparator")),
+            invertSign: formData.get("invertSign") === "on",
+            idColumn: optionalFormText(formData, "idColumn"),
+            payeeColumn: optionalFormText(formData, "payeeColumn"),
+            memoColumn: optionalFormText(formData, "memoColumn"),
+            currencyColumn: optionalFormText(formData, "currencyColumn"),
+            timezone,
+          }
+        : { timezoneForDateOnly: timezone };
+    await withDatabase((context) => {
+      const bookId = new ReferenceDataService(context).getDefaultBookId();
+      return new FileImportService(context).createProfile({
+        bookId,
+        targetAccountId: requiredFormText(
+          formData,
+          "targetAccountId",
+          "Target account",
+        ),
+        name: requiredFormText(formData, "name", "Profile 名称"),
+        format,
+        parserConfig,
+        confirmed: true,
+      });
+    });
+  } catch (error) {
+    return actionError(error);
+  }
+  revalidatePath("/import");
   return { error: null };
 }
 

@@ -50,6 +50,13 @@
       "when": 1786612536923,
       "tag": "0006_v41_evm_l2_expansion",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786691841746,
+      "tag": "0007_v5_financial_file_import",
+      "breakpoints": true
     }
   ]
 }

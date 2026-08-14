@@ -83,6 +83,11 @@ export class ExternalMappingService {
           "EXTERNAL_CONNECTION_NOT_FOUND",
           "External connection was not found.",
         );
+        assertService(
+          connection.provider !== "file_import",
+          "FILE_IMPORT_PROFILE_MAPPING_IMMUTABLE",
+          "File-import account mappings are bound by their explicit profile and cannot be changed here.",
+        );
         const existing = findExternalAssetMapping(
           transaction,
           input.connectionId,

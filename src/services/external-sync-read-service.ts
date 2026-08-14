@@ -100,8 +100,15 @@ export class ExternalSyncReadService {
     const assets = new Map(
       listAssets(this.context.db).map((row) => [row.id, row]),
     );
-    const connections = listExternalConnections(this.context.db).map(
-      (connection) => {
+    const connections = listExternalConnections(this.context.db)
+      .filter(
+        (
+          connection,
+        ): connection is typeof connection & {
+          provider: "kraken" | "evm_wallet";
+        } => connection.provider !== "file_import",
+      )
+      .map((connection) => {
         const accounts = new Map(
           listAccountsForBook(this.context.db, connection.bookId).map((row) => [
             row.id,
@@ -312,8 +319,7 @@ export class ExternalSyncReadService {
               assetCode: assets.get(account.assetId)?.code ?? "?",
             })),
         };
-      },
-    );
+      });
     return { connections };
   }
 

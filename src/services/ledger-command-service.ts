@@ -21,6 +21,7 @@ import {
   insertEventTags,
   insertLedgerEntries,
   insertLedgerEvent,
+  listExternalCandidateMatchLinksByLedgerEvent,
   updateLedgerEvent,
 } from "../db/queries";
 import { assertService, ServiceError } from "./errors";
@@ -401,6 +402,12 @@ export class LedgerCommandService {
             `Event ${eventId} was not found.`,
           );
         }
+        assertService(
+          listExternalCandidateMatchLinksByLedgerEvent(transaction, eventId)
+            .length === 0,
+          "MATCHED_EVENT_EDIT_FORBIDDEN",
+          "Unlink file-import matches before editing this Ledger event.",
+        );
 
         const prepared = prepareCommand(transaction, command, {
           categoryId: existing.categoryId,
@@ -442,6 +449,12 @@ export class LedgerCommandService {
           !findExternalImportLinkByLedgerEvent(transaction, eventId),
           "IMPORTED_EVENT_DELETE_FORBIDDEN",
           "Imported events retain provenance and cannot be deleted in V3.",
+        );
+        assertService(
+          listExternalCandidateMatchLinksByLedgerEvent(transaction, eventId)
+            .length === 0,
+          "MATCHED_EVENT_DELETE_FORBIDDEN",
+          "Unlink file-import matches before deleting this Ledger event.",
         );
         deleteLedgerEvent(transaction, eventId);
       },

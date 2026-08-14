@@ -112,7 +112,7 @@ describe("Backup v2 valuation compatibility", () => {
     const payload = new BackupService(source.database.context).exportBackup();
     const json = JSON.stringify(payload);
 
-    expect(payload.schemaVersion).toBe(5);
+    expect(payload.schemaVersion).toBe(6);
     expect(payload.data.bookValuationSettings).toMatchObject([
       { bookId: SEED_BOOK_ID, homeAssetId: seedAssetId("USD") },
     ]);
@@ -153,7 +153,7 @@ describe("Backup v2 valuation compatibility", () => {
     const preview = new BackupService(target.context).restore(legacy);
     const restored = readBackupData(target.context.db);
 
-    expect(preview.schemaVersion).toBe(5);
+    expect(preview.schemaVersion).toBe(6);
     expect(restored.accounts).toEqual(v1Data.accounts);
     expect(restored.balanceSnapshots).toEqual(v1Data.balanceSnapshots);
     expect(restored.ledgerEvents).toEqual(v1Data.ledgerEvents);

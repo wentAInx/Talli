@@ -10,6 +10,7 @@ import {
 } from "./ledger";
 import { normalizePositiveDecimalText } from "./price-decimal";
 import {
+  canonicalExternalJson,
   canonicalExternalDecimalText,
   externalDecimalToAtomic,
   validatedExternalDecimalText,
@@ -28,13 +29,15 @@ import {
 } from "./evm";
 import { assertIanaTimeZone, canonicalUtcInstantValue } from "./time";
 import type { LedgerEntryDraft } from "./types";
+import { MAX_FILE_IMPORT_TEXT_CHARS } from "./file-import";
 
 export const BACKUP_FORMAT = "multi-asset-ledger-backup";
 export const BACKUP_LEGACY_SCHEMA_VERSION = 1;
 export const BACKUP_V2_SCHEMA_VERSION = 2;
 export const BACKUP_V3_SCHEMA_VERSION = 3;
 export const BACKUP_V4_SCHEMA_VERSION = 4;
-export const BACKUP_SCHEMA_VERSION = 5;
+export const BACKUP_V5_SCHEMA_VERSION = 5;
+export const BACKUP_SCHEMA_VERSION = 6;
 
 export class BackupValidationError extends Error {
   constructor(
@@ -47,6 +50,10 @@ export class BackupValidationError extends Error {
 }
 
 const id = z.string().trim().min(1).max(255);
+const fileExternalIdentity = z
+  .string()
+  .min(1)
+  .max(MAX_FILE_IMPORT_TEXT_CHARS + 64);
 const nullableText = z.string().nullable();
 const canonicalInstant = z.string().refine((value) => {
   try {
@@ -309,6 +316,23 @@ const externalConnectionSchema = z.discriminatedUnion("provider", [
     .strict(),
 ]);
 
+const v6ExternalConnectionSchema = z.discriminatedUnion("provider", [
+  ...externalConnectionSchema.options,
+  z
+    .object({
+      id,
+      bookId: id,
+      provider: z.literal("file_import"),
+      sourceKey: id,
+      name: z.string(),
+      credentialRef: z.literal("local:file-import"),
+      isEnabled: z.boolean(),
+      createdAt: canonicalInstant,
+      updatedAt: canonicalInstant,
+    })
+    .strict(),
+]);
+
 const externalAssetMappingSchema = z
   .object({
     connectionId: id,
@@ -370,6 +394,14 @@ const externalSourceObjectSchema = v3ExternalSourceObjectSchema.extend({
     "evm_transfer",
   ]),
 });
+
+const v6ExternalSourceObjectSchema = z.union([
+  externalSourceObjectSchema,
+  v3ExternalSourceObjectSchema.extend({
+    objectType: z.literal("file_transaction"),
+    externalId: fileExternalIdentity,
+  }),
+]);
 
 const v4EvmWalletConnectionSchema = z
   .object({
@@ -546,6 +578,20 @@ const externalTransactionCandidateSchema = z
   })
   .strict();
 
+const v6ExternalTransactionCandidateSchema =
+  externalTransactionCandidateSchema.extend({
+    stableKey: fileExternalIdentity,
+    status: z.enum([
+      "pending",
+      "needs_mapping",
+      "ignored",
+      "imported",
+      "matched",
+      "unsupported",
+      "source_changed",
+    ]),
+  });
+
 const externalCandidateSourceObjectSchema = z
   .object({
     candidateId: id,
@@ -584,6 +630,218 @@ const externalImportLinkSchema = z
     importFingerprint: sha256Text,
   })
   .strict();
+
+const fileImportFormatSchema = z.enum(["csv", "ofx", "qfx", "camt053"]);
+
+const csvAmountModeSchema = z.discriminatedUnion("kind", [
+  z
+    .object({ kind: z.literal("signed"), amountColumn: z.string().min(1) })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("debit_credit"),
+      debitColumn: z.string().min(1),
+      creditColumn: z.string().min(1),
+    })
+    .strict(),
+]);
+
+const csvImportConfigSchema = z
+  .object({
+    hasHeader: z.boolean(),
+    encoding: z.enum(["utf-8", "windows-1252", "gb18030"]),
+    delimiter: z.enum([",", ";", "\t"]),
+    dateColumn: z.string().min(1),
+    dateFormat: z.enum([
+      "YYYY-MM-DD",
+      "YYYY/MM/DD",
+      "YYYYMMDD",
+      "DD/MM/YYYY",
+      "MM/DD/YYYY",
+      "DD.MM.YYYY",
+    ]),
+    timeColumn: z.string().min(1).nullable(),
+    timeFormat: z.enum(["HH:mm", "HH:mm:ss"]).nullable(),
+    amountMode: csvAmountModeSchema,
+    decimalSeparator: z.enum([".", ","]),
+    thousandsSeparator: z.enum([",", ".", " "]).nullable(),
+    invertSign: z.boolean(),
+    idColumn: z.string().min(1).nullable(),
+    payeeColumn: z.string().min(1).nullable(),
+    memoColumn: z.string().min(1).nullable(),
+    currencyColumn: z.string().min(1).nullable(),
+    timezone: z.string(),
+  })
+  .strict();
+
+const structuredImportConfigSchema = z
+  .object({ timezoneForDateOnly: z.string() })
+  .strict();
+
+const fileImportProfileSchema = z
+  .object({
+    connectionId: id,
+    targetAccountId: id,
+    format: fileImportFormatSchema,
+    parserConfigJson: jsonText,
+    statementAccountFingerprint: sha256Text.nullable(),
+    statementAccountLast4: z.string().min(1).max(4).nullable(),
+    statementCurrencyCode: z.string().trim().min(1).max(30).nullable(),
+    createdAt: canonicalInstant,
+    updatedAt: canonicalInstant,
+  })
+  .strict();
+
+const fileImportBatchSchema = z
+  .object({
+    id,
+    connectionId: id,
+    fileSha256: sha256Text,
+    originalFilename: z.string().min(1).max(255),
+    format: fileImportFormatSchema,
+    parserVersion: z.number().int().positive(),
+    ingestedAt: canonicalInstant,
+    sourceRowCount: z.number().int().nonnegative(),
+    newCandidateCount: z.number().int().nonnegative(),
+    duplicateCount: z.number().int().nonnegative(),
+    unsupportedCount: z.number().int().nonnegative(),
+    statementFromDate: nullableText,
+    statementToDate: nullableText,
+  })
+  .strict();
+
+const fileImportSourceDetailSchema = z
+  .object({
+    sourceObjectId: id,
+    identityStrength: z.enum(["strong", "weak"]),
+    sourceIdKind: z.enum([
+      "fitid",
+      "acct_svcr_ref",
+      "tx_id",
+      "ntry_ref",
+      "csv_id",
+      "weak_signature",
+    ]),
+    originalDateText: z.string(),
+    datePrecision: z.enum(["timestamp", "day"]),
+    normalizedPayee: nullableText,
+    memo: nullableText,
+    statementCurrencyCode: nullableText,
+  })
+  .strict();
+
+const fileImportBatchSourceObjectSchema = z
+  .object({
+    batchId: id,
+    sourceObjectId: id,
+    rowIndex: z.number().int().nonnegative(),
+    rawRowSha256: sha256Text,
+  })
+  .strict();
+
+const fileImportCandidateDetailSchema = z
+  .object({
+    candidateId: id,
+    targetAccountId: id,
+    direction: z.enum(["in", "out"]),
+    normalizedPayee: nullableText,
+    memo: nullableText,
+    sourceDateText: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    datePrecision: z.enum(["timestamp", "day"]),
+  })
+  .strict();
+
+const externalCandidateMatchLinkSchema = z
+  .object({
+    candidateId: id,
+    ledgerEventId: id,
+    matchedAt: canonicalInstant,
+    matchFingerprint: sha256Text,
+  })
+  .strict();
+
+const fileImportBalanceObservationDetailSchema = z
+  .object({
+    observationId: id,
+    batchId: id,
+    balanceKind: z.enum(["closing_ledger", "closing_booked"]),
+    sourceDateText: z.string(),
+    datePrecision: z.enum(["timestamp", "day"]),
+    statementCurrencyCode: z.string().trim().min(1).max(30),
+  })
+  .strict();
+
+const fileSourcePayloadBase = {
+  sourceExternalId: fileExternalIdentity,
+  originalDateText: z.string(),
+  datePrecision: z.enum(["timestamp", "day"]),
+  signedAmountText: externalDecimalText,
+  currencyCode: nullableText,
+  payee: nullableText,
+  memo: nullableText,
+  unsupportedReason: nullableText,
+} as const;
+
+const fileSourcePayloadSchema = z.union([
+  z
+    .object({
+      ...fileSourcePayloadBase,
+      format: z.literal("csv"),
+      selectedFields: z
+        .object({
+          id: nullableText,
+          date: z.string(),
+          amount: externalDecimalText,
+          payee: nullableText,
+          memo: nullableText,
+          currency: z.string(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...fileSourcePayloadBase,
+      format: z.enum(["ofx", "qfx"]),
+      selectedFields: z
+        .object({
+          fitid: nullableText,
+          transactionType: nullableText,
+          date: z.string(),
+          amount: externalDecimalText,
+          payee: nullableText,
+          memo: nullableText,
+          checkNumber: nullableText,
+          referenceNumber: nullableText,
+          sic: nullableText,
+          currency: z.string(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...fileSourcePayloadBase,
+      format: z.literal("camt053"),
+      selectedFields: z
+        .object({
+          accountServicerReference: nullableText,
+          entryReference: nullableText,
+          transactionId: nullableText,
+          endToEndId: nullableText,
+          date: z.string(),
+          valueDate: nullableText,
+          amount: externalDecimalText,
+          currency: z.string(),
+          payee: nullableText,
+          memo: nullableText,
+          bankTransactionCode: nullableText,
+          status: nullableText,
+        })
+        .strict(),
+    })
+    .strict(),
+]);
 
 const v1DataSchema = z
   .object({
@@ -643,6 +901,25 @@ const v5DataSchema = v4DataSchema
   })
   .strict();
 
+const v6DataSchema = v5DataSchema
+  .extend({
+    externalConnections: z.array(v6ExternalConnectionSchema),
+    externalSourceObjects: z.array(v6ExternalSourceObjectSchema),
+    externalTransactionCandidates: z.array(
+      v6ExternalTransactionCandidateSchema,
+    ),
+    fileImportProfiles: z.array(fileImportProfileSchema),
+    fileImportBatches: z.array(fileImportBatchSchema),
+    fileImportSourceDetails: z.array(fileImportSourceDetailSchema),
+    fileImportBatchSourceObjects: z.array(fileImportBatchSourceObjectSchema),
+    fileImportCandidateDetails: z.array(fileImportCandidateDetailSchema),
+    externalCandidateMatchLinks: z.array(externalCandidateMatchLinkSchema),
+    fileImportBalanceObservationDetails: z.array(
+      fileImportBalanceObservationDetailSchema,
+    ),
+  })
+  .strict();
+
 const legacyBackupPayloadSchema = z
   .object({
     format: z.literal(BACKUP_FORMAT),
@@ -679,12 +956,21 @@ const v4BackupPayloadSchema = z
   })
   .strict();
 
+const v5BackupPayloadSchema = z
+  .object({
+    format: z.literal(BACKUP_FORMAT),
+    schemaVersion: z.literal(BACKUP_V5_SCHEMA_VERSION),
+    exportedAt: canonicalInstant,
+    data: v5DataSchema,
+  })
+  .strict();
+
 export const backupPayloadSchema = z
   .object({
     format: z.literal(BACKUP_FORMAT),
     schemaVersion: z.literal(BACKUP_SCHEMA_VERSION),
     exportedAt: canonicalInstant,
-    data: v5DataSchema,
+    data: v6DataSchema,
   })
   .strict();
 
@@ -694,6 +980,7 @@ type LegacyBackupPayload = z.infer<typeof legacyBackupPayloadSchema>;
 type V2BackupPayload = z.infer<typeof v2BackupPayloadSchema>;
 type V3BackupPayload = z.infer<typeof v3BackupPayloadSchema>;
 type V4BackupPayload = z.infer<typeof v4BackupPayloadSchema>;
+type V5BackupPayload = z.infer<typeof v5BackupPayloadSchema>;
 
 function fail(code: string, message: string): never {
   throw new BackupValidationError(code, message);
@@ -926,11 +1213,6 @@ function validateExternalRelations(data: BackupData): void {
     "external account mapping",
   );
   uniqueBy(
-    data.externalAccountMappings,
-    (row) => row.talliAccountId,
-    "externally mapped Talli account",
-  );
-  uniqueBy(
     data.externalBalanceObservations,
     (row) => row.id,
     "external balance observation id",
@@ -973,6 +1255,52 @@ function validateExternalRelations(data: BackupData): void {
     (row) => row.ledgerEventId,
     "imported ledger event",
   );
+  uniqueBy(
+    data.fileImportProfiles,
+    (row) => row.connectionId,
+    "file-import profile",
+  );
+  uniqueBy(data.fileImportBatches, (row) => row.id, "file-import batch id");
+  uniqueBy(
+    data.fileImportBatches,
+    (row) => `${row.connectionId}\u0000${row.fileSha256}`,
+    "file-import file identity",
+  );
+  uniqueBy(
+    data.fileImportSourceDetails,
+    (row) => row.sourceObjectId,
+    "file-import source detail",
+  );
+  uniqueBy(
+    data.fileImportBatchSourceObjects,
+    (row) => `${row.batchId}\u0000${row.sourceObjectId}`,
+    "file-import batch source",
+  );
+  uniqueBy(
+    data.fileImportBatchSourceObjects,
+    (row) => `${row.batchId}\u0000${row.rowIndex}`,
+    "file-import batch row",
+  );
+  uniqueBy(
+    data.fileImportCandidateDetails,
+    (row) => row.candidateId,
+    "file-import candidate detail",
+  );
+  uniqueBy(
+    data.externalCandidateMatchLinks,
+    (row) => row.candidateId,
+    "candidate match link",
+  );
+  uniqueBy(
+    data.fileImportBalanceObservationDetails,
+    (row) => row.observationId,
+    "file-import balance observation detail",
+  );
+  uniqueBy(
+    data.fileImportBalanceObservationDetails,
+    (row) => row.batchId,
+    "file-import batch balance",
+  );
 
   const books = new Map(data.books.map((row) => [row.id, row]));
   const assets = new Map(data.assets.map((row) => [row.id, row]));
@@ -1001,6 +1329,12 @@ function validateExternalRelations(data: BackupData): void {
       row,
     ]),
   );
+  const accountMappings = new Map(
+    data.externalAccountMappings.map((row) => [
+      mappingKey(row.connectionId, row.providerAssetKey),
+      row,
+    ]),
+  );
   const sources = new Map(
     data.externalSourceObjects.map((row) => [row.id, row]),
   );
@@ -1018,6 +1352,33 @@ function validateExternalRelations(data: BackupData): void {
   }
   const importLinks = new Map(
     data.externalImportLinks.map((row) => [row.candidateId, row]),
+  );
+  const fileProfiles = new Map(
+    data.fileImportProfiles.map((row) => [row.connectionId, row]),
+  );
+  const fileBatches = new Map(
+    data.fileImportBatches.map((row) => [row.id, row]),
+  );
+  const fileBatchRows = new Map<string, number[]>();
+  for (const link of data.fileImportBatchSourceObjects) {
+    const rows = fileBatchRows.get(link.batchId) ?? [];
+    rows.push(link.rowIndex);
+    fileBatchRows.set(link.batchId, rows);
+  }
+  const fileSourceDetails = new Map(
+    data.fileImportSourceDetails.map((row) => [row.sourceObjectId, row]),
+  );
+  const fileCandidateDetails = new Map(
+    data.fileImportCandidateDetails.map((row) => [row.candidateId, row]),
+  );
+  const matchLinks = new Map(
+    data.externalCandidateMatchLinks.map((row) => [row.candidateId, row]),
+  );
+  const fileBalanceDetails = new Map(
+    data.fileImportBalanceObservationDetails.map((row) => [
+      row.observationId,
+      row,
+    ]),
   );
 
   for (const connection of data.externalConnections) {
@@ -1038,7 +1399,13 @@ function validateExternalRelations(data: BackupData): void {
           `Kraken connection ${connection.id} has inconsistent identity.`,
         );
       }
-    } else {
+      if (fileProfiles.has(connection.id)) {
+        fail(
+          "BACKUP_FILE_IMPORT_RELATION",
+          `Kraken connection ${connection.id} cannot contain a file profile.`,
+        );
+      }
+    } else if (connection.provider === "evm_wallet") {
       const wallet = evmWallets.get(connection.id);
       if (!wallet) {
         fail(
@@ -1061,6 +1428,77 @@ function validateExternalRelations(data: BackupData): void {
           `EVM connection ${connection.id} has inconsistent chain identity.`,
         );
       }
+      if (fileProfiles.has(connection.id)) {
+        fail(
+          "BACKUP_FILE_IMPORT_RELATION",
+          `EVM connection ${connection.id} cannot contain a file profile.`,
+        );
+      }
+    } else {
+      const profile = fileProfiles.get(connection.id);
+      const account = profile
+        ? accounts.get(profile.targetAccountId)
+        : undefined;
+      const key = `file:${connection.id}:target`;
+      const assetMapping = mappings.get(mappingKey(connection.id, key));
+      const accountMapping = accountMappings.get(
+        mappingKey(connection.id, key),
+      );
+      if (
+        !profile ||
+        connection.sourceKey !== `file:${connection.id}` ||
+        connection.credentialRef !== "local:file-import" ||
+        evmWallets.has(connection.id) ||
+        !account ||
+        account.bookId !== connection.bookId ||
+        assetMapping?.mappingStatus !== "mapped" ||
+        assetMapping.talliAssetId !== account.assetId ||
+        accountMapping?.talliAccountId !== account.id ||
+        accountMapping.isEnabled !== true
+      ) {
+        fail(
+          "BACKUP_FILE_IMPORT_PROFILE_INVALID",
+          `File-import profile ${connection.id} has inconsistent account mapping or identity.`,
+        );
+      }
+      let config: unknown;
+      try {
+        config = JSON.parse(profile.parserConfigJson);
+      } catch {
+        config = null;
+      }
+      let timezone: string | null = null;
+      let configIsValid = false;
+      if (profile.format === "csv") {
+        const parsedConfig = csvImportConfigSchema.safeParse(config);
+        if (parsedConfig.success) {
+          timezone = parsedConfig.data.timezone;
+          configIsValid = true;
+        }
+      } else {
+        const parsedConfig = structuredImportConfigSchema.safeParse(config);
+        if (parsedConfig.success) {
+          timezone = parsedConfig.data.timezoneForDateOnly;
+          configIsValid = true;
+        }
+      }
+      try {
+        if (!configIsValid || !timezone) throw new Error("bad config");
+        assertIanaTimeZone(timezone);
+      } catch {
+        fail(
+          "BACKUP_FILE_IMPORT_CONFIG_INVALID",
+          `File-import profile ${connection.id} has an incompatible parser configuration.`,
+        );
+      }
+    }
+  }
+  for (const profile of data.fileImportProfiles) {
+    if (connections.get(profile.connectionId)?.provider !== "file_import") {
+      fail(
+        "BACKUP_FILE_IMPORT_RELATION",
+        `File-import profile ${profile.connectionId} is orphaned.`,
+      );
     }
   }
   for (const wallet of data.evmWalletConnections) {
@@ -1124,6 +1562,47 @@ function validateExternalRelations(data: BackupData): void {
       );
     }
   }
+  for (const batch of data.fileImportBatches) {
+    const profile = fileProfiles.get(batch.connectionId);
+    const linkedRows = [...(fileBatchRows.get(batch.id) ?? [])].sort(
+      (left, right) => left - right,
+    );
+    const unlinkedDuplicateRows = batch.sourceRowCount - linkedRows.length;
+    if (
+      !profile ||
+      profile.format !== batch.format ||
+      (batch.sourceRowCount === 0
+        ? linkedRows.length !== 0
+        : linkedRows.length === 0) ||
+      unlinkedDuplicateRows < 0 ||
+      unlinkedDuplicateRows > batch.duplicateCount ||
+      batch.newCandidateCount > linkedRows.length ||
+      batch.duplicateCount > batch.sourceRowCount ||
+      batch.unsupportedCount > batch.sourceRowCount ||
+      /[\\/\u0000-\u001f\u007f]/.test(batch.originalFilename)
+    ) {
+      fail(
+        "BACKUP_FILE_IMPORT_BATCH_INVALID",
+        `File-import batch ${batch.id} has inconsistent profile, counts, or filename.`,
+      );
+    }
+  }
+  for (const link of data.fileImportBatchSourceObjects) {
+    const batch = fileBatches.get(link.batchId);
+    const source = sources.get(link.sourceObjectId);
+    if (
+      !batch ||
+      !source ||
+      source.objectType !== "file_transaction" ||
+      source.connectionId !== batch.connectionId ||
+      link.rowIndex >= batch.sourceRowCount
+    ) {
+      fail(
+        "BACKUP_FILE_IMPORT_BATCH_SOURCE_INVALID",
+        `File-import batch source ${link.batchId}/${link.sourceObjectId} is inconsistent.`,
+      );
+    }
+  }
   for (const observation of data.externalBalanceObservations) {
     const connection = connections.get(observation.connectionId);
     if (
@@ -1181,10 +1660,39 @@ function validateExternalRelations(data: BackupData): void {
           `EVM observation ${observation.id} has inconsistent asset identity.`,
         );
       }
-    } else if (evmObservationDetails.has(observation.id)) {
+    } else if (connection?.provider === "file_import") {
+      const detail = fileBalanceDetails.get(observation.id);
+      const batch = detail ? fileBatches.get(detail.batchId) : undefined;
+      const profile = fileProfiles.get(observation.connectionId);
+      const account = profile
+        ? accounts.get(profile.targetAccountId)
+        : undefined;
+      if (
+        !detail ||
+        !batch ||
+        batch.connectionId !== observation.connectionId ||
+        !profile ||
+        !account ||
+        observation.providerAssetKey !==
+          `file:${observation.connectionId}:target` ||
+        observation.talliAssetId !== account.assetId ||
+        observation.precisionStatus !== "exact" ||
+        observation.mappedAmountAtomic === null ||
+        detail.statementCurrencyCode !==
+          (profile.statementCurrencyCode ?? assets.get(account.assetId)?.code)
+      ) {
+        fail(
+          "BACKUP_FILE_IMPORT_OBSERVATION_INVALID",
+          `File-import observation ${observation.id} has inconsistent statement provenance.`,
+        );
+      }
+    } else if (
+      evmObservationDetails.has(observation.id) ||
+      fileBalanceDetails.has(observation.id)
+    ) {
       fail(
-        "BACKUP_EVM_RELATION",
-        `Non-EVM observation ${observation.id} contains EVM details.`,
+        "BACKUP_EXTERNAL_RELATION",
+        `Observation ${observation.id} contains provider-incompatible details.`,
       );
     }
     validateExternalAmount({
@@ -1210,6 +1718,20 @@ function validateExternalRelations(data: BackupData): void {
       );
     }
   }
+  for (const detail of data.fileImportBalanceObservationDetails) {
+    const observation = data.externalBalanceObservations.find(
+      (row) => row.id === detail.observationId,
+    );
+    if (
+      !observation ||
+      connections.get(observation.connectionId)?.provider !== "file_import"
+    ) {
+      fail(
+        "BACKUP_FILE_IMPORT_RELATION",
+        `File-import observation detail ${detail.observationId} is orphaned.`,
+      );
+    }
+  }
   for (const source of data.externalSourceObjects) {
     const connection = connections.get(source.connectionId);
     if (!connection) {
@@ -1221,7 +1743,15 @@ function validateExternalRelations(data: BackupData): void {
     const isKrakenSource =
       source.objectType === "kraken_ledger" ||
       source.objectType === "kraken_trade";
-    if ((connection.provider === "kraken") !== isKrakenSource) {
+    const isEvmSource =
+      source.objectType === "evm_transaction" ||
+      source.objectType === "evm_transfer";
+    const isFileSource = source.objectType === "file_transaction";
+    const compatible =
+      (connection.provider === "kraken" && isKrakenSource) ||
+      (connection.provider === "evm_wallet" && isEvmSource) ||
+      (connection.provider === "file_import" && isFileSource);
+    if (!compatible) {
       fail(
         "BACKUP_EXTERNAL_SOURCE_PROVIDER_INVALID",
         `External source ${source.id} is incompatible with its provider.`,
@@ -1232,6 +1762,51 @@ function validateExternalRelations(data: BackupData): void {
       fail(
         "BACKUP_EXTERNAL_SOURCE_HASH_INVALID",
         `External source ${source.id} payload hash does not match.`,
+      );
+    }
+    const fileDetail = fileSourceDetails.get(source.id);
+    if (connection.provider === "file_import") {
+      const profile = fileProfiles.get(connection.id);
+      let payload: unknown;
+      try {
+        payload = JSON.parse(source.payloadJson);
+      } catch {
+        payload = null;
+      }
+      const parsedPayload = fileSourcePayloadSchema.safeParse(payload);
+      const appearsInBatch = data.fileImportBatchSourceObjects.some(
+        (link) => link.sourceObjectId === source.id,
+      );
+      if (
+        !profile ||
+        !fileDetail ||
+        !parsedPayload.success ||
+        parsedPayload.data.format !== profile.format ||
+        parsedPayload.data.sourceExternalId !== source.externalId ||
+        parsedPayload.data.originalDateText !== fileDetail.originalDateText ||
+        parsedPayload.data.datePrecision !== fileDetail.datePrecision ||
+        parsedPayload.data.payee !== fileDetail.normalizedPayee ||
+        parsedPayload.data.memo !== fileDetail.memo ||
+        parsedPayload.data.currencyCode !== fileDetail.statementCurrencyCode ||
+        !appearsInBatch
+      ) {
+        fail(
+          "BACKUP_FILE_IMPORT_SOURCE_INVALID",
+          `File-import source ${source.id} has invalid selected-field provenance.`,
+        );
+      }
+    } else if (fileDetail) {
+      fail(
+        "BACKUP_FILE_IMPORT_RELATION",
+        `Non-file source ${source.id} contains file-import details.`,
+      );
+    }
+  }
+  for (const detail of data.fileImportSourceDetails) {
+    if (sources.get(detail.sourceObjectId)?.objectType !== "file_transaction") {
+      fail(
+        "BACKUP_FILE_IMPORT_RELATION",
+        `File-import source detail ${detail.sourceObjectId} is orphaned.`,
       );
     }
   }
@@ -1282,10 +1857,17 @@ function validateExternalRelations(data: BackupData): void {
           `EVM candidate ${candidate.id} has inconsistent transaction identity.`,
         );
       }
-    } else if (evmDetail || !candidate.stableKey.startsWith("kraken:")) {
+    } else if (connection.provider === "kraken") {
+      if (evmDetail || !candidate.stableKey.startsWith("kraken:")) {
+        fail(
+          "BACKUP_EXTERNAL_CANDIDATE_INVALID",
+          `Kraken candidate ${candidate.id} has an invalid namespace or subtype.`,
+        );
+      }
+    } else if (evmDetail) {
       fail(
-        "BACKUP_EXTERNAL_CANDIDATE_INVALID",
-        `Kraken candidate ${candidate.id} has an invalid namespace or subtype.`,
+        "BACKUP_FILE_IMPORT_CANDIDATE_INVALID",
+        `File-import candidate ${candidate.id} contains EVM details.`,
       );
     }
     const linked = data.externalCandidateSourceObjects.filter(
@@ -1329,13 +1911,76 @@ function validateExternalRelations(data: BackupData): void {
       );
     }
     const hasImport = importLinks.has(candidate.id);
+    const hasMatch = matchLinks.has(candidate.id);
+    const resolutionIsValid =
+      (candidate.status === "imported" && hasImport && !hasMatch) ||
+      (candidate.status === "matched" && hasMatch && !hasImport) ||
+      (candidate.status === "source_changed" && hasImport !== hasMatch) ||
+      (!["imported", "matched", "source_changed"].includes(candidate.status) &&
+        !hasImport &&
+        !hasMatch);
+    if (!resolutionIsValid) {
+      fail(
+        "BACKUP_EXTERNAL_RESOLUTION_STATE_INVALID",
+        `External candidate ${candidate.id} status and provenance disagree.`,
+      );
+    }
+    if (connection.provider === "file_import") {
+      const detail = fileCandidateDetails.get(candidate.id);
+      const profile = fileProfiles.get(candidate.connectionId);
+      const primaryLink = linked.find((link) => link.relation === "primary");
+      const primarySource = primaryLink
+        ? sources.get(primaryLink.sourceObjectId)
+        : undefined;
+      const legs = candidateLegs.get(candidate.id) ?? [];
+      const leg = legs[0];
+      const account = detail ? accounts.get(detail.targetAccountId) : undefined;
+      const expectedKey = `file:${candidate.connectionId}:target`;
+      const signedAmount = leg?.amountAtomic ? BigInt(leg.amountAtomic) : 0n;
+      const expectedRole =
+        detail?.direction === "out" ? "external_out" : "external_in";
+      if (
+        !detail ||
+        !profile ||
+        linked.length !== 1 ||
+        !primarySource ||
+        primarySource.objectType !== "file_transaction" ||
+        candidate.stableKey !== `file:${primarySource.externalId}` ||
+        candidate.suggestedEventType !== "unknown" ||
+        detail.targetAccountId !== profile.targetAccountId ||
+        !account ||
+        account.bookId !== connection.bookId ||
+        legs.length !== 1 ||
+        !leg ||
+        leg.role !== expectedRole ||
+        leg.providerAssetKey !== expectedKey ||
+        leg.talliAssetId !== account.assetId ||
+        leg.precisionStatus !== "exact" ||
+        leg.amountAtomic === null ||
+        signedAmount === 0n ||
+        (detail.direction === "out" ? signedAmount >= 0n : signedAmount <= 0n)
+      ) {
+        fail(
+          "BACKUP_FILE_IMPORT_CANDIDATE_INVALID",
+          `File-import candidate ${candidate.id} has inconsistent account, source, direction, or exact leg.`,
+        );
+      }
+    } else if (fileCandidateDetails.has(candidate.id) || hasMatch) {
+      fail(
+        "BACKUP_FILE_IMPORT_RELATION",
+        `Non-file candidate ${candidate.id} contains file-import details or match provenance.`,
+      );
+    }
+  }
+  for (const detail of data.fileImportCandidateDetails) {
+    const candidate = candidates.get(detail.candidateId);
     if (
-      (candidate.status === "imported" ||
-        candidate.status === "source_changed") !== hasImport
+      !candidate ||
+      connections.get(candidate.connectionId)?.provider !== "file_import"
     ) {
       fail(
-        "BACKUP_EXTERNAL_IMPORT_STATE_INVALID",
-        `External candidate ${candidate.id} import status and provenance disagree.`,
+        "BACKUP_FILE_IMPORT_RELATION",
+        `File-import candidate detail ${detail.candidateId} is orphaned.`,
       );
     }
   }
@@ -1492,6 +2137,54 @@ function validateExternalRelations(data: BackupData): void {
       fail(
         "BACKUP_EXTERNAL_IMPORT_INVALID",
         `External import link for candidate ${link.candidateId} is invalid.`,
+      );
+    }
+  }
+  for (const link of data.externalCandidateMatchLinks) {
+    const candidate = candidates.get(link.candidateId);
+    const event = events.get(link.ledgerEventId);
+    const connection = candidate
+      ? connections.get(candidate.connectionId)
+      : undefined;
+    const detail = candidate
+      ? fileCandidateDetails.get(candidate.id)
+      : undefined;
+    const leg = candidate
+      ? (candidateLegs.get(candidate.id) ?? [])[0]
+      : undefined;
+    const exactEntry = data.ledgerEntries.some(
+      (entry) =>
+        entry.eventId === link.ledgerEventId &&
+        entry.accountId === detail?.targetAccountId &&
+        entry.amountAtomic === leg?.amountAtomic,
+    );
+    const expectedFingerprint = candidate
+      ? createHash("sha256")
+          .update(
+            canonicalExternalJson({
+              candidateId: candidate.id,
+              ledgerEventId: link.ledgerEventId,
+              sourceFingerprint: candidate.sourceFingerprint,
+              matchedAt: link.matchedAt,
+            }),
+          )
+          .digest("hex")
+      : null;
+    if (
+      !candidate ||
+      !event ||
+      connection?.provider !== "file_import" ||
+      event.bookId !== connection.bookId ||
+      !detail ||
+      !leg ||
+      (candidate.status !== "matched" &&
+        candidate.status !== "source_changed") ||
+      (candidate.status === "matched" &&
+        (!exactEntry || link.matchFingerprint !== expectedFingerprint))
+    ) {
+      fail(
+        "BACKUP_FILE_IMPORT_MATCH_INVALID",
+        `File-import match for candidate ${link.candidateId} is invalid.`,
       );
     }
   }
@@ -1857,10 +2550,10 @@ function upgradeV3Backup(payload: V3BackupPayload): V4BackupPayload {
   };
 }
 
-function upgradeV4Backup(payload: V4BackupPayload): BackupPayload {
+function upgradeV4Backup(payload: V4BackupPayload): V5BackupPayload {
   return {
     ...payload,
-    schemaVersion: BACKUP_SCHEMA_VERSION,
+    schemaVersion: BACKUP_V5_SCHEMA_VERSION,
     data: {
       ...payload.data,
       evmWalletConnections: payload.data.evmWalletConnections.map((wallet) => ({
@@ -1884,6 +2577,23 @@ function upgradeV4Backup(payload: V4BackupPayload): BackupPayload {
   };
 }
 
+function upgradeV5Backup(payload: V5BackupPayload): BackupPayload {
+  return {
+    ...payload,
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    data: {
+      ...payload.data,
+      fileImportProfiles: [],
+      fileImportBatches: [],
+      fileImportSourceDetails: [],
+      fileImportBatchSourceObjects: [],
+      fileImportCandidateDetails: [],
+      externalCandidateMatchLinks: [],
+      fileImportBalanceObservationDetails: [],
+    },
+  };
+}
+
 function schemaFailure(result: z.ZodSafeParseError<unknown>): never {
   const issue = result.error.issues[0];
   throw new BackupValidationError(
@@ -1903,25 +2613,33 @@ export function parseBackupPayload(value: unknown): BackupPayload {
   if (schemaVersion === BACKUP_LEGACY_SCHEMA_VERSION) {
     const legacy = legacyBackupPayloadSchema.safeParse(value);
     if (!legacy.success) schemaFailure(legacy);
-    normalized = upgradeV4Backup(
-      upgradeV3Backup(upgradeV2Backup(upgradeLegacyBackup(legacy.data))),
+    normalized = upgradeV5Backup(
+      upgradeV4Backup(
+        upgradeV3Backup(upgradeV2Backup(upgradeLegacyBackup(legacy.data))),
+      ),
     );
   } else if (schemaVersion === BACKUP_V2_SCHEMA_VERSION) {
     const v2 = v2BackupPayloadSchema.safeParse(value);
     if (!v2.success) schemaFailure(v2);
-    normalized = upgradeV4Backup(upgradeV3Backup(upgradeV2Backup(v2.data)));
+    normalized = upgradeV5Backup(
+      upgradeV4Backup(upgradeV3Backup(upgradeV2Backup(v2.data))),
+    );
   } else if (schemaVersion === BACKUP_V3_SCHEMA_VERSION) {
     const v3 = v3BackupPayloadSchema.safeParse(value);
     if (!v3.success) schemaFailure(v3);
-    normalized = upgradeV4Backup(upgradeV3Backup(v3.data));
+    normalized = upgradeV5Backup(upgradeV4Backup(upgradeV3Backup(v3.data)));
   } else if (schemaVersion === BACKUP_V4_SCHEMA_VERSION) {
     const v4 = v4BackupPayloadSchema.safeParse(value);
     if (!v4.success) schemaFailure(v4);
-    normalized = upgradeV4Backup(v4.data);
-  } else {
-    const v5 = backupPayloadSchema.safeParse(value);
+    normalized = upgradeV5Backup(upgradeV4Backup(v4.data));
+  } else if (schemaVersion === BACKUP_V5_SCHEMA_VERSION) {
+    const v5 = v5BackupPayloadSchema.safeParse(value);
     if (!v5.success) schemaFailure(v5);
-    normalized = v5.data;
+    normalized = upgradeV5Backup(v5.data);
+  } else {
+    const v6 = backupPayloadSchema.safeParse(value);
+    if (!v6.success) schemaFailure(v6);
+    normalized = v6.data;
   }
   validateRelations(normalized.data);
   return normalized;

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { DomainValidationError } from "@/domain/errors";
 import { EvmProviderError } from "@/providers/evm/errors";
 import { KrakenProviderError } from "@/providers/kraken/errors";
+import { FileImportError } from "@/providers/file-import/errors";
 import { ServiceError } from "@/services/errors";
 
 const SAFE_KRAKEN_MESSAGES: Record<string, string> = {
@@ -50,6 +51,12 @@ export function safeSyncError(error: unknown): NextResponse {
       { status: error.code === "RATE_LIMITED" ? 429 : 400 },
     );
   }
+  if (error instanceof FileImportError) {
+    return NextResponse.json(
+      { ok: false, code: error.code, error: error.message },
+      { status: 400 },
+    );
+  }
   if (error instanceof ServiceError || error instanceof DomainValidationError) {
     return NextResponse.json(
       { ok: false, code: error.code, error: error.message },
@@ -66,6 +73,7 @@ export function logSafeSyncFailure(scope: string, error: unknown): void {
   const code =
     error instanceof KrakenProviderError ||
     error instanceof EvmProviderError ||
+    error instanceof FileImportError ||
     error instanceof ServiceError ||
     error instanceof DomainValidationError
       ? error.code

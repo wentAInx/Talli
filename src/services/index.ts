@@ -8,6 +8,8 @@ export * from "./external-mapping-service";
 export * from "./external-import-service";
 export * from "./external-reconciliation-service";
 export * from "./external-sync-read-service";
+export * from "./file-import-service";
+export * from "./file-import-read-service";
 export * from "./ledger-command-service";
 export * from "./ledger-read-service";
 export * from "./reconciliation-service";

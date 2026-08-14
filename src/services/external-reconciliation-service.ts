@@ -6,6 +6,8 @@ import {
   findExternalAssetMapping,
   findExternalBalanceObservation,
   findExternalConnection,
+  findFileImportBalanceObservationDetail,
+  findFileImportProfile,
   queryBalanceAt,
 } from "../db/queries";
 import { externalDecimalToAtomic } from "../domain/external-sync";
@@ -64,6 +66,18 @@ export class ExternalReconciliationService {
           "EXTERNAL_CONNECTION_NOT_FOUND",
           "External connection was not found.",
         );
+        if (connection.provider === "file_import") {
+          assertService(
+            findFileImportBalanceObservationDetail(
+              transaction,
+              observation.id,
+            ) &&
+              findFileImportProfile(transaction, observation.connectionId)
+                ?.targetAccountId === input.accountId,
+            "FILE_IMPORT_OBSERVATION_INTEGRITY_ERROR",
+            "Statement balance provenance or explicit profile account binding is invalid.",
+          );
+        }
         const assetMapping = findExternalAssetMapping(
           transaction,
           observation.connectionId,
@@ -117,7 +131,9 @@ export class ExternalReconciliationService {
             `Explicit reconciliation from ${
               connection.provider === "evm_wallet"
                 ? "Ethereum wallet"
-                : "Kraken"
+                : connection.provider === "file_import"
+                  ? "file statement"
+                  : "Kraken"
             } observation ${observation.id}`,
         });
         return {

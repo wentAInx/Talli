@@ -84,6 +84,14 @@ export default async function AccountDetailPage({
             {account.balanceDisplay}
           </strong>
           {account.isArchived ? <small>已归档 · 不计入总览</small> : null}
+          {!account.isArchived ? (
+            <Link
+              className="secondary-button"
+              href={`/import?account=${account.id}`}
+            >
+              Import statement
+            </Link>
+          ) : null}
         </div>
       </header>
 

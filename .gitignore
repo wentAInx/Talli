@@ -7,6 +7,7 @@ node_modules/
 out/
 coverage/
 playwright-report/
+playwright-report-import/
 playwright-report-sync/
 test-results/
 *.tsbuildinfo

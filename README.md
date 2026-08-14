@@ -8,11 +8,13 @@ cannot post ledger facts without an explicit Import or Reconcile confirmation.
 V4 adds Ethereum Mainnet public-address wallet observations, finalized on-chain
 activity, and separate movement/gas review candidates under the same boundary.
 V4.1 extends that read-only model to Base Mainnet and Arbitrum One with exact
-debug-traced native movement and chain-specific fee provenance.
+debug-traced native movement and chain-specific fee provenance. V5 adds
+account-first financial-file import for CSV, OFX/QFX banking and credit-card
+statements, and ISO 20022 camt.053 while keeping file commit outside Ledger.
 
-## V4.1 implementation status
+## V5 implementation status
 
-The frozen V1 ledger and additive V2/V3/V4.0 baselines remain intact; the V4.1
+The frozen V1 ledger and additive V2/V3/V4/V4.1 baselines remain intact; the V5
 task-package phases are implemented:
 
 - Next.js 16, strict TypeScript, Tailwind CSS, ESLint, Prettier, Vitest, and
@@ -97,6 +99,30 @@ task-package phases are implemented:
 - Lossless `schemaVersion=5` backup adds L2 gas-fee component/evidence rows and
   accepts versions 1/2/3/4/5. Operational trace capability, cursors, sync runs,
   provider cache, and all credentials remain excluded.
+- `/import` uses an immutable, explicit target-account profile. Asset mapping is
+  never inferred from a statement symbol, code, filename, or account number.
+- CSV, OFX 1 SGML, OFX 2 XML/QFX, banking and credit-card statement subsets, and
+  camt.053.001.01 through `.14` are parsed with bounded file/row/text limits.
+  Exact signed amounts use the target asset scale with no rounding.
+- Preview is read-only. Commit reparses the full file before one atomic database
+  transaction and creates only source, batch, candidate, observation, and
+  provenance facts. It never creates a Ledger event or balance snapshot.
+- Strong statement IDs and deterministic weak occurrence ordinals provide
+  dedupe without collapsing identical weak rows. Reimport and changed-source
+  states remain auditable and cannot duplicate Ledger facts.
+- Match suggestions are informational. Only explicit Match Existing creates a
+  provenance link, requires an exact signed entry in the target account and
+  same book, and leaves Ledger untouched. Matched events must be unlinked before
+  edit or delete.
+- Explicit Import reuses the transactional V1 expense/income/transfer writer.
+  OFX `LEDGERBAL` and camt.053 `CLBD` remain observations until a separate
+  explicit Reconcile creates a snapshot.
+- Raw files and full statement account numbers are never persisted. Structured
+  XML rejects DTD, ENTITY, and XInclude input; parser code remains server-only
+  and performs no network access.
+- Lossless `schemaVersion=6` backup adds file profile, batch, selected source,
+  candidate, match, and balance-observation provenance. Restore accepts versions
+  1 through 6 and validates all relationships before its atomic write.
 
 ## Local development
 
@@ -176,10 +202,11 @@ RPC path. Automated tests use an injected fixture and do not call Alchemy.
   CSV is not a restore format.
 - The backup wire identifier remains `multi-asset-ledger-backup` after the
   Talli rename so existing V1 backups stay compatible.
-- V4.1 exports use `schemaVersion=5`. They retain V2/V3/V4 user facts and add
-  multi-chain EVM wallet identities, raw on-chain balance/candidate details,
-  and exact or explicitly unresolved L2 fee provenance. V1/V2/V3/V4 backups
-  are upgraded in memory and fully validated before any write.
+- V5 exports use `schemaVersion=6`. They retain V2/V3/V4/V4.1 user facts and add
+  financial-file profile, batch, selected source, candidate, match, and balance
+  provenance without raw file bytes or full statement account numbers. Backups
+  from schema versions 1 through 5 are upgraded in memory and fully validated
+  before any write.
 - `latest_price_quotes`, `price_provider_state`, and API keys are intentionally
   excluded because they are derived or operational data. V4.1 also excludes
   `external_connection_state`, `external_sync_runs`, and
@@ -260,7 +287,8 @@ file.
   columns are positive plain-decimal `TEXT` plus `decimal.js`, never `REAL`.
 - Provider HTTP is server-only and outside SQLite write transactions. Resolver,
   portfolio valuation, SSR, backup, and native reports never perform HTTP.
-- External API and on-chain data are not Ledger data. Sync writes only external
-  source, observation, candidate, mapping, and operational rows. Only an explicit
-  Import may call the V1 ledger writer, and only an explicit Reconcile may call
-  the V1 snapshot writer.
+- External API, on-chain, and imported financial-file data are not Ledger data.
+  Sync/file commit writes only external source, batch, observation, candidate,
+  mapping, provenance, and operational rows. Only an explicit Import may call
+  the V1 ledger writer, and only an explicit Reconcile may call the V1 snapshot
+  writer.

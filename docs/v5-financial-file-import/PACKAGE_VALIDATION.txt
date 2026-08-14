@@ -1,0 +1,19 @@
+PACKAGE VALIDATION — 2026-08-13
+
+Repository: wentAInx/Talli
+Frozen baseline: ef968976510e04f0532715c1e73f88595a607e89
+Release tag: v4.1.0
+
+Checks:
+- Fixture expectations JSON: PASS
+- CSV fixture parse/count: PASS
+- CSV scale=2 exact atomic conversion: PASS
+- OFX1 statement marker smoke: PASS
+- OFX2 XML well-formed / no DTD/ENTITY: PASS
+- camt.053 XML well-formed: PASS
+- V5 target additive schema executes against parent stubs: PASS
+- Expected V5 tables present: PASS (7)
+- Combined package generated: PASS
+
+This validates task-package structure only.
+It does NOT validate future repository code.

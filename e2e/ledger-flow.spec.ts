@@ -26,7 +26,7 @@ async function expectRestorePreviewToBeReadOnly(page: Page) {
     ok: true,
     mode: "preview",
     result: {
-      schemaVersion: 5,
+      schemaVersion: 6,
       target: "seed-only",
     },
   });
@@ -294,6 +294,9 @@ test("filters, native-asset reports, settings, and exports form a V1 loop", asyn
   await page.getByLabel("账户").selectOption({ label: `${accountName} · CNY` });
   await page.getByLabel("对象（可选）").fill(payee);
   await page.getByRole("button", { name: "保存支出" }).click();
+  await expect(
+    page.getByRole("heading", { name: `编辑${payee}` }),
+  ).toBeVisible();
 
   await page.goto("/transactions");
   await page.getByLabel("搜索").fill(payee);
@@ -324,7 +327,7 @@ test("filters, native-asset reports, settings, and exports form a V1 loop", asyn
     data: { ledgerEntries: { amountAtomic: string }[] };
   };
   expect(backup.format).toBe("multi-asset-ledger-backup");
-  expect(backup.schemaVersion).toBe(5);
+  expect(backup.schemaVersion).toBe(6);
   expect(
     backup.data.ledgerEntries.every(
       (entry) => typeof entry.amountAtomic === "string",
