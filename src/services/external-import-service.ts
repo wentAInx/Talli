@@ -31,6 +31,7 @@ import type { LedgerMutationInput, OptionalFeeInput } from "./contracts";
 import { assertService } from "./errors";
 import { assertStoredFileImportCandidateProvenance } from "./file-import-provenance-integrity";
 import { createLedgerEventIn } from "./ledger-command-service";
+import { insertConfirmedRecurringLink } from "./recurring-item-service";
 import {
   defaultServiceRuntime,
   runtimeNow,
@@ -46,7 +47,12 @@ export interface CandidateImportInput {
   feeAccountId?: string | null;
   ignoreUnresolvedFee?: boolean;
   categoryId?: string | null;
+  payee?: string | null;
+  tagIds?: string[];
   note?: string | null;
+  recurringItemId?: string;
+  occurrenceDate?: string;
+  confirmedRecurringLink?: true;
   confirmed: true;
 }
 
@@ -168,10 +174,15 @@ function prepareFileImportCommand(input: {
   });
   const common = {
     occurredAt: candidate.occurredAt,
-    note: request.note ?? detail.memo,
-    tagIds: [] as string[],
+    note: request.note === undefined ? detail.memo : request.note,
+    tagIds: request.tagIds ?? [],
   };
   if (request.chosenEventType === "transfer") {
+    assertService(
+      request.payee === undefined && !request.categoryId,
+      "FILE_IMPORT_TRANSFER_METADATA_INVALID",
+      "Payee and category metadata apply only to Expense or Income imports.",
+    );
     assertService(
       request.sourceAccountId && request.destinationAccountId,
       "EXTERNAL_IMPORT_TRANSFER_ACCOUNTS_REQUIRED",
@@ -216,7 +227,10 @@ function prepareFileImportCommand(input: {
     accountId: request.mainAccountId!,
     amount: magnitudeText(external.amountText),
     categoryId: request.categoryId ?? null,
-    payee: detail.normalizedPayee ?? "Statement import",
+    payee:
+      request.payee === undefined
+        ? (detail.normalizedPayee ?? "Statement import")
+        : request.payee,
   };
   return {
     command:
@@ -230,7 +244,11 @@ function prepareFileImportCommand(input: {
 function prepareCommand(
   executor: DatabaseExecutor,
   input: CandidateImportInput,
-): { command: LedgerMutationInput; sourceFingerprint: string } {
+): {
+  command: LedgerMutationInput;
+  sourceFingerprint: string;
+  isFileImport: boolean;
+} {
   assertService(
     input.confirmed === true,
     "EXTERNAL_IMPORT_CONFIRMATION_REQUIRED",
@@ -265,13 +283,25 @@ function prepareCommand(
   );
   const legs = listExternalCandidateLegs(executor, candidate.id);
   if (connection.provider === "file_import") {
-    return prepareFileImportCommand({
-      executor,
-      candidate,
-      connection,
-      request: input,
-    });
+    return {
+      ...prepareFileImportCommand({
+        executor,
+        candidate,
+        connection,
+        request: input,
+      }),
+      isFileImport: true,
+    };
   }
+  assertService(
+    input.payee === undefined &&
+      input.tagIds === undefined &&
+      input.recurringItemId === undefined &&
+      input.occurrenceDate === undefined &&
+      input.confirmedRecurringLink === undefined,
+    "FILE_IMPORT_METADATA_ONLY",
+    "Payee, tags, and recurring occurrence links are supported only for file-import candidates in V5.1.",
+  );
   let evmChainName: string | null = null;
   if (connection.provider === "evm_wallet") {
     const detail = findEvmCandidateDetail(executor, candidate.id);
@@ -500,7 +530,33 @@ function prepareCommand(
       },
     };
   }
-  return { command, sourceFingerprint: candidate.sourceFingerprint };
+  return {
+    command,
+    sourceFingerprint: candidate.sourceFingerprint,
+    isFileImport: false,
+  };
+}
+
+function recurringLinkRequest(input: CandidateImportInput): {
+  recurringItemId: string;
+  occurrenceDate: string;
+} | null {
+  const requested =
+    input.recurringItemId !== undefined ||
+    input.occurrenceDate !== undefined ||
+    input.confirmedRecurringLink !== undefined;
+  if (!requested) return null;
+  assertService(
+    input.recurringItemId !== undefined &&
+      input.occurrenceDate !== undefined &&
+      input.confirmedRecurringLink === true,
+    "RECURRING_IMPORT_CONFIRMATION_REQUIRED",
+    "Recurring import link requires an item, occurrence date, and explicit confirmation.",
+  );
+  return {
+    recurringItemId: input.recurringItemId,
+    occurrenceDate: input.occurrenceDate,
+  };
 }
 
 export class ExternalImportService {
@@ -516,6 +572,12 @@ export class ExternalImportService {
     return this.context.db.transaction(
       (transaction) => {
         const prepared = prepareCommand(transaction, input);
+        const recurringLink = recurringLinkRequest(input);
+        assertService(
+          !recurringLink || prepared.isFileImport,
+          "FILE_IMPORT_RECURRING_LINK_ONLY",
+          "Recurring occurrence links during import are supported only for file-import candidates.",
+        );
         const ledgerEventId = createLedgerEventIn(
           transaction,
           this.runtime,
@@ -531,7 +593,12 @@ export class ExternalImportService {
           feeAccountId: input.feeAccountId ?? null,
           ignoreUnresolvedFee: input.ignoreUnresolvedFee === true,
           categoryId: input.categoryId ?? null,
+          payee: input.payee ?? null,
+          tagIds: input.tagIds ?? [],
           note: input.note ?? null,
+          recurringItemId: input.recurringItemId ?? null,
+          occurrenceDate: input.occurrenceDate ?? null,
+          confirmedRecurringLink: input.confirmedRecurringLink === true,
           sourceFingerprint: prepared.sourceFingerprint,
         });
         insertExternalImportLink(transaction, {
@@ -542,6 +609,12 @@ export class ExternalImportService {
             .update(importPayload)
             .digest("hex"),
         });
+        if (recurringLink) {
+          insertConfirmedRecurringLink(transaction, this.runtime, {
+            ...recurringLink,
+            ledgerEventId,
+          });
+        }
         updateExternalCandidate(transaction, input.candidateId, {
           status: "imported",
           updatedAt: importedAt,

@@ -1,8 +1,12 @@
 import type { DatabaseContext, DatabaseExecutor } from "../db/connection";
 import {
+  activeRecurringItemsReferenceCategory,
+  activeRecurringItemsReferenceTag,
   assetHasAccounts,
   assetHasActiveAccounts,
   deleteLatestPriceQuoteForMapping,
+  enabledAutomationRulesReferenceCategory,
+  enabledAutomationRulesReferenceTag,
   findAssetByCode,
   findAssetById,
   findCategoryById,
@@ -354,6 +358,22 @@ export class ReferenceDataService {
             "Category type is incompatible with existing transactions.",
           );
         }
+        if (category.categoryType !== input.categoryType) {
+          assertService(
+            !enabledAutomationRulesReferenceCategory(
+              transaction,
+              category.bookId,
+              categoryId,
+            ) &&
+              !activeRecurringItemsReferenceCategory(
+                transaction,
+                category.bookId,
+                categoryId,
+              ),
+            "CATEGORY_AUTOMATION_REFERENCE_LOCKED",
+            "Disable or edit rules and recurring items before changing this category type.",
+          );
+        }
         updateCategory(transaction, categoryId, {
           parentId: input.parentId ?? null,
           name,
@@ -373,11 +393,28 @@ export class ReferenceDataService {
     const now = runtimeNow(this.runtime);
     this.context.db.transaction(
       (transaction) => {
+        const category = findCategoryById(transaction, categoryId);
         assertService(
-          findCategoryById(transaction, categoryId),
+          category,
           "CATEGORY_NOT_FOUND",
           "Category was not found.",
         );
+        if (isArchived) {
+          assertService(
+            !enabledAutomationRulesReferenceCategory(
+              transaction,
+              category.bookId,
+              categoryId,
+            ) &&
+              !activeRecurringItemsReferenceCategory(
+                transaction,
+                category.bookId,
+                categoryId,
+              ),
+            "CATEGORY_AUTOMATION_ARCHIVE_BLOCKED",
+            "Disable or edit rules and recurring items that reference this category before archiving it.",
+          );
+        }
         updateCategory(transaction, categoryId, { isArchived, updatedAt: now });
       },
       { behavior: "immediate" },
@@ -432,11 +469,20 @@ export class ReferenceDataService {
     const now = runtimeNow(this.runtime);
     this.context.db.transaction(
       (transaction) => {
-        assertService(
-          findTagById(transaction, tagId),
-          "TAG_NOT_FOUND",
-          "Tag was not found.",
-        );
+        const tag = findTagById(transaction, tagId);
+        assertService(tag, "TAG_NOT_FOUND", "Tag was not found.");
+        if (isArchived) {
+          assertService(
+            !enabledAutomationRulesReferenceTag(
+              transaction,
+              tag.bookId,
+              tagId,
+            ) &&
+              !activeRecurringItemsReferenceTag(transaction, tag.bookId, tagId),
+            "TAG_AUTOMATION_ARCHIVE_BLOCKED",
+            "Disable or edit rules and recurring items that reference this tag before archiving it.",
+          );
+        }
         updateTag(transaction, tagId, { isArchived, updatedAt: now });
       },
       { behavior: "immediate" },

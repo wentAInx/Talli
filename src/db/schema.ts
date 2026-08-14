@@ -133,6 +133,53 @@ export const fileImportBalanceKinds = [
   "closing_ledger",
   "closing_booked",
 ] as const;
+export const automationRuleScopes = ["file_import_candidate"] as const;
+export const automationRuleStages = ["pre", "default", "post"] as const;
+export const automationRuleMatchModes = ["all", "any"] as const;
+export const automationConditionFields = [
+  "source_payee",
+  "projected_payee",
+  "memo",
+  "file_profile",
+  "target_account",
+  "source_format",
+  "direction",
+  "amount_abs",
+  "identity_strength",
+] as const;
+export const automationConditionOperators = [
+  "equals",
+  "not_equals",
+  "contains",
+  "not_contains",
+  "starts_with",
+  "ends_with",
+  "is_empty",
+  "is_not_empty",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "between",
+] as const;
+export const automationActionTypes = [
+  "set_payee",
+  "set_category",
+  "add_tag",
+  "set_note",
+  "append_note",
+  "suggest_event_type",
+] as const;
+export const recurringEventTypes = ["expense", "income"] as const;
+export const recurringPayeeMatchModes = ["any", "exact", "contains"] as const;
+export const recurringAmountModes = ["exact", "approx", "range"] as const;
+export const recurringFrequencies = [
+  "daily",
+  "weekly",
+  "monthly",
+  "yearly",
+] as const;
+export const recurringMonthlyDayModes = ["fixed", "last"] as const;
 
 export const books = sqliteTable(
   "books",
@@ -1319,6 +1366,274 @@ export const externalCandidateMatchLinks = sqliteTable(
   ],
 );
 
+export const automationRules = sqliteTable(
+  "automation_rules",
+  {
+    id: text("id").primaryKey(),
+    bookId: text("book_id")
+      .notNull()
+      .references(() => books.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    targetScope: text("target_scope", { enum: automationRuleScopes })
+      .notNull()
+      .default("file_import_candidate"),
+    stage: text("stage", { enum: automationRuleStages }).notNull(),
+    matchMode: text("match_mode", { enum: automationRuleMatchModes }).notNull(),
+    isEnabled: integer("is_enabled", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    sortOrder: integer("sort_order").notNull().default(100),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("automation_rules_book_scope_order_idx").on(
+      table.bookId,
+      table.targetScope,
+      table.stage,
+      table.sortOrder,
+      table.id,
+    ),
+    check(
+      "automation_rules_scope_check",
+      sql`${table.targetScope} = 'file_import_candidate'`,
+    ),
+    check(
+      "automation_rules_stage_check",
+      sql`${table.stage} in ('pre', 'default', 'post')`,
+    ),
+    check(
+      "automation_rules_match_mode_check",
+      sql`${table.matchMode} in ('all', 'any')`,
+    ),
+    check("automation_rules_enabled_check", sql`${table.isEnabled} in (0, 1)`),
+    check(
+      "automation_rules_name_check",
+      sql`length(${table.name}) between 1 and 120`,
+    ),
+  ],
+);
+
+export const automationRuleConditions = sqliteTable(
+  "automation_rule_conditions",
+  {
+    id: text("id").primaryKey(),
+    ruleId: text("rule_id")
+      .notNull()
+      .references(() => automationRules.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    field: text("field", { enum: automationConditionFields }).notNull(),
+    operator: text("operator", {
+      enum: automationConditionOperators,
+    }).notNull(),
+    valueJson: text("value_json").notNull(),
+    isNegated: integer("is_negated", { mode: "boolean" })
+      .notNull()
+      .default(false),
+  },
+  (table) => [
+    uniqueIndex("automation_rule_conditions_rule_position_unique").on(
+      table.ruleId,
+      table.position,
+    ),
+    check(
+      "automation_rule_conditions_position_check",
+      sql`${table.position} >= 0`,
+    ),
+    check(
+      "automation_rule_conditions_field_check",
+      sql`${table.field} in ('source_payee', 'projected_payee', 'memo', 'file_profile', 'target_account', 'source_format', 'direction', 'amount_abs', 'identity_strength')`,
+    ),
+    check(
+      "automation_rule_conditions_operator_check",
+      sql`${table.operator} in ('equals', 'not_equals', 'contains', 'not_contains', 'starts_with', 'ends_with', 'is_empty', 'is_not_empty', 'gt', 'gte', 'lt', 'lte', 'between')`,
+    ),
+    check(
+      "automation_rule_conditions_value_check",
+      sql`length(${table.valueJson}) > 0`,
+    ),
+    check(
+      "automation_rule_conditions_negated_check",
+      sql`${table.isNegated} in (0, 1)`,
+    ),
+  ],
+);
+
+export const automationRuleActions = sqliteTable(
+  "automation_rule_actions",
+  {
+    id: text("id").primaryKey(),
+    ruleId: text("rule_id")
+      .notNull()
+      .references(() => automationRules.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    actionType: text("action_type", { enum: automationActionTypes }).notNull(),
+    valueJson: text("value_json").notNull(),
+  },
+  (table) => [
+    uniqueIndex("automation_rule_actions_rule_position_unique").on(
+      table.ruleId,
+      table.position,
+    ),
+    check(
+      "automation_rule_actions_position_check",
+      sql`${table.position} >= 0`,
+    ),
+    check(
+      "automation_rule_actions_type_check",
+      sql`${table.actionType} in ('set_payee', 'set_category', 'add_tag', 'set_note', 'append_note', 'suggest_event_type')`,
+    ),
+    check(
+      "automation_rule_actions_value_check",
+      sql`length(${table.valueJson}) > 0`,
+    ),
+  ],
+);
+
+export const recurringItems = sqliteTable(
+  "recurring_items",
+  {
+    id: text("id").primaryKey(),
+    bookId: text("book_id")
+      .notNull()
+      .references(() => books.id, { onDelete: "cascade" }),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    assetId: text("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    eventType: text("event_type", { enum: recurringEventTypes }).notNull(),
+    payeeText: text("payee_text"),
+    payeeMatchMode: text("payee_match_mode", {
+      enum: recurringPayeeMatchModes,
+    })
+      .notNull()
+      .default("any"),
+    categoryId: text("category_id").references(() => categories.id, {
+      onDelete: "restrict",
+    }),
+    note: text("note"),
+    amountMode: text("amount_mode", { enum: recurringAmountModes }).notNull(),
+    amountAtomicText: text("amount_atomic_text"),
+    toleranceBps: integer("tolerance_bps"),
+    minAmountAtomicText: text("min_amount_atomic_text"),
+    maxAmountAtomicText: text("max_amount_atomic_text"),
+    frequency: text("frequency", { enum: recurringFrequencies }).notNull(),
+    intervalCount: integer("interval_count").notNull(),
+    anchorDate: text("anchor_date").notNull(),
+    monthlyDayMode: text("monthly_day_mode", {
+      enum: recurringMonthlyDayModes,
+    }),
+    dateWindowBeforeDays: integer("date_window_before_days")
+      .notNull()
+      .default(2),
+    dateWindowAfterDays: integer("date_window_after_days").notNull().default(2),
+    startsOn: text("starts_on"),
+    endsOn: text("ends_on"),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("recurring_items_book_active_idx").on(table.bookId, table.isActive),
+    index("recurring_items_account_idx").on(table.accountId),
+    check(
+      "recurring_items_event_type_check",
+      sql`${table.eventType} in ('expense', 'income')`,
+    ),
+    check(
+      "recurring_items_payee_mode_check",
+      sql`${table.payeeMatchMode} in ('any', 'exact', 'contains')`,
+    ),
+    check(
+      "recurring_items_amount_mode_check",
+      sql`${table.amountMode} in ('exact', 'approx', 'range')`,
+    ),
+    check(
+      "recurring_items_amount_shape_check",
+      sql`(${table.amountMode} = 'exact' and ${table.amountAtomicText} is not null and ${table.toleranceBps} is null and ${table.minAmountAtomicText} is null and ${table.maxAmountAtomicText} is null) or (${table.amountMode} = 'approx' and ${table.amountAtomicText} is not null and ${table.toleranceBps} between 0 and 10000 and ${table.minAmountAtomicText} is null and ${table.maxAmountAtomicText} is null) or (${table.amountMode} = 'range' and ${table.amountAtomicText} is null and ${table.toleranceBps} is null and ${table.minAmountAtomicText} is not null and ${table.maxAmountAtomicText} is not null)`,
+    ),
+    check(
+      "recurring_items_amount_atomic_check",
+      sql`(${table.amountAtomicText} is null or (${table.amountAtomicText} not glob '*[^0-9]*' and length(${table.amountAtomicText}) > 0 and ${table.amountAtomicText} <> '0')) and (${table.minAmountAtomicText} is null or (${table.minAmountAtomicText} not glob '*[^0-9]*' and length(${table.minAmountAtomicText}) > 0 and ${table.minAmountAtomicText} <> '0')) and (${table.maxAmountAtomicText} is null or (${table.maxAmountAtomicText} not glob '*[^0-9]*' and length(${table.maxAmountAtomicText}) > 0 and ${table.maxAmountAtomicText} <> '0'))`,
+    ),
+    check(
+      "recurring_items_frequency_check",
+      sql`${table.frequency} in ('daily', 'weekly', 'monthly', 'yearly')`,
+    ),
+    check(
+      "recurring_items_interval_check",
+      sql`${table.intervalCount} between 1 and 10000`,
+    ),
+    check(
+      "recurring_items_monthly_mode_check",
+      sql`(${table.frequency} = 'monthly' and ${table.monthlyDayMode} in ('fixed', 'last')) or (${table.frequency} <> 'monthly' and ${table.monthlyDayMode} is null)`,
+    ),
+    check(
+      "recurring_items_window_check",
+      sql`${table.dateWindowBeforeDays} between 0 and 31 and ${table.dateWindowAfterDays} between 0 and 31`,
+    ),
+    check("recurring_items_active_check", sql`${table.isActive} in (0, 1)`),
+    check(
+      "recurring_items_name_check",
+      sql`length(${table.name}) between 1 and 120`,
+    ),
+  ],
+);
+
+export const recurringItemTags = sqliteTable(
+  "recurring_item_tags",
+  {
+    recurringItemId: text("recurring_item_id")
+      .notNull()
+      .references(() => recurringItems.id, { onDelete: "cascade" }),
+    tagId: text("tag_id")
+      .notNull()
+      .references(() => tags.id, { onDelete: "restrict" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.recurringItemId, table.tagId] }),
+    index("recurring_item_tags_tag_idx").on(table.tagId),
+  ],
+);
+
+export const recurringOccurrenceLinks = sqliteTable(
+  "recurring_occurrence_links",
+  {
+    recurringItemId: text("recurring_item_id")
+      .notNull()
+      .references(() => recurringItems.id, { onDelete: "cascade" }),
+    occurrenceDate: text("occurrence_date").notNull(),
+    ledgerEventId: text("ledger_event_id")
+      .notNull()
+      .references(() => ledgerEvents.id, { onDelete: "restrict" }),
+    linkedAt: text("linked_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.recurringItemId, table.occurrenceDate] }),
+    uniqueIndex("recurring_occurrence_links_event_unique").on(
+      table.ledgerEventId,
+    ),
+  ],
+);
+
+export const recurringOccurrenceSkips = sqliteTable(
+  "recurring_occurrence_skips",
+  {
+    recurringItemId: text("recurring_item_id")
+      .notNull()
+      .references(() => recurringItems.id, { onDelete: "cascade" }),
+    occurrenceDate: text("occurrence_date").notNull(),
+    skippedAt: text("skipped_at").notNull(),
+    note: text("note"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.recurringItemId, table.occurrenceDate] }),
+  ],
+);
+
 export type BookRow = typeof books.$inferSelect;
 export type AssetRow = typeof assets.$inferSelect;
 export type AccountRow = typeof accounts.$inferSelect;
@@ -1366,3 +1681,13 @@ export type FileImportBalanceObservationDetailRow =
   typeof fileImportBalanceObservationDetails.$inferSelect;
 export type ExternalCandidateMatchLinkRow =
   typeof externalCandidateMatchLinks.$inferSelect;
+export type AutomationRuleRow = typeof automationRules.$inferSelect;
+export type AutomationRuleConditionRow =
+  typeof automationRuleConditions.$inferSelect;
+export type AutomationRuleActionRow = typeof automationRuleActions.$inferSelect;
+export type RecurringItemRow = typeof recurringItems.$inferSelect;
+export type RecurringItemTagRow = typeof recurringItemTags.$inferSelect;
+export type RecurringOccurrenceLinkRow =
+  typeof recurringOccurrenceLinks.$inferSelect;
+export type RecurringOccurrenceSkipRow =
+  typeof recurringOccurrenceSkips.$inferSelect;

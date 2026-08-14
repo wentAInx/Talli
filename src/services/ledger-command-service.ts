@@ -16,6 +16,7 @@ import {
   findCategoryById,
   findExternalImportLinkByLedgerEvent,
   findLedgerEventById,
+  findRecurringOccurrenceLinkByLedgerEvent,
   findTagIdsForEvent,
   findTagsByIds,
   insertEventTags,
@@ -455,6 +456,11 @@ export class LedgerCommandService {
             .length === 0,
           "MATCHED_EVENT_DELETE_FORBIDDEN",
           "Unlink file-import matches before deleting this Ledger event.",
+        );
+        assertService(
+          !findRecurringOccurrenceLinkByLedgerEvent(transaction, eventId),
+          "RECURRING_LINKED_EVENT_DELETE_FORBIDDEN",
+          "Unlink the recurring occurrence before deleting this Ledger event.",
         );
         deleteLedgerEvent(transaction, eventId);
       },

@@ -57,6 +57,13 @@
       "when": 1786691841746,
       "tag": "0007_v5_financial_file_import",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1786727390694,
+      "tag": "0008_v51_rules_recurring",
+      "breakpoints": true
     }
   ]
 }

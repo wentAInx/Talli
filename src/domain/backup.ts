@@ -34,6 +34,17 @@ import {
   assertFileImportCandidateProvenance,
   parseFileImportSourcePayloadJson,
 } from "./file-import-provenance";
+import {
+  automationOperatorIsCompatible,
+  possibleRuleDirections,
+  type AutomationRule,
+} from "./automation";
+import {
+  isGeneratedOccurrence,
+  parsePositiveAtomicText,
+  validateRecurringItem,
+  type RecurringItem,
+} from "./recurring";
 
 export const BACKUP_FORMAT = "multi-asset-ledger-backup";
 export const BACKUP_LEGACY_SCHEMA_VERSION = 1;
@@ -41,7 +52,8 @@ export const BACKUP_V2_SCHEMA_VERSION = 2;
 export const BACKUP_V3_SCHEMA_VERSION = 3;
 export const BACKUP_V4_SCHEMA_VERSION = 4;
 export const BACKUP_V5_SCHEMA_VERSION = 5;
-export const BACKUP_SCHEMA_VERSION = 6;
+export const BACKUP_V6_SCHEMA_VERSION = 6;
+export const BACKUP_SCHEMA_VERSION = 7;
 
 export class BackupValidationError extends Error {
   constructor(
@@ -775,6 +787,135 @@ const fileImportBalanceObservationDetailSchema = z
   })
   .strict();
 
+const automationRuleSchema = z
+  .object({
+    id,
+    bookId: id,
+    name: z.string().trim().min(1).max(120),
+    targetScope: z.literal("file_import_candidate"),
+    stage: z.enum(["pre", "default", "post"]),
+    matchMode: z.enum(["all", "any"]),
+    isEnabled: z.boolean(),
+    sortOrder: z.number().int().min(-1_000_000).max(1_000_000),
+    createdAt: canonicalInstant,
+    updatedAt: canonicalInstant,
+  })
+  .strict();
+
+const automationRuleConditionSchema = z
+  .object({
+    id,
+    ruleId: id,
+    position: z.number().int().nonnegative(),
+    field: z.enum([
+      "source_payee",
+      "projected_payee",
+      "memo",
+      "file_profile",
+      "target_account",
+      "source_format",
+      "direction",
+      "amount_abs",
+      "identity_strength",
+    ]),
+    operator: z.enum([
+      "equals",
+      "not_equals",
+      "contains",
+      "not_contains",
+      "starts_with",
+      "ends_with",
+      "is_empty",
+      "is_not_empty",
+      "gt",
+      "gte",
+      "lt",
+      "lte",
+      "between",
+    ]),
+    valueJson: jsonText,
+    isNegated: z.boolean(),
+  })
+  .strict();
+
+const automationRuleActionSchema = z
+  .object({
+    id,
+    ruleId: id,
+    position: z.number().int().nonnegative(),
+    actionType: z.enum([
+      "set_payee",
+      "set_category",
+      "add_tag",
+      "set_note",
+      "append_note",
+      "suggest_event_type",
+    ]),
+    valueJson: jsonText,
+  })
+  .strict();
+
+const positiveAtomicText = z
+  .string()
+  .refine(
+    (value) => /^[0-9]+$/.test(value) && BigInt(value) > 0n,
+    "Recurring atomic amount must be positive unsigned integer text.",
+  );
+const dateOnlyText = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+const recurringItemSchema = z
+  .object({
+    id,
+    bookId: id,
+    accountId: id,
+    assetId: id,
+    name: z.string().trim().min(1).max(120),
+    eventType: z.enum(["expense", "income"]),
+    payeeText: z.string().max(200).nullable(),
+    payeeMatchMode: z.enum(["any", "exact", "contains"]),
+    categoryId: id.nullable(),
+    note: z.string().max(2000).nullable(),
+    amountMode: z.enum(["exact", "approx", "range"]),
+    amountAtomicText: positiveAtomicText.nullable(),
+    toleranceBps: z.number().int().min(0).max(10_000).nullable(),
+    minAmountAtomicText: positiveAtomicText.nullable(),
+    maxAmountAtomicText: positiveAtomicText.nullable(),
+    frequency: z.enum(["daily", "weekly", "monthly", "yearly"]),
+    intervalCount: z.number().int().min(1).max(10_000),
+    anchorDate: dateOnlyText,
+    monthlyDayMode: z.enum(["fixed", "last"]).nullable(),
+    dateWindowBeforeDays: z.number().int().min(0).max(31),
+    dateWindowAfterDays: z.number().int().min(0).max(31),
+    startsOn: dateOnlyText.nullable(),
+    endsOn: dateOnlyText.nullable(),
+    isActive: z.boolean(),
+    createdAt: canonicalInstant,
+    updatedAt: canonicalInstant,
+  })
+  .strict();
+
+const recurringItemTagSchema = z
+  .object({ recurringItemId: id, tagId: id })
+  .strict();
+
+const recurringOccurrenceLinkSchema = z
+  .object({
+    recurringItemId: id,
+    occurrenceDate: dateOnlyText,
+    ledgerEventId: id,
+    linkedAt: canonicalInstant,
+  })
+  .strict();
+
+const recurringOccurrenceSkipSchema = z
+  .object({
+    recurringItemId: id,
+    occurrenceDate: dateOnlyText,
+    skippedAt: canonicalInstant,
+    note: z.string().max(2000).nullable(),
+  })
+  .strict();
+
 const v1DataSchema = z
   .object({
     books: z.array(bookSchema),
@@ -852,6 +993,18 @@ const v6DataSchema = v5DataSchema
   })
   .strict();
 
+const v7DataSchema = v6DataSchema
+  .extend({
+    automationRules: z.array(automationRuleSchema),
+    automationRuleConditions: z.array(automationRuleConditionSchema),
+    automationRuleActions: z.array(automationRuleActionSchema),
+    recurringItems: z.array(recurringItemSchema),
+    recurringItemTags: z.array(recurringItemTagSchema),
+    recurringOccurrenceLinks: z.array(recurringOccurrenceLinkSchema),
+    recurringOccurrenceSkips: z.array(recurringOccurrenceSkipSchema),
+  })
+  .strict();
+
 const legacyBackupPayloadSchema = z
   .object({
     format: z.literal(BACKUP_FORMAT),
@@ -897,12 +1050,21 @@ const v5BackupPayloadSchema = z
   })
   .strict();
 
+const v6BackupPayloadSchema = z
+  .object({
+    format: z.literal(BACKUP_FORMAT),
+    schemaVersion: z.literal(BACKUP_V6_SCHEMA_VERSION),
+    exportedAt: canonicalInstant,
+    data: v6DataSchema,
+  })
+  .strict();
+
 export const backupPayloadSchema = z
   .object({
     format: z.literal(BACKUP_FORMAT),
     schemaVersion: z.literal(BACKUP_SCHEMA_VERSION),
     exportedAt: canonicalInstant,
-    data: v6DataSchema,
+    data: v7DataSchema,
   })
   .strict();
 
@@ -913,6 +1075,7 @@ type V2BackupPayload = z.infer<typeof v2BackupPayloadSchema>;
 type V3BackupPayload = z.infer<typeof v3BackupPayloadSchema>;
 type V4BackupPayload = z.infer<typeof v4BackupPayloadSchema>;
 type V5BackupPayload = z.infer<typeof v5BackupPayloadSchema>;
+type V6BackupPayload = z.infer<typeof v6BackupPayloadSchema>;
 
 function fail(code: string, message: string): never {
   throw new BackupValidationError(code, message);
@@ -2115,6 +2278,534 @@ function validateExternalRelations(data: BackupData): void {
   }
 }
 
+function parseAutomationJson(value: string, label: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    fail("BACKUP_AUTOMATION_JSON_INVALID", `${label} is not valid JSON.`);
+  }
+}
+
+function compareUnsignedDecimalText(left: string, right: string): number {
+  const [leftIntegerRaw, leftFractionRaw = ""] = left.split(".");
+  const [rightIntegerRaw, rightFractionRaw = ""] = right.split(".");
+  const leftInteger = leftIntegerRaw!.replace(/^0+(?=\d)/, "");
+  const rightInteger = rightIntegerRaw!.replace(/^0+(?=\d)/, "");
+  if (leftInteger.length !== rightInteger.length) {
+    return leftInteger.length - rightInteger.length;
+  }
+  const integerOrder = leftInteger.localeCompare(rightInteger);
+  if (integerOrder !== 0) return integerOrder;
+  const length = Math.max(leftFractionRaw.length, rightFractionRaw.length);
+  return leftFractionRaw
+    .padEnd(length, "0")
+    .localeCompare(rightFractionRaw.padEnd(length, "0"));
+}
+
+function validateAutomationAndRecurring(data: BackupData): void {
+  uniqueBy(data.automationRules, (row) => row.id, "automation rule id");
+  uniqueBy(
+    data.automationRuleConditions,
+    (row) => row.id,
+    "automation condition id",
+  );
+  uniqueBy(
+    data.automationRuleConditions,
+    (row) => `${row.ruleId}\u0000${row.position}`,
+    "automation condition position",
+  );
+  uniqueBy(data.automationRuleActions, (row) => row.id, "automation action id");
+  uniqueBy(
+    data.automationRuleActions,
+    (row) => `${row.ruleId}\u0000${row.position}`,
+    "automation action position",
+  );
+  const books = new Map(data.books.map((row) => [row.id, row]));
+  const accounts = new Map(data.accounts.map((row) => [row.id, row]));
+  const assets = new Map(data.assets.map((row) => [row.id, row]));
+  const categories = new Map(data.categories.map((row) => [row.id, row]));
+  const tags = new Map(data.tags.map((row) => [row.id, row]));
+  const profiles = new Map(
+    data.fileImportProfiles.map((row) => [row.connectionId, row]),
+  );
+  const connections = new Map(
+    data.externalConnections.map((row) => [row.id, row]),
+  );
+  const conditionRowsByRule = new Map<
+    string,
+    BackupData["automationRuleConditions"]
+  >();
+  const actionRowsByRule = new Map<
+    string,
+    BackupData["automationRuleActions"]
+  >();
+  for (const condition of data.automationRuleConditions) {
+    const rows = conditionRowsByRule.get(condition.ruleId) ?? [];
+    rows.push(condition);
+    conditionRowsByRule.set(condition.ruleId, rows);
+  }
+  for (const action of data.automationRuleActions) {
+    const rows = actionRowsByRule.get(action.ruleId) ?? [];
+    rows.push(action);
+    actionRowsByRule.set(action.ruleId, rows);
+  }
+  const ruleIds = new Set(data.automationRules.map((row) => row.id));
+  for (const condition of data.automationRuleConditions) {
+    if (!ruleIds.has(condition.ruleId)) {
+      fail(
+        "BACKUP_AUTOMATION_RELATION_INVALID",
+        `Automation condition ${condition.id} references a missing rule.`,
+      );
+    }
+  }
+  for (const action of data.automationRuleActions) {
+    if (!ruleIds.has(action.ruleId)) {
+      fail(
+        "BACKUP_AUTOMATION_RELATION_INVALID",
+        `Automation action ${action.id} references a missing rule.`,
+      );
+    }
+  }
+  const enabledCounts = new Map<string, number>();
+  for (const row of data.automationRules) {
+    if (!books.has(row.bookId)) {
+      fail(
+        "BACKUP_AUTOMATION_BOOK_INVALID",
+        `Automation rule ${row.id} references a missing book.`,
+      );
+    }
+    if (row.isEnabled) {
+      enabledCounts.set(row.bookId, (enabledCounts.get(row.bookId) ?? 0) + 1);
+    }
+    const conditionRows = conditionRowsByRule.get(row.id) ?? [];
+    const actionRows = actionRowsByRule.get(row.id) ?? [];
+    if (
+      conditionRows.length < 1 ||
+      conditionRows.length > 50 ||
+      actionRows.length < 1 ||
+      actionRows.length > 20
+    ) {
+      fail(
+        "BACKUP_AUTOMATION_SHAPE_INVALID",
+        `Automation rule ${row.id} has an invalid condition or action count.`,
+      );
+    }
+    const conditions: AutomationRule["conditions"] = conditionRows.map(
+      (condition) => {
+        if (
+          !automationOperatorIsCompatible(condition.field, condition.operator)
+        ) {
+          fail(
+            "BACKUP_AUTOMATION_OPERATOR_INVALID",
+            `Automation condition ${condition.id} has an incompatible operator.`,
+          );
+        }
+        const value = parseAutomationJson(
+          condition.valueJson,
+          `Automation condition ${condition.id}`,
+        );
+        if (condition.field === "amount_abs") {
+          const decimal = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+          if (condition.operator === "between") {
+            if (
+              value === null ||
+              typeof value !== "object" ||
+              Array.isArray(value) ||
+              Object.keys(value).sort().join(",") !== "max,min"
+            ) {
+              fail(
+                "BACKUP_AUTOMATION_VALUE_INVALID",
+                `Automation condition ${condition.id} requires only min and max.`,
+              );
+            }
+            const range = value as Record<string, unknown>;
+            if (
+              typeof range.min !== "string" ||
+              typeof range.max !== "string" ||
+              !decimal.test(range.min) ||
+              !decimal.test(range.max) ||
+              compareUnsignedDecimalText(range.min, range.max) > 0
+            ) {
+              fail(
+                "BACKUP_AUTOMATION_VALUE_INVALID",
+                `Automation condition ${condition.id} has an invalid amount range.`,
+              );
+            }
+          } else if (typeof value !== "string" || !decimal.test(value)) {
+            fail(
+              "BACKUP_AUTOMATION_VALUE_INVALID",
+              `Automation condition ${condition.id} has an invalid amount value.`,
+            );
+          }
+        } else if (typeof value !== "string" || value.length > 500) {
+          fail(
+            "BACKUP_AUTOMATION_VALUE_INVALID",
+            `Automation condition ${condition.id} must contain bounded text.`,
+          );
+        }
+        if (
+          (condition.operator === "is_empty" ||
+            condition.operator === "is_not_empty") &&
+          value !== ""
+        ) {
+          fail(
+            "BACKUP_AUTOMATION_VALUE_INVALID",
+            `Automation emptiness condition ${condition.id} must store an empty string.`,
+          );
+        }
+        if (condition.field === "source_format") {
+          if (!["csv", "ofx", "qfx", "camt053"].includes(value as string)) {
+            fail(
+              "BACKUP_AUTOMATION_VALUE_INVALID",
+              `Automation condition ${condition.id} has an invalid source format.`,
+            );
+          }
+        } else if (condition.field === "direction") {
+          if (value !== "in" && value !== "out") {
+            fail(
+              "BACKUP_AUTOMATION_VALUE_INVALID",
+              `Automation condition ${condition.id} has an invalid direction.`,
+            );
+          }
+        } else if (condition.field === "identity_strength") {
+          if (value !== "strong" && value !== "weak") {
+            fail(
+              "BACKUP_AUTOMATION_VALUE_INVALID",
+              `Automation condition ${condition.id} has invalid identity strength.`,
+            );
+          }
+        } else if (condition.field === "file_profile") {
+          const profile = profiles.get(value as string);
+          const connection = profile
+            ? connections.get(profile.connectionId)
+            : undefined;
+          if (
+            !profile ||
+            connection?.provider !== "file_import" ||
+            connection.bookId !== row.bookId ||
+            (row.isEnabled && !connection.isEnabled)
+          ) {
+            fail(
+              "BACKUP_AUTOMATION_REFERENCE_INVALID",
+              `Automation condition ${condition.id} has an invalid file profile.`,
+            );
+          }
+        } else if (condition.field === "target_account") {
+          const account = accounts.get(value as string);
+          const asset = account ? assets.get(account.assetId) : undefined;
+          if (
+            !account ||
+            account.bookId !== row.bookId ||
+            (row.isEnabled && (account.isArchived || asset?.isArchived))
+          ) {
+            fail(
+              "BACKUP_AUTOMATION_REFERENCE_INVALID",
+              `Automation condition ${condition.id} has an invalid target account.`,
+            );
+          }
+        }
+        return {
+          id: condition.id,
+          position: condition.position,
+          field: condition.field,
+          operator: condition.operator,
+          value,
+          isNegated: condition.isNegated,
+        };
+      },
+    );
+    const hydrated: AutomationRule = {
+      ...row,
+      conditions,
+      actions: [],
+    };
+    let directions: Array<"in" | "out">;
+    try {
+      directions = possibleRuleDirections(hydrated);
+    } catch {
+      fail(
+        "BACKUP_AUTOMATION_DIRECTION_INVALID",
+        `Automation rule ${row.id} has invalid direction conditions.`,
+      );
+    }
+    hydrated.actions = actionRows.map((action) => {
+      const value = parseAutomationJson(
+        action.valueJson,
+        `Automation action ${action.id}`,
+      );
+      if (typeof value !== "string") {
+        fail(
+          "BACKUP_AUTOMATION_VALUE_INVALID",
+          `Automation action ${action.id} must contain text.`,
+        );
+      }
+      const max =
+        action.actionType === "set_note" || action.actionType === "append_note"
+          ? 2000
+          : action.actionType === "suggest_event_type"
+            ? 20
+            : 200;
+      if (value.length > max) {
+        fail(
+          "BACKUP_AUTOMATION_VALUE_INVALID",
+          `Automation action ${action.id} exceeds its text bound.`,
+        );
+      }
+      if (action.actionType === "set_category") {
+        const category = categories.get(value);
+        const compatible = category
+          ? directions.every(
+              (direction) =>
+                category.categoryType === "both" ||
+                category.categoryType ===
+                  (direction === "out" ? "expense" : "income"),
+            )
+          : false;
+        if (
+          !category ||
+          category.bookId !== row.bookId ||
+          !compatible ||
+          (row.isEnabled && category.isArchived)
+        ) {
+          fail(
+            "BACKUP_AUTOMATION_REFERENCE_INVALID",
+            `Automation action ${action.id} has an invalid category.`,
+          );
+        }
+      } else if (action.actionType === "add_tag") {
+        const tag = tags.get(value);
+        if (
+          !tag ||
+          tag.bookId !== row.bookId ||
+          (row.isEnabled && tag.isArchived)
+        ) {
+          fail(
+            "BACKUP_AUTOMATION_REFERENCE_INVALID",
+            `Automation action ${action.id} has an invalid tag.`,
+          );
+        }
+      } else if (action.actionType === "suggest_event_type") {
+        const requiredDirection = value === "expense" ? "out" : "in";
+        if (
+          (value !== "expense" && value !== "income") ||
+          directions.length === 0 ||
+          !directions.every((direction) => direction === requiredDirection)
+        ) {
+          fail(
+            "BACKUP_AUTOMATION_DIRECTION_INVALID",
+            `Automation action ${action.id} has an unsafe event-type suggestion.`,
+          );
+        }
+      }
+      return {
+        id: action.id,
+        position: action.position,
+        actionType: action.actionType,
+        value,
+      };
+    });
+  }
+  if ([...enabledCounts.values()].some((count) => count > 1000)) {
+    fail(
+      "BACKUP_AUTOMATION_LIMIT",
+      "A backup cannot enable more than 1000 rules in one book.",
+    );
+  }
+
+  uniqueBy(data.recurringItems, (row) => row.id, "recurring item id");
+  uniqueBy(
+    data.recurringItemTags,
+    (row) => `${row.recurringItemId}\u0000${row.tagId}`,
+    "recurring item tag",
+  );
+  uniqueBy(
+    data.recurringOccurrenceLinks,
+    (row) => `${row.recurringItemId}\u0000${row.occurrenceDate}`,
+    "recurring occurrence link",
+  );
+  uniqueBy(
+    data.recurringOccurrenceLinks,
+    (row) => row.ledgerEventId,
+    "recurring linked Ledger event",
+  );
+  uniqueBy(
+    data.recurringOccurrenceSkips,
+    (row) => `${row.recurringItemId}\u0000${row.occurrenceDate}`,
+    "recurring occurrence skip",
+  );
+  const itemTagIds = new Map<string, string[]>();
+  for (const link of data.recurringItemTags) {
+    const values = itemTagIds.get(link.recurringItemId) ?? [];
+    values.push(link.tagId);
+    itemTagIds.set(link.recurringItemId, values);
+  }
+  const recurringById = new Map<string, RecurringItem>();
+  for (const row of data.recurringItems) {
+    const account = accounts.get(row.accountId);
+    const asset = assets.get(row.assetId);
+    const category = row.categoryId ? categories.get(row.categoryId) : null;
+    const tagIds = itemTagIds.get(row.id) ?? [];
+    if (
+      !books.has(row.bookId) ||
+      !account ||
+      account.bookId !== row.bookId ||
+      account.assetId !== row.assetId ||
+      !asset
+    ) {
+      fail(
+        "BACKUP_RECURRING_RELATION_INVALID",
+        `Recurring item ${row.id} has an invalid book, account, or asset.`,
+      );
+    }
+    if (row.isActive && (account.isArchived || asset.isArchived)) {
+      fail(
+        "BACKUP_RECURRING_REFERENCE_ARCHIVED",
+        `Active recurring item ${row.id} uses an archived account or asset.`,
+      );
+    }
+    if (
+      category &&
+      (category.bookId !== row.bookId ||
+        (category.categoryType !== "both" &&
+          category.categoryType !== row.eventType) ||
+        (row.isActive && category.isArchived))
+    ) {
+      fail(
+        "BACKUP_RECURRING_CATEGORY_INVALID",
+        `Recurring item ${row.id} has an invalid category.`,
+      );
+    }
+    if (row.categoryId && !category) {
+      fail(
+        "BACKUP_RECURRING_CATEGORY_INVALID",
+        `Recurring item ${row.id} references a missing category.`,
+      );
+    }
+    for (const tagId of tagIds) {
+      const tag = tags.get(tagId);
+      if (
+        !tag ||
+        tag.bookId !== row.bookId ||
+        (row.isActive && tag.isArchived)
+      ) {
+        fail(
+          "BACKUP_RECURRING_TAG_INVALID",
+          `Recurring item ${row.id} has an invalid tag.`,
+        );
+      }
+    }
+    const item: RecurringItem = {
+      id: row.id,
+      bookId: row.bookId,
+      accountId: row.accountId,
+      assetId: row.assetId,
+      name: row.name,
+      eventType: row.eventType,
+      payeeText: row.payeeText,
+      payeeMatchMode: row.payeeMatchMode,
+      categoryId: row.categoryId,
+      tagIds,
+      note: row.note,
+      amountMode: row.amountMode,
+      amountAtomic:
+        row.amountAtomicText === null
+          ? null
+          : parsePositiveAtomicText(row.amountAtomicText),
+      toleranceBps: row.toleranceBps,
+      minAmountAtomic:
+        row.minAmountAtomicText === null
+          ? null
+          : parsePositiveAtomicText(row.minAmountAtomicText),
+      maxAmountAtomic:
+        row.maxAmountAtomicText === null
+          ? null
+          : parsePositiveAtomicText(row.maxAmountAtomicText),
+      frequency: row.frequency,
+      intervalCount: row.intervalCount,
+      anchorDate: row.anchorDate,
+      monthlyDayMode: row.monthlyDayMode,
+      dateWindowBeforeDays: row.dateWindowBeforeDays,
+      dateWindowAfterDays: row.dateWindowAfterDays,
+      startsOn: row.startsOn,
+      endsOn: row.endsOn,
+      isActive: row.isActive,
+    };
+    try {
+      validateRecurringItem(item);
+    } catch {
+      fail(
+        "BACKUP_RECURRING_DEFINITION_INVALID",
+        `Recurring item ${row.id} has invalid amount or recurrence fields.`,
+      );
+    }
+    recurringById.set(row.id, item);
+  }
+  for (const link of data.recurringItemTags) {
+    if (!recurringById.has(link.recurringItemId)) {
+      fail(
+        "BACKUP_RECURRING_RELATION_INVALID",
+        `Recurring tag references missing item ${link.recurringItemId}.`,
+      );
+    }
+  }
+  const eventById = new Map(data.ledgerEvents.map((row) => [row.id, row]));
+  const occurrenceKeys = new Set<string>();
+  for (const link of data.recurringOccurrenceLinks) {
+    const item = recurringById.get(link.recurringItemId);
+    const event = eventById.get(link.ledgerEventId);
+    const mainEntries = data.ledgerEntries.filter(
+      (entry) =>
+        entry.eventId === link.ledgerEventId && entry.entryRole === "main",
+    );
+    let generated = false;
+    try {
+      generated = Boolean(
+        item &&
+        isGeneratedOccurrence({ ...item, isActive: true }, link.occurrenceDate),
+      );
+    } catch {
+      generated = false;
+    }
+    const amount =
+      mainEntries.length === 1 ? BigInt(mainEntries[0]!.amountAtomic) : 0n;
+    if (
+      !item ||
+      !generated ||
+      !event ||
+      event.bookId !== item.bookId ||
+      event.eventType !== item.eventType ||
+      mainEntries.length !== 1 ||
+      mainEntries[0]!.accountId !== item.accountId ||
+      (item.eventType === "expense" ? amount >= 0n : amount <= 0n)
+    ) {
+      fail(
+        "BACKUP_RECURRING_LINK_INVALID",
+        `Recurring occurrence link ${link.recurringItemId}/${link.occurrenceDate} is invalid.`,
+      );
+    }
+    occurrenceKeys.add(`${link.recurringItemId}\u0000${link.occurrenceDate}`);
+  }
+  for (const skip of data.recurringOccurrenceSkips) {
+    const item = recurringById.get(skip.recurringItemId);
+    let generated = false;
+    try {
+      generated = Boolean(
+        item &&
+        isGeneratedOccurrence({ ...item, isActive: true }, skip.occurrenceDate),
+      );
+    } catch {
+      generated = false;
+    }
+    const key = `${skip.recurringItemId}\u0000${skip.occurrenceDate}`;
+    if (!item || !generated || occurrenceKeys.has(key)) {
+      fail(
+        "BACKUP_RECURRING_SKIP_INVALID",
+        `Recurring occurrence skip ${skip.recurringItemId}/${skip.occurrenceDate} is invalid.`,
+      );
+    }
+  }
+}
+
 function validateRelations(data: BackupData): void {
   uniqueBy(data.books, (row) => row.id, "book id");
   uniqueBy(data.assets, (row) => row.id, "asset id");
@@ -2362,6 +3053,7 @@ function validateRelations(data: BackupData): void {
   }
   validateEventEntries(data);
   validateExternalRelations(data);
+  validateAutomationAndRecurring(data);
 }
 
 const LEGACY_PROVIDER_MAPPINGS = [
@@ -2502,10 +3194,10 @@ function upgradeV4Backup(payload: V4BackupPayload): V5BackupPayload {
   };
 }
 
-function upgradeV5Backup(payload: V5BackupPayload): BackupPayload {
+function upgradeV5Backup(payload: V5BackupPayload): V6BackupPayload {
   return {
     ...payload,
-    schemaVersion: BACKUP_SCHEMA_VERSION,
+    schemaVersion: BACKUP_V6_SCHEMA_VERSION,
     data: {
       ...payload.data,
       fileImportProfiles: [],
@@ -2515,6 +3207,23 @@ function upgradeV5Backup(payload: V5BackupPayload): BackupPayload {
       fileImportCandidateDetails: [],
       externalCandidateMatchLinks: [],
       fileImportBalanceObservationDetails: [],
+    },
+  };
+}
+
+function upgradeV6Backup(payload: V6BackupPayload): BackupPayload {
+  return {
+    ...payload,
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    data: {
+      ...payload.data,
+      automationRules: [],
+      automationRuleConditions: [],
+      automationRuleActions: [],
+      recurringItems: [],
+      recurringItemTags: [],
+      recurringOccurrenceLinks: [],
+      recurringOccurrenceSkips: [],
     },
   };
 }
@@ -2538,33 +3247,43 @@ export function parseBackupPayload(value: unknown): BackupPayload {
   if (schemaVersion === BACKUP_LEGACY_SCHEMA_VERSION) {
     const legacy = legacyBackupPayloadSchema.safeParse(value);
     if (!legacy.success) schemaFailure(legacy);
-    normalized = upgradeV5Backup(
-      upgradeV4Backup(
-        upgradeV3Backup(upgradeV2Backup(upgradeLegacyBackup(legacy.data))),
+    normalized = upgradeV6Backup(
+      upgradeV5Backup(
+        upgradeV4Backup(
+          upgradeV3Backup(upgradeV2Backup(upgradeLegacyBackup(legacy.data))),
+        ),
       ),
     );
   } else if (schemaVersion === BACKUP_V2_SCHEMA_VERSION) {
     const v2 = v2BackupPayloadSchema.safeParse(value);
     if (!v2.success) schemaFailure(v2);
-    normalized = upgradeV5Backup(
-      upgradeV4Backup(upgradeV3Backup(upgradeV2Backup(v2.data))),
+    normalized = upgradeV6Backup(
+      upgradeV5Backup(
+        upgradeV4Backup(upgradeV3Backup(upgradeV2Backup(v2.data))),
+      ),
     );
   } else if (schemaVersion === BACKUP_V3_SCHEMA_VERSION) {
     const v3 = v3BackupPayloadSchema.safeParse(value);
     if (!v3.success) schemaFailure(v3);
-    normalized = upgradeV5Backup(upgradeV4Backup(upgradeV3Backup(v3.data)));
+    normalized = upgradeV6Backup(
+      upgradeV5Backup(upgradeV4Backup(upgradeV3Backup(v3.data))),
+    );
   } else if (schemaVersion === BACKUP_V4_SCHEMA_VERSION) {
     const v4 = v4BackupPayloadSchema.safeParse(value);
     if (!v4.success) schemaFailure(v4);
-    normalized = upgradeV5Backup(upgradeV4Backup(v4.data));
+    normalized = upgradeV6Backup(upgradeV5Backup(upgradeV4Backup(v4.data)));
   } else if (schemaVersion === BACKUP_V5_SCHEMA_VERSION) {
     const v5 = v5BackupPayloadSchema.safeParse(value);
     if (!v5.success) schemaFailure(v5);
-    normalized = upgradeV5Backup(v5.data);
-  } else {
-    const v6 = backupPayloadSchema.safeParse(value);
+    normalized = upgradeV6Backup(upgradeV5Backup(v5.data));
+  } else if (schemaVersion === BACKUP_V6_SCHEMA_VERSION) {
+    const v6 = v6BackupPayloadSchema.safeParse(value);
     if (!v6.success) schemaFailure(v6);
-    normalized = v6.data;
+    normalized = upgradeV6Backup(v6.data);
+  } else {
+    const v7 = backupPayloadSchema.safeParse(value);
+    if (!v7.success) schemaFailure(v7);
+    normalized = v7.data;
   }
   validateRelations(normalized.data);
   return normalized;

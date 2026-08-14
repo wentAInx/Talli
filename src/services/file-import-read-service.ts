@@ -14,6 +14,7 @@ import {
   findLedgerEventById,
   findSnapshotAtTime,
   listAccountsForBook,
+  listCategoriesForBook,
   listExactLedgerAccountEntriesInRange,
   listExternalBalanceObservations,
   listExternalCandidateLegs,
@@ -22,12 +23,19 @@ import {
   listFileImportBatchesForSource,
   listFileImportProfiles,
   listFileTransactionCandidates,
+  listTagsForBook,
   queryBalanceAt,
 } from "../db/queries";
 import { formatAtomic } from "../domain/money";
 import { scoreFileImportLedgerMatch } from "../domain/file-import";
 import { utcInstantToLocalDateTime } from "../domain/time";
 import { assertService } from "./errors";
+import {
+  hydrateAutomationRulesForBook,
+  projectFileCandidate,
+} from "./automation-projection-service";
+import { RecurringItemService } from "./recurring-item-service";
+import { RecurringMatchService } from "./recurring-match-service";
 
 function profileTimezone(format: string, configJson: string): string {
   const config = JSON.parse(configJson) as {
@@ -309,6 +317,53 @@ export class FileImportReadService {
       this.context.db,
       importLink?.ledgerEventId ?? matchLink?.ledgerEventId ?? "",
     );
+    const automationProjection = projectFileCandidate(
+      this.context.db,
+      candidate.id,
+    );
+    const rules = new Map(
+      hydrateAutomationRulesForBook(
+        this.context.db,
+        connection.bookId,
+        true,
+      ).map((rule) => [rule.id, rule.name]),
+    );
+    const recurringItems = new Map(
+      new RecurringItemService(this.context)
+        .list(connection.bookId)
+        .map((item) => [item.id, item]),
+    );
+    const recurringSuggestions = new RecurringMatchService(this.context)
+      .suggestionsForFileCandidate(candidate.id)
+      .flatMap((suggestion) => {
+        const item = recurringItems.get(suggestion.recurringItemId);
+        if (!item) return [];
+        const expectation =
+          item.amountMode === "range"
+            ? `${formatAtomic(item.minAmountAtomic!, target.asset.scale)}–${formatAtomic(item.maxAmountAtomic!, target.asset.scale)}`
+            : `${item.amountMode === "approx" ? "≈" : ""}${formatAtomic(item.amountAtomic!, target.asset.scale)}`;
+        return [
+          {
+            ...suggestion,
+            itemName: item.name,
+            eventType: item.eventType,
+            expectationDisplay: `${expectation} ${target.asset.code}`,
+          },
+        ];
+      });
+    const categories = listCategoriesForBook(
+      this.context.db,
+      connection.bookId,
+    ).filter(
+      (category) =>
+        !category.isArchived &&
+        (category.categoryType === "both" ||
+          category.categoryType ===
+            (detail.direction === "out" ? "expense" : "income")),
+    );
+    const tags = listTagsForBook(this.context.db, connection.bookId).filter(
+      (tag) => !tag.isArchived,
+    );
     return {
       id: candidate.id,
       status: candidate.status,
@@ -353,6 +408,21 @@ export class FileImportReadService {
       importLink: importLink ?? null,
       matchLink: matchLink ?? null,
       linkedEvent: linkedEvent ?? null,
+      automation: {
+        projection: automationProjection,
+        appliedRules: automationProjection.appliedRuleIds.map((ruleId) => ({
+          id: ruleId,
+          name: rules.get(ruleId) ?? ruleId,
+        })),
+      },
+      recurringSuggestions,
+      metadataOptions: {
+        categories: categories.map((category) => ({
+          id: category.id,
+          name: category.name,
+        })),
+        tags: tags.map((tag) => ({ id: tag.id, name: tag.name })),
+      },
     };
   }
 }

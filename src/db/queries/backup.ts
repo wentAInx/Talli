@@ -4,6 +4,9 @@ import type { BackupData } from "../../domain/backup";
 import type { DatabaseExecutor } from "../connection";
 import {
   accounts,
+  automationRuleActions,
+  automationRuleConditions,
+  automationRules,
   appMeta,
   appSettings,
   assets,
@@ -39,6 +42,10 @@ import {
   manualPriceQuotes,
   priceProviderMappings,
   priceProviderState,
+  recurringItems,
+  recurringItemTags,
+  recurringOccurrenceLinks,
+  recurringOccurrenceSkips,
   tags,
 } from "../schema";
 
@@ -209,6 +216,56 @@ export function readBackupData(executor: DatabaseExecutor): BackupData {
       .from(fileImportBalanceObservationDetails)
       .orderBy(asc(fileImportBalanceObservationDetails.observationId))
       .all(),
+    automationRules: executor
+      .select()
+      .from(automationRules)
+      .orderBy(asc(automationRules.id))
+      .all(),
+    automationRuleConditions: executor
+      .select()
+      .from(automationRuleConditions)
+      .orderBy(
+        asc(automationRuleConditions.ruleId),
+        asc(automationRuleConditions.position),
+      )
+      .all(),
+    automationRuleActions: executor
+      .select()
+      .from(automationRuleActions)
+      .orderBy(
+        asc(automationRuleActions.ruleId),
+        asc(automationRuleActions.position),
+      )
+      .all(),
+    recurringItems: executor
+      .select()
+      .from(recurringItems)
+      .orderBy(asc(recurringItems.id))
+      .all(),
+    recurringItemTags: executor
+      .select()
+      .from(recurringItemTags)
+      .orderBy(
+        asc(recurringItemTags.recurringItemId),
+        asc(recurringItemTags.tagId),
+      )
+      .all(),
+    recurringOccurrenceLinks: executor
+      .select()
+      .from(recurringOccurrenceLinks)
+      .orderBy(
+        asc(recurringOccurrenceLinks.recurringItemId),
+        asc(recurringOccurrenceLinks.occurrenceDate),
+      )
+      .all(),
+    recurringOccurrenceSkips: executor
+      .select()
+      .from(recurringOccurrenceSkips)
+      .orderBy(
+        asc(recurringOccurrenceSkips.recurringItemId),
+        asc(recurringOccurrenceSkips.occurrenceDate),
+      )
+      .all(),
   };
 }
 
@@ -229,6 +286,13 @@ export function upsertAppMetaValue(
 }
 
 export function clearRestoreTarget(executor: DatabaseExecutor): void {
+  executor.delete(recurringOccurrenceLinks).run();
+  executor.delete(recurringOccurrenceSkips).run();
+  executor.delete(recurringItemTags).run();
+  executor.delete(recurringItems).run();
+  executor.delete(automationRuleActions).run();
+  executor.delete(automationRuleConditions).run();
+  executor.delete(automationRules).run();
   executor.delete(externalCandidateMatchLinks).run();
   executor.delete(externalImportLinks).run();
   executor.delete(fileImportCandidateDetails).run();
@@ -417,6 +481,39 @@ export function insertBackupData(
     executor
       .insert(fileImportBalanceObservationDetails)
       .values(data.fileImportBalanceObservationDetails)
+      .run();
+  }
+  if (data.automationRules.length > 0) {
+    executor.insert(automationRules).values(data.automationRules).run();
+  }
+  if (data.automationRuleConditions.length > 0) {
+    executor
+      .insert(automationRuleConditions)
+      .values(data.automationRuleConditions)
+      .run();
+  }
+  if (data.automationRuleActions.length > 0) {
+    executor
+      .insert(automationRuleActions)
+      .values(data.automationRuleActions)
+      .run();
+  }
+  if (data.recurringItems.length > 0) {
+    executor.insert(recurringItems).values(data.recurringItems).run();
+  }
+  if (data.recurringItemTags.length > 0) {
+    executor.insert(recurringItemTags).values(data.recurringItemTags).run();
+  }
+  if (data.recurringOccurrenceLinks.length > 0) {
+    executor
+      .insert(recurringOccurrenceLinks)
+      .values(data.recurringOccurrenceLinks)
+      .run();
+  }
+  if (data.recurringOccurrenceSkips.length > 0) {
+    executor
+      .insert(recurringOccurrenceSkips)
+      .values(data.recurringOccurrenceSkips)
       .run();
   }
 }

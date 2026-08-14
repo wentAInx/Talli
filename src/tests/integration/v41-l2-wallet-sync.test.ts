@@ -450,7 +450,7 @@ describe("V4.1 L2 wallet sync persistence", () => {
     const connectionId = await createBaseWallet(service);
     await service.syncNow(connectionId);
     const payload = new BackupService(database!.context).exportBackup();
-    expect(payload.schemaVersion).toBe(6);
+    expect(payload.schemaVersion).toBe(7);
     expect(payload.data.evmL2GasFeeDetails).toHaveLength(1);
 
     const target = createTestDatabase();

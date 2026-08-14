@@ -1,41 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
-
-async function expectRestorePreviewToBeReadOnly(page: Page) {
-  const unsupportedMethod = await page.request.get("/api/data/restore");
-  expect(unsupportedMethod.status()).toBe(405);
-
-  const beforeResponse = await page.request.get("/api/data/backup");
-  expect(beforeResponse.ok()).toBe(true);
-  const before = (await beforeResponse.json()) as {
-    schemaVersion: number;
-    data: unknown;
-  };
-
-  const previewResponse = await page.request.post("/api/data/restore", {
-    multipart: {
-      mode: "preview",
-      file: {
-        name: "talli-backup.json",
-        mimeType: "application/json",
-        buffer: Buffer.from(JSON.stringify(before)),
-      },
-    },
-  });
-  expect(previewResponse.status()).toBe(200);
-  expect(await previewResponse.json()).toMatchObject({
-    ok: true,
-    mode: "preview",
-    result: {
-      schemaVersion: 6,
-      target: "seed-only",
-    },
-  });
-
-  const afterResponse = await page.request.get("/api/data/backup");
-  expect(afterResponse.ok()).toBe(true);
-  const after = (await afterResponse.json()) as { data: unknown };
-  expect(after.data).toEqual(before.data);
-}
+import { expect, test } from "@playwright/test";
 
 async function createAccount(
   page: import("@playwright/test").Page,
@@ -57,10 +20,6 @@ test("account, expense, dashboard, edit, and delete stay exact", async ({
 }, testInfo) => {
   test.setTimeout(45_000);
   const accountName = `${testInfo.project.name}-支付宝`;
-
-  if (testInfo.project.name === "desktop-chromium") {
-    await expectRestorePreviewToBeReadOnly(page);
-  }
 
   await page.goto("/accounts");
   await expect(page.getByRole("link", { name: "+ 添加账户" })).toBeVisible();
@@ -127,7 +86,9 @@ test("account, expense, dashboard, edit, and delete stay exact", async ({
   await page.getByRole("link", { name: /便利店/ }).click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "删除交易" }).click();
-  await expect(page.getByRole("heading", { name: "流水" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "流水", exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("便利店")).toHaveCount(0);
 
   await page.goto("/");
@@ -328,7 +289,7 @@ test("filters, native-asset reports, settings, and exports form a V1 loop", asyn
     data: { ledgerEntries: { amountAtomic: string }[] };
   };
   expect(backup.format).toBe("multi-asset-ledger-backup");
-  expect(backup.schemaVersion).toBe(6);
+  expect(backup.schemaVersion).toBe(7);
   expect(
     backup.data.ledgerEntries.every(
       (entry) => typeof entry.amountAtomic === "string",

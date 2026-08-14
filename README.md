@@ -11,8 +11,10 @@ V4.1 extends that read-only model to Base Mainnet and Arbitrum One with exact
 debug-traced native movement and chain-specific fee provenance. V5 adds
 account-first financial-file import for CSV, OFX/QFX banking and credit-card
 statements, and ISO 20022 camt.053 while keeping file commit outside Ledger.
+V5.1 adds deterministic rule projections for file-import review and date-only
+recurring expectations; neither becomes a Ledger fact automatically.
 
-## V5 implementation status
+## V5.1 implementation status
 
 The frozen V1 ledger and additive V2/V3/V4/V4.1 baselines remain intact; the V5
 task-package phases are implemented:
@@ -123,6 +125,25 @@ task-package phases are implemented:
 - Lossless `schemaVersion=6` backup adds file profile, batch, selected source,
   candidate, match, and balance-observation provenance. Restore accepts versions
   1 through 6 and validates all relationships before its atomic write.
+- Rules evaluate unresolved `file_import` candidates only, in deterministic
+  `pre` / `default` / `post` order with `all` / `any` matching and condition
+  negation. The evaluator performs no HTTP and exposes no user regex.
+- Rule actions are limited to projected payee, category, tags, note, and an
+  expense/income suggestion. Candidate amount, date, account, source identity,
+  normalized legs, and Ledger facts remain unchanged until explicit Import.
+- Recurring definitions support Expense and Income with date-only daily,
+  weekly, monthly, and yearly recurrence. Missing fixed month days and non-leap
+  February 29 are skipped; `last` month day is explicit.
+- Exact, approximate, and range expectations use `bigint` atomic amounts.
+  Occurrences are generated in memory, matching stays suggestive, and only an
+  explicit Post, Import, or Link creates the corresponding persisted facts.
+- Explicit recurring Post reuses the V1 transactional writer. Candidate Import
+  plus recurring link, and Ledger event plus recurring link, each commit in one
+  SQLite transaction.
+- Lossless `schemaVersion=7` backup includes rule definitions, recurring
+  definitions, tags, links, and skips while excluding derived projections,
+  match suggestions, and generated future occurrence caches. Restore accepts
+  versions 1 through 7.
 
 ## Local development
 
@@ -202,11 +223,10 @@ RPC path. Automated tests use an injected fixture and do not call Alchemy.
   CSV is not a restore format.
 - The backup wire identifier remains `multi-asset-ledger-backup` after the
   Talli rename so existing V1 backups stay compatible.
-- V5 exports use `schemaVersion=6`. They retain V2/V3/V4/V4.1 user facts and add
-  financial-file profile, batch, selected source, candidate, match, and balance
-  provenance without raw file bytes or full statement account numbers. Backups
-  from schema versions 1 through 5 are upgraded in memory and fully validated
-  before any write.
+- V5.1 exports use `schemaVersion=7`. They retain V2/V3/V4/V4.1/V5 user facts,
+  add Rules and Recurring definitions/links/skips, and continue to exclude raw
+  file bytes and full statement account numbers. Backups from schema versions 1
+  through 6 are upgraded in memory and fully validated before any write.
 - `latest_price_quotes`, `price_provider_state`, and API keys are intentionally
   excluded because they are derived or operational data. V4.1 also excludes
   `external_connection_state`, `external_sync_runs`, and

@@ -166,7 +166,7 @@ describe("Backup schemaVersion 6 file-import provenance", () => {
       deterministicRuntime("2026-08-14T00:00:00.000Z"),
     ).exportBackup();
     const json = JSON.stringify(payload);
-    expect(payload.schemaVersion).toBe(6);
+    expect(payload.schemaVersion).toBe(7);
     expect(payload.data.fileImportProfiles).toHaveLength(2);
     expect(payload.data.fileImportBatches).toHaveLength(2);
     expect(payload.data.fileImportSourceDetails).toHaveLength(3);
@@ -239,7 +239,7 @@ describe("Backup schemaVersion 6 file-import provenance", () => {
     ).toThrow(BackupValidationError);
   });
 
-  it("upgrades a schemaVersion 5 backup with empty V6 arrays", () => {
+  it("upgrades a schemaVersion 5 backup through empty V6 and V7 arrays", () => {
     const source = createTestDatabase();
     databases.push(source);
     seedDatabase(source.context);
@@ -252,6 +252,13 @@ describe("Backup schemaVersion 6 file-import provenance", () => {
       fileImportCandidateDetails: _candidates,
       externalCandidateMatchLinks: _matches,
       fileImportBalanceObservationDetails: _balances,
+      automationRules: _rules,
+      automationRuleConditions: _ruleConditions,
+      automationRuleActions: _ruleActions,
+      recurringItems: _recurringItems,
+      recurringItemTags: _recurringTags,
+      recurringOccurrenceLinks: _recurringLinks,
+      recurringOccurrenceSkips: _recurringSkips,
       ...v5Data
     } = v6.data;
     expect([
@@ -262,7 +269,14 @@ describe("Backup schemaVersion 6 file-import provenance", () => {
       _candidates,
       _matches,
       _balances,
-    ]).toEqual([[], [], [], [], [], [], []]);
+      _rules,
+      _ruleConditions,
+      _ruleActions,
+      _recurringItems,
+      _recurringTags,
+      _recurringLinks,
+      _recurringSkips,
+    ]).toEqual([[], [], [], [], [], [], [], [], [], [], [], [], [], []]);
     const target = createTestDatabase();
     databases.push(target);
     const preview = new BackupService(target.context).previewRestore({
@@ -270,12 +284,14 @@ describe("Backup schemaVersion 6 file-import provenance", () => {
       schemaVersion: 5,
       data: v5Data,
     });
-    expect(preview.schemaVersion).toBe(6);
+    expect(preview.schemaVersion).toBe(7);
     const parsed = new BackupService(target.context).parseJson(
       JSON.stringify({ ...v6, schemaVersion: 5, data: v5Data }),
     );
     expect(parsed.data.fileImportProfiles).toEqual([]);
     expect(parsed.data.externalCandidateMatchLinks).toEqual([]);
+    expect(parsed.data.automationRules).toEqual([]);
+    expect(parsed.data.recurringItems).toEqual([]);
   });
 
   it("rejects injected account fields and broken profile relations before restore", async () => {

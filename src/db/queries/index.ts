@@ -1,4 +1,5 @@
 export * from "./accounts";
+export * from "./automation";
 export * from "./assets";
 export * from "./balances";
 export * from "./backup";
@@ -10,6 +11,7 @@ export * from "./file-import";
 export * from "./evm-sync";
 export * from "./read-models";
 export * from "./reports";
+export * from "./recurring";
 export * from "./settings";
 export * from "./snapshots";
 export * from "./tags";

@@ -157,6 +157,23 @@ export interface CandidateLegOption {
   mappedAccountId: string | null;
 }
 
+export interface FileImportReviewMetadata {
+  payee: string | null;
+  categoryId: string | null;
+  tagIds: string[];
+  note: string | null;
+  appliedRuleCount: number;
+  categoryOptions: Array<{ id: string; name: string }>;
+  tagOptions: Array<{ id: string; name: string }>;
+  recurringSuggestions: Array<{
+    recurringItemId: string;
+    occurrenceDate: string;
+    itemName: string;
+    expectationDisplay: string;
+    score: number;
+  }>;
+}
+
 function AccountSelect({
   label,
   name,
@@ -227,6 +244,7 @@ export function CandidateReviewForm({
   allowedEventTypes,
   returnPath = "/sync",
   lockedMainAccountId,
+  fileImportMetadata,
 }: {
   candidateId: string;
   suggestedEventType:
@@ -238,6 +256,7 @@ export function CandidateReviewForm({
   allowedEventTypes?: Array<"exchange" | "transfer" | "income" | "expense">;
   returnPath?: string;
   lockedMainAccountId?: string;
+  fileImportMetadata?: FileImportReviewMetadata;
 }) {
   const router = useRouter();
   const eventTypes =
@@ -275,6 +294,35 @@ export function CandidateReviewForm({
       const value = formData.get(name);
       return typeof value === "string" && value.length > 0 ? value : null;
     };
+    const recurringValue = text("recurringOccurrence");
+    let recurringLink:
+      { recurringItemId: string; occurrenceDate: string } | undefined;
+    if (recurringValue) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(recurringValue) as unknown;
+      } catch {
+        setError("周期 occurrence 选择无效，请重新选择。");
+        setPending(false);
+        return;
+      }
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        "recurringItemId" in parsed &&
+        "occurrenceDate" in parsed &&
+        typeof parsed.recurringItemId === "string" &&
+        typeof parsed.occurrenceDate === "string"
+      ) {
+        recurringLink = {
+          recurringItemId: parsed.recurringItemId,
+          occurrenceDate: parsed.occurrenceDate,
+        };
+      }
+    }
+    const metadataApplies =
+      fileImportMetadata !== undefined &&
+      (eventType === "expense" || eventType === "income");
     try {
       const response = await postJson(
         `/api/sync/candidates/${candidateId}/import`,
@@ -285,7 +333,22 @@ export function CandidateReviewForm({
           mainAccountId: text("mainAccountId"),
           feeAccountId: text("feeAccountId"),
           ignoreUnresolvedFee: formData.get("ignoreUnresolvedFee") === "on",
+          payee: metadataApplies ? text("payee") : undefined,
+          categoryId: metadataApplies ? text("categoryId") : undefined,
+          tagIds: fileImportMetadata
+            ? formData
+                .getAll("tagIds")
+                .filter((value): value is string => typeof value === "string")
+            : undefined,
           note: text("note"),
+          recurringItemId: metadataApplies
+            ? recurringLink?.recurringItemId
+            : undefined,
+          occurrenceDate: metadataApplies
+            ? recurringLink?.occurrenceDate
+            : undefined,
+          confirmedRecurringLink:
+            metadataApplies && recurringLink ? true : undefined,
           confirmed: true,
         },
       );
@@ -462,9 +525,94 @@ export function CandidateReviewForm({
         </div>
       ) : null}
 
+      {fileImportMetadata &&
+      (eventType === "expense" || eventType === "income") ? (
+        <section className="candidate-metadata-editor">
+          <div className="section-heading compact-heading">
+            <div>
+              <p className="eyebrow">User-confirmed Ledger metadata</p>
+              <h3>Automation-prefilled fields</h3>
+            </div>
+            <span>{fileImportMetadata.appliedRuleCount} rule(s)</span>
+          </div>
+          <div className="field-grid field-grid-two">
+            <label className="field">
+              <span>Payee</span>
+              <input
+                defaultValue={fileImportMetadata.payee ?? ""}
+                maxLength={200}
+                name="payee"
+              />
+            </label>
+            <label className="field">
+              <span>Category</span>
+              <select
+                defaultValue={fileImportMetadata.categoryId ?? ""}
+                name="categoryId"
+              >
+                <option value="">No category</option>
+                {fileImportMetadata.categoryOptions.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {fileImportMetadata.tagOptions.length > 0 ? (
+            <fieldset className="tag-picker">
+              <legend>Tags</legend>
+              <div className="tag-options">
+                {fileImportMetadata.tagOptions.map((tag) => (
+                  <label className="tag-option" key={tag.id}>
+                    <input
+                      defaultChecked={fileImportMetadata.tagIds.includes(
+                        tag.id,
+                      )}
+                      name="tagIds"
+                      type="checkbox"
+                      value={tag.id}
+                    />
+                    <span>{tag.name}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          ) : null}
+          {fileImportMetadata.recurringSuggestions.length > 0 ? (
+            <label className="field recurring-link-choice">
+              <span>Link to recurring occurrence (optional)</span>
+              <select defaultValue="" name="recurringOccurrence">
+                <option value="">Do not link</option>
+                {fileImportMetadata.recurringSuggestions.map((suggestion) => (
+                  <option
+                    key={`${suggestion.recurringItemId}-${suggestion.occurrenceDate}`}
+                    value={JSON.stringify({
+                      recurringItemId: suggestion.recurringItemId,
+                      occurrenceDate: suggestion.occurrenceDate,
+                    })}
+                  >
+                    {suggestion.itemName} · {suggestion.occurrenceDate} ·{" "}
+                    {suggestion.expectationDisplay}
+                  </option>
+                ))}
+              </select>
+              <small>
+                Empty by default. Selecting one creates a link only after this
+                explicit Import.
+              </small>
+            </label>
+          ) : null}
+        </section>
+      ) : null}
+
       <label className="field">
         <span>备注（可选）</span>
-        <textarea name="note" placeholder="说明本次人工判断依据" />
+        <textarea
+          defaultValue={fileImportMetadata?.note ?? ""}
+          name="note"
+          placeholder="说明本次人工判断依据"
+        />
       </label>
       {error ? (
         <p className="form-error" role="alert">

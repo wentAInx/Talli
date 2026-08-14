@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "name": "Clean Amazon",
+      "stage": "pre",
+      "matchMode": "all",
+      "conditions": [
+        {
+          "field": "source_payee",
+          "operator": "contains",
+          "value": "amzn"
+        }
+      ],
+      "actions": [
+        {
+          "type": "set_payee",
+          "value": "Amazon"
+        }
+      ]
+    },
+    {
+      "name": "Categorize Amazon",
+      "stage": "default",
+      "matchMode": "all",
+      "conditions": [
+        {
+          "field": "projected_payee",
+          "operator": "equals",
+          "value": "Amazon"
+        }
+      ],
+      "actions": [
+        {
+          "type": "set_category",
+          "value": "fixture-category-shopping"
+        },
+        {
+          "type": "add_tag",
+          "value": "fixture-tag-online"
+        },
+        {
+          "type": "suggest_event_type",
+          "value": "expense"
+        }
+      ]
+    },
+    {
+      "name": "Post override",
+      "stage": "post",
+      "matchMode": "all",
+      "conditions": [
+        {
+          "field": "source_payee",
+          "operator": "contains",
+          "value": "AMZN"
+        }
+      ],
+      "actions": [
+        {
+          "type": "set_note",
+          "value": "Reviewed by post rule"
+        }
+      ]
+    }
+  ],
+  "candidate": {
+    "direction": "out",
+    "sourcePayee": "AMZN Mktp US*ABC",
+    "sourceMemo": "Order 123",
+    "amountAtomic": "-3599",
+    "assetScale": 2
+  },
+  "expected": {
+    "projectedPayee": "Amazon",
+    "projectedCategoryId": "fixture-category-shopping",
+    "projectedTagIds": [
+      "fixture-tag-online"
+    ],
+    "projectedEventType": "expense",
+    "projectedNote": "Reviewed by post rule",
+    "appliedRuleNames": [
+      "Clean Amazon",
+      "Categorize Amazon",
+      "Post override"
+    ]
+  }
+}

@@ -10,6 +10,9 @@ interface BackupCounts {
   importLinks: number;
   matchLinks: number;
   fileBatches: number;
+  automationRules: number;
+  recurringItems: number;
+  recurringOccurrenceLinks: number;
 }
 
 async function backupCounts(page: Page): Promise<BackupCounts> {
@@ -24,6 +27,9 @@ async function backupCounts(page: Page): Promise<BackupCounts> {
       externalImportLinks: unknown[];
       externalCandidateMatchLinks: unknown[];
       fileImportBatches: unknown[];
+      automationRules: unknown[];
+      recurringItems: unknown[];
+      recurringOccurrenceLinks: unknown[];
     };
   };
   return {
@@ -34,6 +40,9 @@ async function backupCounts(page: Page): Promise<BackupCounts> {
     importLinks: payload.data.externalImportLinks.length,
     matchLinks: payload.data.externalCandidateMatchLinks.length,
     fileBatches: payload.data.fileImportBatches.length,
+    automationRules: payload.data.automationRules.length,
+    recurringItems: payload.data.recurringItems.length,
+    recurringOccurrenceLinks: payload.data.recurringOccurrenceLinks.length,
   };
 }
 
@@ -48,6 +57,7 @@ async function expectNoHorizontalPageOverflow(page: Page): Promise<void> {
 test("financial file import stays outside Ledger until explicit match or import", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(90_000);
   const consoleErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
@@ -64,6 +74,10 @@ test("financial file import stays outside Ledger until explicit match or import"
   const suffix = testInfo.project.name;
   const accountName = `${suffix}-V5-CNY`;
   const profileName = `${suffix}-CSV-statement`;
+  const tagName = `${suffix}-Payroll`;
+  const ruleName = `${suffix}-Employer projection`;
+  const projectedPayee = `${suffix}-Payroll department`;
+  const recurringName = `${suffix}-Monthly salary`;
 
   await page.goto("/accounts/new");
   await page.getByLabel("账户名称").fill(accountName);
@@ -93,18 +107,86 @@ test("financial file import stays outside Ledger until explicit match or import"
   ).toBeVisible();
   await expect(page.getByLabel("Target account")).toHaveValue(accountId);
   await page.getByLabel("Profile name").fill(profileName);
-  await page
-    .getByRole("button", { name: "Create explicit import profile" })
-    .click();
+  const createProfileButton = page.getByRole("button", {
+    name: "Create explicit import profile",
+  });
+  await createProfileButton.click();
   await expect(
     page.getByText(profileName, { exact: true }).first(),
   ).toBeVisible();
+  await expect(createProfileButton).toBeEnabled();
+  await page
+    .getByLabel("Import profile")
+    .selectOption({ label: `${profileName} · ${accountName} · CNY` });
+
+  await page.goto("/settings#tags");
+  await page.getByLabel("标签名称").fill(tagName);
+  const createTagButton = page.getByRole("button", { name: "新增标签" });
+  await createTagButton.click();
+  expect(
+    await page
+      .locator("#tags input")
+      .evaluateAll((inputs) =>
+        inputs.map((input) => (input as HTMLInputElement).value),
+      ),
+  ).toContain(tagName);
+  await expect(createTagButton).toBeEnabled();
+
+  await page.goto("/automation");
+  await page.getByLabel("Name").fill(ruleName);
+  await page.getByLabel("Condition value").fill("Employer");
+  await page.getByRole("button", { name: "+ Condition" }).click();
+  await page.getByLabel("Condition field").nth(1).selectOption("direction");
+  await page.getByLabel("Direction").selectOption("in");
+  await page.getByRole("button", { name: "+ Condition" }).click();
+  await page.getByLabel("Condition field").nth(2).selectOption("file_profile");
+  await page.getByLabel("File profile").selectOption({ label: profileName });
+  await page.getByLabel("Action value").fill(projectedPayee);
+  await page.getByRole("button", { name: "+ Action" }).click();
+  await page.getByLabel("Action type").nth(1).selectOption("set_category");
+  await page.getByLabel("Action category").selectOption({ label: "工资/收入" });
+  await page.getByRole("button", { name: "+ Action" }).click();
+  await page.getByLabel("Action type").nth(2).selectOption("add_tag");
+  await page.getByLabel("Action tag").selectOption({ label: tagName });
+  await page.getByRole("button", { name: "+ Action" }).click();
+  await page
+    .getByLabel("Action type")
+    .nth(3)
+    .selectOption("suggest_event_type");
+  await page.getByLabel("Suggested event type").selectOption("income");
+  await page.getByRole("button", { name: "Preview" }).click();
+  await expect(page.getByText(/0\/\d+ matched/)).toBeVisible();
+  await page.getByRole("button", { name: "Save rule" }).click();
+  await expect(page.getByText(ruleName, { exact: true })).toBeVisible();
+
+  await page.getByRole("link", { name: "Recurring", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Create recurring item" }),
+  ).toBeVisible();
+  await page.getByLabel("Name").fill(recurringName);
+  await page
+    .getByLabel("Account")
+    .selectOption({ label: `${accountName} · CNY` });
+  await page.getByLabel("Event type").selectOption("income");
+  await page
+    .getByLabel("Category")
+    .selectOption({ label: "工资/收入 · income" });
+  await page.getByLabel("Payee text").fill(projectedPayee);
+  await page.getByLabel("Payee match").selectOption("exact");
+  await page.getByLabel(tagName).check();
+  await page.getByLabel("Expected amount").fill("20000.00");
+  await page.getByLabel("Frequency").selectOption("monthly");
+  await page.getByLabel("Anchor date").fill("2026-08-11");
+  await page.getByRole("button", { name: "Save recurring item" }).click();
+  await expect(page.getByText(recurringName, { exact: true })).toBeVisible();
+
+  await page.goto("/import");
   await page
     .getByLabel("Import profile")
     .selectOption({ label: `${profileName} · ${accountName} · CNY` });
 
   const beforeCommit = await backupCounts(page);
-  expect(beforeCommit.schemaVersion).toBe(6);
+  expect(beforeCommit.schemaVersion).toBe(7);
 
   await page
     .getByLabel("Statement file")
@@ -140,19 +222,32 @@ test("financial file import stays outside Ledger until explicit match or import"
 
   const afterCommit = await backupCounts(page);
   expect(afterCommit).toMatchObject({
-    schemaVersion: 6,
+    schemaVersion: 7,
     ledgerEvents: beforeCommit.ledgerEvents,
     snapshots: beforeCommit.snapshots,
     candidates: beforeCommit.candidates + 4,
     importLinks: beforeCommit.importLinks,
     matchLinks: beforeCommit.matchLinks,
     fileBatches: beforeCommit.fileBatches + 1,
+    automationRules: beforeCommit.automationRules,
+    recurringItems: beforeCommit.recurringItems,
+    recurringOccurrenceLinks: beforeCommit.recurringOccurrenceLinks,
   });
 
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Create review candidates" }).click();
   await expect(page.getByText(/4 already imported/)).toBeVisible();
   expect(await backupCounts(page)).toEqual(afterCommit);
+
+  await page.goto("/automation");
+  await page
+    .locator(".automation-rule-row")
+    .filter({ hasText: ruleName })
+    .getByRole("button", { name: "Edit" })
+    .click();
+  await page.getByRole("button", { name: "Preview" }).click();
+  await expect(page.getByText(/1\/\d+ matched/)).toBeVisible();
+  await page.goto("/import");
 
   await starbucksCandidate.click();
   await expect(
@@ -191,11 +286,36 @@ test("financial file import stays outside Ledger until explicit match or import"
     .filter({ hasText: "Employer" })
     .getByRole("link")
     .click();
+  await expect(
+    page.getByRole("heading", { name: "Automation suggestions" }),
+  ).toBeVisible();
+  const employerCandidateUrl = page.url();
+  await expect(page.getByText(ruleName, { exact: true })).toBeVisible();
+  await expect(page.getByText(`Employer → ${projectedPayee}`)).toBeVisible();
+  await expect(page.getByLabel("Payee")).toHaveValue(projectedPayee);
+  await expect(page.getByLabel("Category")).toHaveValue(
+    "seed-category-income-salary",
+  );
+  await expect(page.getByLabel(tagName)).toBeChecked();
+  await page.getByRole("link", { name: "Create recurring draft" }).click();
+  await expect(page.getByText(/Prefilled from file candidate/)).toBeVisible();
+  await expect(page.getByLabel("Expected amount")).toHaveValue("20000.00");
+  await expect(page.getByLabel("Anchor date")).toHaveValue("2026-08-11");
+  await page.goto(employerCandidateUrl);
   await page.getByLabel("导入为").selectOption("income");
+  await expect(
+    page.getByLabel("Link to recurring occurrence (optional)"),
+  ).toHaveValue("");
+  await page
+    .getByLabel("Link to recurring occurrence (optional)")
+    .selectOption({ index: 1 });
+  await page
+    .getByLabel("备注（可选）")
+    .fill("User confirmed automation metadata");
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "导入到 Talli" }).click();
   await expect(
-    page.getByRole("heading", { name: "编辑Employer" }),
+    page.getByRole("heading", { name: `编辑${projectedPayee}` }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "此事件来自明确导入" }),
@@ -208,6 +328,9 @@ test("financial file import stays outside Ledger until explicit match or import"
   expect(afterImport.ledgerEvents).toBe(afterCommit.ledgerEvents + 1);
   expect(afterImport.importLinks).toBe(afterCommit.importLinks + 1);
   expect(afterImport.matchLinks).toBe(afterCommit.matchLinks);
+  expect(afterImport.recurringOccurrenceLinks).toBe(
+    afterCommit.recurringOccurrenceLinks + 1,
+  );
 
   await page.goto("/import?queue=imported");
   await expect(

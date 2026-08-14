@@ -1,4 +1,5 @@
 export * from "./balance";
+export * from "./automation";
 export * from "./errors";
 export * from "./evm";
 export * from "./exchange-rate";
@@ -10,6 +11,7 @@ export * from "./price-decimal";
 export * from "./quote-math";
 export * from "./quote-types";
 export * from "./reports";
+export * from "./recurring";
 export * from "./time";
 export * from "./types";
 export * from "./valuation";

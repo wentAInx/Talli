@@ -12,6 +12,7 @@ docs/v2-price-valuation/
 docs/v3-external-sync/
 docs/v4.1-evm-l2/
 docs/v5-financial-file-import/
+docs/v5.1-rules-recurring/
 *.md
 /04_DATABASE_SCHEMA.sql
 /05_TYPES_AND_SERVICE_CONTRACTS.ts

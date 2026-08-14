@@ -2,8 +2,11 @@ import { parseDecimalToAtomic } from "../domain/money";
 import { atomicToDb } from "../db/atomic";
 import type { DatabaseContext } from "../db/connection";
 import {
+  accountHasActiveRecurringItems,
   accountHasLedgerEntries,
+  accountHasRecurringItems,
   accountHasSnapshots,
+  enabledAutomationRulesReferenceAccount,
   findAccountById,
   findAssetById,
   findBookById,
@@ -122,9 +125,10 @@ export class AccountService {
           );
           assertService(
             !accountHasLedgerEntries(transaction, accountId) &&
-              !accountHasSnapshots(transaction, accountId),
+              !accountHasSnapshots(transaction, accountId) &&
+              !accountHasRecurringItems(transaction, accountId),
             "ACCOUNT_ASSET_LOCKED",
-            "An account asset cannot change after ledger or snapshot history exists.",
+            "An account asset cannot change after ledger, snapshot, or recurring definitions exist.",
           );
           assetId = asset.id;
         }
@@ -157,6 +161,21 @@ export class AccountService {
             asset && !asset.isArchived,
             "ASSET_ARCHIVED",
             "An account cannot be restored while its asset is archived.",
+          );
+        } else {
+          assertService(
+            !accountHasActiveRecurringItems(transaction, accountId),
+            "ACCOUNT_ACTIVE_RECURRING_ITEMS",
+            "Archive or move active recurring items before archiving this account.",
+          );
+          assertService(
+            !enabledAutomationRulesReferenceAccount(
+              transaction,
+              account.bookId,
+              accountId,
+            ),
+            "ACCOUNT_ENABLED_AUTOMATION_RULES",
+            "Disable or edit automation rules that reference this account before archiving it.",
           );
         }
         updateAccount(transaction, accountId, {

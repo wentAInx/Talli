@@ -69,6 +69,13 @@ export interface BackupSummary {
   fileImportCandidates: number;
   externalMatchLinks: number;
   fileImportBalanceDetails: number;
+  automationRules: number;
+  automationRuleConditions: number;
+  automationRuleActions: number;
+  recurringItems: number;
+  recurringItemTags: number;
+  recurringOccurrenceLinks: number;
+  recurringOccurrenceSkips: number;
 }
 
 export interface RestorePreview {
@@ -111,6 +118,13 @@ function summary(data: BackupData): BackupSummary {
     fileImportCandidates: data.fileImportCandidateDetails.length,
     externalMatchLinks: data.externalCandidateMatchLinks.length,
     fileImportBalanceDetails: data.fileImportBalanceObservationDetails.length,
+    automationRules: data.automationRules.length,
+    automationRuleConditions: data.automationRuleConditions.length,
+    automationRuleActions: data.automationRuleActions.length,
+    recurringItems: data.recurringItems.length,
+    recurringItemTags: data.recurringItemTags.length,
+    recurringOccurrenceLinks: data.recurringOccurrenceLinks.length,
+    recurringOccurrenceSkips: data.recurringOccurrenceSkips.length,
   };
 }
 
@@ -171,6 +185,13 @@ function targetKind(executor: DatabaseExecutor): "empty" | "seed-only" {
     data.fileImportCandidateDetails.length === 0 &&
     data.externalCandidateMatchLinks.length === 0 &&
     data.fileImportBalanceObservationDetails.length === 0 &&
+    data.automationRules.length === 0 &&
+    data.automationRuleConditions.length === 0 &&
+    data.automationRuleActions.length === 0 &&
+    data.recurringItems.length === 0 &&
+    data.recurringItemTags.length === 0 &&
+    data.recurringOccurrenceLinks.length === 0 &&
+    data.recurringOccurrenceSkips.length === 0 &&
     targetTimeZoneOnly(data);
 
   if (

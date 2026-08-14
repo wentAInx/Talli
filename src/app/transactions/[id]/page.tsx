@@ -12,6 +12,8 @@ import {
   findExternalCandidate,
   findExternalConnection,
   findExternalImportLinkByLedgerEvent,
+  findRecurringItemRow,
+  findRecurringOccurrenceLinkByLedgerEvent,
   listExternalCandidateMatchLinksByLedgerEvent,
 } from "@/db/queries";
 import { LedgerReadService, SettingsService } from "@/services";
@@ -45,6 +47,10 @@ export default async function TransactionDetailPage({
         ...link,
         candidate: findExternalCandidate(context.db, link.candidateId),
       }));
+      const recurringLink = findRecurringOccurrenceLinkByLedgerEvent(
+        context.db,
+        id,
+      );
       return {
         event,
         reference: service.getReferenceData(new Date().toISOString(), {
@@ -57,6 +63,15 @@ export default async function TransactionDetailPage({
           ? { ...importLink, provider: connection?.provider ?? null }
           : null,
         matches,
+        recurringLink: recurringLink
+          ? {
+              ...recurringLink,
+              item: findRecurringItemRow(
+                context.db,
+                recurringLink.recurringItemId,
+              ),
+            }
+          : null,
       };
     } catch {
       return null;
@@ -115,6 +130,34 @@ export default async function TransactionDetailPage({
           </div>
         </section>
       )}
+      {view.event.type === "expense" || view.event.type === "income" ? (
+        <section className="content-section recurring-source-card">
+          <div>
+            <p className="eyebrow">Recurring expectation</p>
+            <h2>
+              {view.recurringLink
+                ? "已关联周期 occurrence"
+                : "从这笔流水创建周期草稿"}
+            </h2>
+            <p>
+              {view.recurringLink
+                ? `${view.recurringLink.item?.name ?? "Recurring item"} · ${view.recurringLink.occurrenceDate}。编辑流水不会改写周期定义；删除前必须先显式 Unlink。`
+                : "只会预填可编辑定义，不会自动创建未来交易或关联。"}
+            </p>
+          </div>
+          <Link
+            href={
+              view.recurringLink
+                ? `/automation/recurring/${view.recurringLink.recurringItemId}`
+                : `/automation?tab=recurring&fromEvent=${view.event.id}`
+            }
+          >
+            {view.recurringLink
+              ? "查看 recurring timeline"
+              : "Create recurring expectation"}
+          </Link>
+        </section>
+      ) : null}
       {view.provenance ? (
         <section className="content-section imported-event-provenance">
           <div>
@@ -138,7 +181,7 @@ export default async function TransactionDetailPage({
                 : "查看 Kraken 候选"}
           </Link>
         </section>
-      ) : view.matches.length === 0 ? (
+      ) : view.matches.length === 0 && !view.recurringLink ? (
         <section className="danger-zone">
           <div>
             <h2>删除这笔流水</h2>

@@ -47,6 +47,16 @@ export default async function FileCandidatePage({
   const sameAssetAccounts = candidate.accounts.filter(
     (account) => account.assetId === candidate.targetAccount.assetId,
   );
+  const projection = candidate.automation.projection;
+  const categoryNames = new Map(
+    candidate.metadataOptions.categories.map((category) => [
+      category.id,
+      category.name,
+    ]),
+  );
+  const tagNames = new Map(
+    candidate.metadataOptions.tags.map((tag) => [tag.id, tag.name]),
+  );
 
   return (
     <div className="page-stack candidate-review-page file-candidate-page">
@@ -104,6 +114,81 @@ export default async function FileCandidatePage({
           </p>
         </aside>
       ) : null}
+
+      <section className="content-section automation-projection-card">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Derived projection · no writeback</p>
+            <h2>Automation suggestions</h2>
+          </div>
+          <span>
+            {candidate.automation.appliedRules.length} rule(s) applied
+          </span>
+        </div>
+        <dl className="credential-facts automation-projection-facts">
+          <div>
+            <dt>Payee</dt>
+            <dd>
+              {candidate.payee ?? "not supplied"} →{" "}
+              {projection.projectedPayee ?? "empty"}
+            </dd>
+          </div>
+          <div>
+            <dt>Category</dt>
+            <dd>
+              {projection.projectedCategoryId
+                ? (categoryNames.get(projection.projectedCategoryId) ??
+                  projection.projectedCategoryId)
+                : "No suggestion"}
+            </dd>
+          </div>
+          <div>
+            <dt>Tags</dt>
+            <dd>
+              {projection.projectedTagIds.length > 0
+                ? projection.projectedTagIds
+                    .map((tagId) => tagNames.get(tagId) ?? tagId)
+                    .join(", ")
+                : "No suggestion"}
+            </dd>
+          </div>
+          <div>
+            <dt>Suggested type</dt>
+            <dd>
+              {projection.projectedEventType === "unknown"
+                ? "No suggestion"
+                : projection.projectedEventType}
+            </dd>
+          </div>
+        </dl>
+        {candidate.automation.appliedRules.length > 0 ? (
+          <ol className="automation-rule-order">
+            {candidate.automation.appliedRules.map((rule) => (
+              <li key={rule.id}>{rule.name}</li>
+            ))}
+          </ol>
+        ) : (
+          <p className="empty-state">No enabled rule matched this candidate.</p>
+        )}
+        {projection.warnings.map((warning) => (
+          <p className="form-error" key={warning} role="status">
+            {warning}
+          </p>
+        ))}
+        {importable ? (
+          <div className="inline-actions">
+            <Link
+              className="secondary-button"
+              href={`/automation?tab=recurring&fromCandidate=${candidate.id}`}
+            >
+              Create recurring draft
+            </Link>
+            <small>
+              Prefill only · no occurrence or Ledger fact is written.
+            </small>
+          </div>
+        ) : null}
+      </section>
 
       <div className="candidate-detail-grid">
         <section className="content-section">
@@ -257,9 +342,19 @@ export default async function FileCandidatePage({
                 },
               ]}
               lockedMainAccountId={candidate.targetAccount.id}
+              fileImportMetadata={{
+                payee: projection.projectedPayee,
+                categoryId: projection.projectedCategoryId,
+                tagIds: projection.projectedTagIds,
+                note: projection.projectedNote,
+                appliedRuleCount: candidate.automation.appliedRules.length,
+                categoryOptions: candidate.metadataOptions.categories,
+                tagOptions: candidate.metadataOptions.tags,
+                recurringSuggestions: candidate.recurringSuggestions,
+              }}
               providerName="statement"
               returnPath="/import"
-              suggestedEventType="unknown"
+              suggestedEventType={projection.projectedEventType}
               unresolvedFee={null}
             />
           </section>

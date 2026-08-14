@@ -20,7 +20,15 @@ const requestSchema = z
     feeAccountId: optionalId,
     ignoreUnresolvedFee: z.boolean().optional().default(false),
     categoryId: optionalId,
+    payee: z.string().max(200).optional().nullable(),
+    tagIds: z.array(z.string().trim().min(1)).max(100).optional(),
     note: z.string().max(2000).optional().nullable(),
+    recurringItemId: z.string().trim().min(1).optional(),
+    occurrenceDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    confirmedRecurringLink: z.literal(true).optional(),
     confirmed: z.literal(true),
   })
   .strict();
@@ -56,7 +64,12 @@ export async function POST(
         feeAccountId: parsed.data.feeAccountId,
         ignoreUnresolvedFee: parsed.data.ignoreUnresolvedFee,
         categoryId: parsed.data.categoryId,
+        payee: parsed.data.payee,
+        tagIds: parsed.data.tagIds,
         note: parsed.data.note,
+        recurringItemId: parsed.data.recurringItemId,
+        occurrenceDate: parsed.data.occurrenceDate,
+        confirmedRecurringLink: parsed.data.confirmedRecurringLink,
         confirmed: true,
       }),
     );
