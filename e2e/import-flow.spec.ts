@@ -54,17 +54,12 @@ async function expectNoHorizontalPageOverflow(page: Page): Promise<void> {
   ).toBe(true);
 }
 
-async function gotoHydratedAppPage(page: Page, path: string): Promise<void> {
-  const hydrationAction = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return (
-      response.request().method() === "POST" &&
-      response.request().headers()["next-action"] !== undefined &&
-      url.pathname === path
-    );
-  });
-  await page.goto(path);
-  expect((await hydrationAction).ok()).toBe(true);
+async function navigateToAutomation(page: Page): Promise<void> {
+  await page.getByRole("link", { name: "自动化", exact: true }).click();
+  await expect(page).toHaveURL(/\/automation(?:\?.*)?$/);
+  await expect(
+    page.getByRole("heading", { name: "Automation", exact: true }),
+  ).toBeVisible();
 }
 
 test("financial file import stays outside Ledger until explicit match or import", async ({
@@ -145,7 +140,7 @@ test("financial file import stays outside Ledger until explicit match or import"
   ).toContain(tagName);
   await expect(createTagButton).toBeEnabled();
 
-  await gotoHydratedAppPage(page, "/automation");
+  await navigateToAutomation(page);
   await page.getByLabel("Name").fill(ruleName);
   await page.getByLabel("Condition value").fill("Employer");
   await page.getByRole("button", { name: "+ Condition" }).click();
@@ -265,7 +260,7 @@ test("financial file import stays outside Ledger until explicit match or import"
   expect(refreshedImportResponse.ok()).toBe(true);
   expect(await refreshedImportResponse.finished()).toBeNull();
 
-  await gotoHydratedAppPage(page, "/automation");
+  await navigateToAutomation(page);
   await page
     .locator(".automation-rule-row")
     .filter({ hasText: ruleName })
