@@ -12,8 +12,6 @@ import {
   findEvmL2GasFeeDetail,
   findExternalImportLink,
   findExternalSourceObjectById,
-  findFileImportCandidateDetail,
-  findFileImportProfile,
   insertExternalImportLink,
   listExternalCandidateLegs,
   listExternalCandidateSourceLinks,
@@ -31,6 +29,7 @@ import {
 import { krakenReportedNonzeroTradeFee } from "../providers/kraken/candidates";
 import type { LedgerMutationInput, OptionalFeeInput } from "./contracts";
 import { assertService } from "./errors";
+import { assertStoredFileImportCandidateProvenance } from "./file-import-provenance-integrity";
 import { createLedgerEventIn } from "./ledger-command-service";
 import {
   defaultServiceRuntime,
@@ -128,27 +127,13 @@ function prepareFileImportCommand(input: {
   candidate: NonNullable<ReturnType<typeof findExternalCandidate>>;
   connection: NonNullable<ReturnType<typeof findExternalConnection>>;
   request: CandidateImportInput;
-  legs: ReturnType<typeof listExternalCandidateLegs>;
 }): { command: LedgerMutationInput; sourceFingerprint: string } {
-  const { executor, candidate, connection, request, legs } = input;
-  const detail = findFileImportCandidateDetail(executor, candidate.id);
-  const external = legs[0];
-  assertService(
-    detail &&
-      legs.length === 1 &&
-      external &&
-      (external.role === "external_in" || external.role === "external_out") &&
-      external.amountAtomic !== null &&
-      external.precisionStatus === "exact",
-    "FILE_IMPORT_CANDIDATE_INTEGRITY_ERROR",
-    "File-import candidate details or exact amount provenance are missing.",
+  const { executor, candidate, connection, request } = input;
+  const provenance = assertStoredFileImportCandidateProvenance(
+    executor,
+    candidate.id,
   );
-  const expectedDirection = external.role === "external_out" ? "out" : "in";
-  assertService(
-    detail.direction === expectedDirection,
-    "FILE_IMPORT_CANDIDATE_INTEGRITY_ERROR",
-    "File-import candidate direction conflicts with its exact leg.",
-  );
+  const { candidateDetail: detail, leg: external, profile } = provenance;
   const allowed =
     (detail.direction === "out" &&
       (request.chosenEventType === "expense" ||
@@ -161,7 +146,6 @@ function prepareFileImportCommand(input: {
     "FILE_IMPORT_EVENT_TYPE_INVALID",
     "Outgoing rows allow Expense or Transfer; incoming rows allow Income or Transfer.",
   );
-  const profile = findFileImportProfile(executor, candidate.connectionId);
   const requestedTargetAccountId =
     request.chosenEventType === "transfer"
       ? detail.direction === "out"
@@ -286,7 +270,6 @@ function prepareCommand(
       candidate,
       connection,
       request: input,
-      legs,
     });
   }
   let evmChainName: string | null = null;

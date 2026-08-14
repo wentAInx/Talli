@@ -30,6 +30,10 @@ import {
 import { assertIanaTimeZone, canonicalUtcInstantValue } from "./time";
 import type { LedgerEntryDraft } from "./types";
 import { MAX_FILE_IMPORT_TEXT_CHARS } from "./file-import";
+import {
+  assertFileImportCandidateProvenance,
+  parseFileImportSourcePayloadJson,
+} from "./file-import-provenance";
 
 export const BACKUP_FORMAT = "multi-asset-ledger-backup";
 export const BACKUP_LEGACY_SCHEMA_VERSION = 1;
@@ -770,78 +774,6 @@ const fileImportBalanceObservationDetailSchema = z
     statementCurrencyCode: z.string().trim().min(1).max(30),
   })
   .strict();
-
-const fileSourcePayloadBase = {
-  sourceExternalId: fileExternalIdentity,
-  originalDateText: z.string(),
-  datePrecision: z.enum(["timestamp", "day"]),
-  signedAmountText: externalDecimalText,
-  currencyCode: nullableText,
-  payee: nullableText,
-  memo: nullableText,
-  unsupportedReason: nullableText,
-} as const;
-
-const fileSourcePayloadSchema = z.union([
-  z
-    .object({
-      ...fileSourcePayloadBase,
-      format: z.literal("csv"),
-      selectedFields: z
-        .object({
-          id: nullableText,
-          date: z.string(),
-          amount: externalDecimalText,
-          payee: nullableText,
-          memo: nullableText,
-          currency: z.string(),
-        })
-        .strict(),
-    })
-    .strict(),
-  z
-    .object({
-      ...fileSourcePayloadBase,
-      format: z.enum(["ofx", "qfx"]),
-      selectedFields: z
-        .object({
-          fitid: nullableText,
-          transactionType: nullableText,
-          date: z.string(),
-          amount: externalDecimalText,
-          payee: nullableText,
-          memo: nullableText,
-          checkNumber: nullableText,
-          referenceNumber: nullableText,
-          sic: nullableText,
-          currency: z.string(),
-        })
-        .strict(),
-    })
-    .strict(),
-  z
-    .object({
-      ...fileSourcePayloadBase,
-      format: z.literal("camt053"),
-      selectedFields: z
-        .object({
-          accountServicerReference: nullableText,
-          entryReference: nullableText,
-          transactionId: nullableText,
-          endToEndId: nullableText,
-          date: z.string(),
-          valueDate: nullableText,
-          amount: externalDecimalText,
-          currency: z.string(),
-          payee: nullableText,
-          memo: nullableText,
-          bankTransactionCode: nullableText,
-          status: nullableText,
-        })
-        .strict(),
-    })
-    .strict(),
-]);
 
 const v1DataSchema = z
   .object({
@@ -1767,27 +1699,28 @@ function validateExternalRelations(data: BackupData): void {
     const fileDetail = fileSourceDetails.get(source.id);
     if (connection.provider === "file_import") {
       const profile = fileProfiles.get(connection.id);
-      let payload: unknown;
+      let parsedPayload: ReturnType<
+        typeof parseFileImportSourcePayloadJson
+      > | null;
       try {
-        payload = JSON.parse(source.payloadJson);
+        parsedPayload = parseFileImportSourcePayloadJson(source.payloadJson);
       } catch {
-        payload = null;
+        parsedPayload = null;
       }
-      const parsedPayload = fileSourcePayloadSchema.safeParse(payload);
       const appearsInBatch = data.fileImportBatchSourceObjects.some(
         (link) => link.sourceObjectId === source.id,
       );
       if (
         !profile ||
         !fileDetail ||
-        !parsedPayload.success ||
-        parsedPayload.data.format !== profile.format ||
-        parsedPayload.data.sourceExternalId !== source.externalId ||
-        parsedPayload.data.originalDateText !== fileDetail.originalDateText ||
-        parsedPayload.data.datePrecision !== fileDetail.datePrecision ||
-        parsedPayload.data.payee !== fileDetail.normalizedPayee ||
-        parsedPayload.data.memo !== fileDetail.memo ||
-        parsedPayload.data.currencyCode !== fileDetail.statementCurrencyCode ||
+        !parsedPayload ||
+        parsedPayload.format !== profile.format ||
+        parsedPayload.sourceExternalId !== source.externalId ||
+        parsedPayload.originalDateText !== fileDetail.originalDateText ||
+        parsedPayload.datePrecision !== fileDetail.datePrecision ||
+        parsedPayload.payee !== fileDetail.normalizedPayee ||
+        parsedPayload.memo !== fileDetail.memo ||
+        parsedPayload.currencyCode !== fileDetail.statementCurrencyCode ||
         !appearsInBatch
       ) {
         fail(
@@ -1928,41 +1861,33 @@ function validateExternalRelations(data: BackupData): void {
     if (connection.provider === "file_import") {
       const detail = fileCandidateDetails.get(candidate.id);
       const profile = fileProfiles.get(candidate.connectionId);
-      const primaryLink = linked.find((link) => link.relation === "primary");
-      const primarySource = primaryLink
-        ? sources.get(primaryLink.sourceObjectId)
-        : undefined;
       const legs = candidateLegs.get(candidate.id) ?? [];
-      const leg = legs[0];
       const account = detail ? accounts.get(detail.targetAccountId) : undefined;
-      const expectedKey = `file:${candidate.connectionId}:target`;
-      const signedAmount = leg?.amountAtomic ? BigInt(leg.amountAtomic) : 0n;
-      const expectedRole =
-        detail?.direction === "out" ? "external_out" : "external_in";
-      if (
-        !detail ||
-        !profile ||
-        linked.length !== 1 ||
-        !primarySource ||
-        primarySource.objectType !== "file_transaction" ||
-        candidate.stableKey !== `file:${primarySource.externalId}` ||
-        candidate.suggestedEventType !== "unknown" ||
-        detail.targetAccountId !== profile.targetAccountId ||
-        !account ||
-        account.bookId !== connection.bookId ||
-        legs.length !== 1 ||
-        !leg ||
-        leg.role !== expectedRole ||
-        leg.providerAssetKey !== expectedKey ||
-        leg.talliAssetId !== account.assetId ||
-        leg.precisionStatus !== "exact" ||
-        leg.amountAtomic === null ||
-        signedAmount === 0n ||
-        (detail.direction === "out" ? signedAmount >= 0n : signedAmount <= 0n)
-      ) {
+      const linkedFileSources = linked.flatMap((link) => {
+        const source = sources.get(link.sourceObjectId);
+        return source ? [source] : [];
+      });
+      const linkedFileSourceDetails = linkedFileSources.flatMap((source) => {
+        const sourceDetail = fileSourceDetails.get(source.id);
+        return sourceDetail ? [sourceDetail] : [];
+      });
+      try {
+        assertFileImportCandidateProvenance({
+          connection,
+          profile: profile ?? null,
+          targetAccount: account ?? null,
+          targetAsset: account ? (assets.get(account.assetId) ?? null) : null,
+          candidate,
+          candidateDetail: detail ?? null,
+          sourceLinks: linked,
+          sources: linkedFileSources,
+          sourceDetails: linkedFileSourceDetails,
+          legs,
+        });
+      } catch {
         fail(
           "BACKUP_FILE_IMPORT_CANDIDATE_INVALID",
-          `File-import candidate ${candidate.id} has inconsistent account, source, direction, or exact leg.`,
+          `File-import candidate ${candidate.id} has inconsistent source-to-candidate financial provenance.`,
         );
       }
     } else if (fileCandidateDetails.has(candidate.id) || hasMatch) {

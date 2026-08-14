@@ -59,6 +59,10 @@ import {
   type StructuredImportConfig,
 } from "../domain/file-import";
 import {
+  assertSameBatchFileSourceIds,
+  fileImportCandidateSourceFingerprint,
+} from "../domain/file-import-provenance";
+import {
   canonicalExternalJson,
   type CanonicalJsonValue,
 } from "../domain/external-sync";
@@ -69,6 +73,7 @@ import {
   sniffFinancialFileFormat,
 } from "../providers/file-import";
 import { assertService } from "./errors";
+import { assertStoredFileImportCandidateProvenance } from "./file-import-provenance-integrity";
 import {
   defaultServiceRuntime,
   runtimeNow,
@@ -123,13 +128,6 @@ function sha256(value: string): string {
 
 function canonicalParserConfig(parserConfig: ParserConfig): string {
   return canonicalExternalJson(parserConfig as unknown as CanonicalJsonValue);
-}
-
-function candidateSourceFingerprint(
-  sourceExternalId: string,
-  payloadHash: string,
-): string {
-  return sha256(`file_transaction:${sourceExternalId}:${payloadHash}`);
 }
 
 function profileTimezone(
@@ -561,6 +559,12 @@ export class FileImportService {
     // Full hash/decode/parse/validation intentionally completes before the
     // database write transaction begins.
     const parsedContext = this.parse(input);
+    assertSameBatchFileSourceIds(
+      parsedContext.parsed.transactions.map((row) => ({
+        sourceExternalId: row.sourceExternalId,
+        canonicalPayload: sourcePayload(parsedContext.format, row),
+      })),
+    );
     if (
       parsedContext.format !== "csv" &&
       parsedContext.storedFingerprint === null
@@ -738,7 +742,7 @@ export class FileImportService {
 
           const stableKey = `file:${row.sourceExternalId}`;
           const existingCandidate = candidates.get(stableKey);
-          const sourceFingerprint = candidateSourceFingerprint(
+          const sourceFingerprint = fileImportCandidateSourceFingerprint(
             row.sourceExternalId,
             payloadHash,
           );
@@ -939,21 +943,11 @@ export class FileImportService {
           "EXTERNAL_CANDIDATE_NOT_FOUND",
           "File-import candidate was not found.",
         );
-        const connection = findExternalConnection(
+        const provenance = assertStoredFileImportCandidateProvenance(
           transaction,
-          candidate.connectionId,
+          candidate.id,
         );
-        const detail = findFileImportCandidateDetail(transaction, candidate.id);
-        const leg = listExternalCandidateLegs(transaction, candidate.id)[0];
-        assertService(
-          connection?.provider === "file_import" &&
-            detail &&
-            leg &&
-            (leg.role === "external_in" || leg.role === "external_out") &&
-            leg.amountAtomic !== null,
-          "FILE_IMPORT_CANDIDATE_INTEGRITY_ERROR",
-          "Candidate is not a valid file-import transaction.",
-        );
+        const { connection, candidateDetail: detail, leg } = provenance;
         assertService(
           candidate.status === "pending" ||
             candidate.status === "needs_mapping",

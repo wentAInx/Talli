@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { insertAccount, readBackupData } from "../../db/queries";
 import { seedDatabase } from "../../db/seed";
 import type { CsvImportConfig } from "../../domain/file-import";
-import { BackupValidationError } from "../../domain/backup";
+import { BackupValidationError, type BackupPayload } from "../../domain/backup";
 import { BackupService } from "../../services/backup-service";
 import { ExternalImportService } from "../../services/external-import-service";
 import { FileImportService } from "../../services/file-import-service";
@@ -36,6 +36,37 @@ const CSV_CONFIG: CsvImportConfig = {
   currencyColumn: "Currency",
   timezone: "Asia/Shanghai",
 };
+
+function fileCandidateRecords(
+  payload: BackupPayload,
+  stableKey = "file:csv:id:backup-match",
+) {
+  const candidate = payload.data.externalTransactionCandidates.find(
+    (row) => row.stableKey === stableKey,
+  )!;
+  const sourceLink = payload.data.externalCandidateSourceObjects.find(
+    (row) => row.candidateId === candidate.id && row.relation === "primary",
+  )!;
+  const source = payload.data.externalSourceObjects.find(
+    (row) => row.id === sourceLink.sourceObjectId,
+  )!;
+  const leg = payload.data.externalTransactionLegs.find(
+    (row) => row.candidateId === candidate.id,
+  )!;
+  return { candidate, source, leg };
+}
+
+function rehashFileSourceBinding(
+  candidate: BackupPayload["data"]["externalTransactionCandidates"][number],
+  source: BackupPayload["data"]["externalSourceObjects"][number],
+): void {
+  source.payloadHash = createHash("sha256")
+    .update(source.payloadJson)
+    .digest("hex");
+  candidate.sourceFingerprint = createHash("sha256")
+    .update(`file_transaction:${source.externalId}:${source.payloadHash}`)
+    .digest("hex");
+}
 
 describe("Backup schemaVersion 6 file-import provenance", () => {
   const databases: TestDatabase[] = [];
@@ -153,6 +184,59 @@ describe("Backup schemaVersion 6 file-import provenance", () => {
       readBackupData(source.context.db),
     );
     expect(target.context.sqlite.pragma("foreign_key_check")).toEqual([]);
+  });
+
+  it("rejects a candidate leg amount that differs from its valid source payload", async () => {
+    const source = await sourceFixture();
+    const tampered = structuredClone(
+      new BackupService(source.context).exportBackup(),
+    );
+    const { leg } = fileCandidateRecords(tampered);
+    leg.amountText = "-36.00";
+    leg.amountAtomic = "-3600";
+    const target = createTestDatabase();
+    databases.push(target);
+    expect(() =>
+      new BackupService(target.context).previewRestore(tampered),
+    ).toThrow(BackupValidationError);
+  });
+
+  it("rejects a rehashed source signed amount when its candidate leg remains unchanged", async () => {
+    const source = await sourceFixture();
+    const tampered = structuredClone(
+      new BackupService(source.context).exportBackup(),
+    );
+    const { candidate, source: sourceObject } = fileCandidateRecords(tampered);
+    const sourcePayload = JSON.parse(sourceObject.payloadJson) as {
+      signedAmountText: string;
+    };
+    sourcePayload.signedAmountText = "-36.00";
+    sourceObject.payloadJson = JSON.stringify(sourcePayload);
+    rehashFileSourceBinding(candidate, sourceObject);
+    const target = createTestDatabase();
+    databases.push(target);
+    expect(() =>
+      new BackupService(target.context).previewRestore(tampered),
+    ).toThrow(BackupValidationError);
+  });
+
+  it("rejects a rehashed selected amount that differs from the top-level source amount", async () => {
+    const source = await sourceFixture();
+    const tampered = structuredClone(
+      new BackupService(source.context).exportBackup(),
+    );
+    const { candidate, source: sourceObject } = fileCandidateRecords(tampered);
+    const sourcePayload = JSON.parse(sourceObject.payloadJson) as {
+      selectedFields: { amount: string };
+    };
+    sourcePayload.selectedFields.amount = "-36.00";
+    sourceObject.payloadJson = JSON.stringify(sourcePayload);
+    rehashFileSourceBinding(candidate, sourceObject);
+    const target = createTestDatabase();
+    databases.push(target);
+    expect(() =>
+      new BackupService(target.context).previewRestore(tampered),
+    ).toThrow(BackupValidationError);
   });
 
   it("upgrades a schemaVersion 5 backup with empty V6 arrays", () => {
@@ -341,6 +425,82 @@ describe("Backup schemaVersion 6 file-import provenance", () => {
         row.externalId.endsWith(longStrongId),
       ),
     ).toBe(true);
+  });
+
+  it("roundtrips valid matched, imported, and source-changed file provenance", async () => {
+    const source = await sourceFixture();
+    const files = new FileImportService(source.context);
+    const csvConnectionId = (
+      source.context.sqlite
+        .prepare(
+          "select connection_id as id from file_import_profiles where format = 'csv'",
+        )
+        .get() as { id: string }
+    ).id;
+    const matchedCandidateId = (
+      source.context.sqlite
+        .prepare(
+          "select id from external_transaction_candidates where stable_key = 'file:csv:id:backup-match'",
+        )
+        .get() as { id: string }
+    ).id;
+    await files.unlinkMatch({
+      candidateId: matchedCandidateId,
+      confirmed: true,
+    });
+    await new ExternalImportService(source.context).importCandidate({
+      candidateId: matchedCandidateId,
+      chosenEventType: "expense",
+      mainAccountId: "backup-v6-usd",
+      confirmed: true,
+    });
+    await files.commit({
+      connectionId: csvConnectionId,
+      bytes: new TextEncoder().encode(
+        "Date,Amount,ID,Payee,Memo,Currency\n2026-08-10,-36.00,backup-match,Starbucks,Store 123,USD\n",
+      ),
+      filename: "statement-corrected.csv",
+      confirmed: true,
+    });
+    await files.commit({
+      connectionId: csvConnectionId,
+      bytes: new TextEncoder().encode(
+        "Date,Amount,ID,Payee,Memo,Currency\n2026-08-12,-10.00,backup-imported,Cafe,Lunch,USD\n",
+      ),
+      filename: "statement-imported.csv",
+      confirmed: true,
+    });
+    const importedCandidateId = (
+      source.context.sqlite
+        .prepare(
+          "select id from external_transaction_candidates where stable_key = 'file:csv:id:backup-imported'",
+        )
+        .get() as { id: string }
+    ).id;
+    await new ExternalImportService(source.context).importCandidate({
+      candidateId: importedCandidateId,
+      chosenEventType: "expense",
+      mainAccountId: "backup-v6-usd",
+      confirmed: true,
+    });
+
+    const payload = new BackupService(source.context).exportBackup();
+    expect(
+      payload.data.externalTransactionCandidates.find(
+        (candidate) => candidate.id === matchedCandidateId,
+      )?.status,
+    ).toBe("source_changed");
+    expect(
+      payload.data.externalTransactionCandidates.find(
+        (candidate) => candidate.id === importedCandidateId,
+      )?.status,
+    ).toBe("imported");
+    const target = createTestDatabase();
+    databases.push(target);
+    new BackupService(target.context).restore(payload);
+    expect(readBackupData(target.context.db)).toEqual(
+      readBackupData(source.context.db),
+    );
   });
 
   it("rolls back every V1-V6 row when the final V6 insert fails", async () => {

@@ -222,6 +222,115 @@ describe("V5 financial file import service", () => {
     ).toBe(true);
   });
 
+  it("accepts identical same-batch strong duplicates and rejects contradictory CSV IDs before writes", async () => {
+    const { service } = setup();
+    const connectionId = await csvProfile(service);
+    const identical = [
+      "Date,Amount,ID,Payee,Memo,Currency",
+      "2026-08-10,-35.00,same-strong,Shop,Receipt,USD",
+      "2026-08-10,-35.00,same-strong,Shop,Receipt,USD",
+    ].join("\n");
+    const accepted = await service.commit({
+      connectionId,
+      bytes: bytes(identical),
+      filename: "same-strong.csv",
+      confirmed: true,
+    });
+    expect(accepted).toMatchObject({
+      sourceRows: 2,
+      candidatesCreated: 1,
+      duplicates: 1,
+    });
+    expect(tableCount(database!, "external_source_objects")).toBe(1);
+    expect(tableCount(database!, "external_transaction_candidates")).toBe(1);
+    expect(tableCount(database!, "file_import_batch_source_objects")).toBe(1);
+
+    const beforeConflict = {
+      batches: tableCount(database!, "file_import_batches"),
+      sources: tableCount(database!, "external_source_objects"),
+      candidates: tableCount(database!, "external_transaction_candidates"),
+      observations: tableCount(database!, "external_balance_observations"),
+      events: tableCount(database!, "ledger_events"),
+      entries: tableCount(database!, "ledger_entries"),
+    };
+    const contradiction = [
+      "Date,Amount,ID,Payee,Memo,Currency",
+      "2026-08-11,-35.00,conflicting-strong,Shop,Receipt,USD",
+      "2026-08-11,-3500.00,conflicting-strong,Shop,Receipt,USD",
+    ].join("\n");
+    await expect(
+      service.commit({
+        connectionId,
+        bytes: bytes(contradiction),
+        filename: "conflicting-strong.csv",
+        confirmed: true,
+      }),
+    ).rejects.toMatchObject({ code: "FILE_IMPORT_SOURCE_ID_CONFLICT" });
+    expect({
+      batches: tableCount(database!, "file_import_batches"),
+      sources: tableCount(database!, "external_source_objects"),
+      candidates: tableCount(database!, "external_transaction_candidates"),
+      observations: tableCount(database!, "external_balance_observations"),
+      events: tableCount(database!, "ledger_events"),
+      entries: tableCount(database!, "ledger_entries"),
+    }).toEqual(beforeConflict);
+  });
+
+  it("rejects contradictory same-batch OFX FITIDs before writes", async () => {
+    const { service } = setup();
+    const connectionId = await service.createProfile({
+      bookId: "seed-book-default",
+      targetAccountId: "account-usd-target",
+      name: "Conflicting OFX",
+      format: "ofx",
+      parserConfig: { timezoneForDateOnly: "America/New_York" },
+      confirmed: true,
+    });
+    const fixture = readFileSync(
+      join(FIXTURES, "sample_bank_ofx1.ofx"),
+      "utf8",
+    );
+    const contradictoryRow = [
+      "<STMTTRN>",
+      "<TRNTYPE>DEBIT",
+      "<DTPOSTED>20260812120000.000[-5:EST]",
+      "<TRNAMT>-3500.00",
+      "<FITID>OFX-1001",
+      "<NAME>DIFFERENT PAYEE",
+      "<MEMO>CONTRADICTORY ROW",
+      "</STMTTRN>",
+    ].join("\n");
+    const contradiction = fixture.replace(
+      "</BANKTRANLIST>",
+      `${contradictoryRow}\n</BANKTRANLIST>`,
+    );
+    const before = {
+      batches: tableCount(database!, "file_import_batches"),
+      sources: tableCount(database!, "external_source_objects"),
+      candidates: tableCount(database!, "external_transaction_candidates"),
+      observations: tableCount(database!, "external_balance_observations"),
+      events: tableCount(database!, "ledger_events"),
+      entries: tableCount(database!, "ledger_entries"),
+    };
+    await expect(
+      service.commit({
+        connectionId,
+        bytes: bytes(contradiction),
+        filename: "conflicting-fitid.ofx",
+        confirmed: true,
+        confirmedStatementIdentity: true,
+      }),
+    ).rejects.toMatchObject({ code: "FILE_IMPORT_SOURCE_ID_CONFLICT" });
+    expect({
+      batches: tableCount(database!, "file_import_batches"),
+      sources: tableCount(database!, "external_source_objects"),
+      candidates: tableCount(database!, "external_transaction_candidates"),
+      observations: tableCount(database!, "external_balance_observations"),
+      events: tableCount(database!, "ledger_events"),
+      entries: tableCount(database!, "ledger_entries"),
+    }).toEqual(before);
+  });
+
   it("keeps malformed CSV and OFX commits at zero writes", async () => {
     const { service } = setup();
     const csvConnection = await csvProfile(service);
@@ -722,6 +831,109 @@ describe("V5 financial file import service", () => {
         candidateId,
       ),
     ).toBe("pending");
+  });
+
+  it("rejects DB-corrupted file amounts before explicit import or match writes", async () => {
+    const { service, runtime } = setup();
+    const connectionId = await csvProfile(service);
+    await service.commit({
+      connectionId,
+      bytes: bytes(
+        [
+          "Date,Amount,ID,Payee,Memo,Currency",
+          "2026-08-14,-35.00,tamper-import,Import source,,USD",
+          "2026-08-14,-35.00,tamper-match,Match source,,USD",
+        ].join("\n"),
+      ),
+      filename: "tamper-defense.csv",
+      confirmed: true,
+    });
+    const candidate = (stableKey: string) =>
+      scalarText(
+        database!,
+        "select id as value from external_transaction_candidates where stable_key = ?",
+        stableKey,
+      );
+    const importCandidateId = candidate("file:csv:id:tamper-import");
+    const matchCandidateId = candidate("file:csv:id:tamper-match");
+    database!.context.sqlite
+      .prepare(
+        "update external_transaction_legs set amount_text = '-36.00', amount_atomic = '-3600' where candidate_id = ?",
+      )
+      .run(importCandidateId);
+    const beforeImport = {
+      events: tableCount(database!, "ledger_events"),
+      entries: tableCount(database!, "ledger_entries"),
+      links: tableCount(database!, "external_import_links"),
+      status: scalarText(
+        database!,
+        "select status as value from external_transaction_candidates where id = ?",
+        importCandidateId,
+      ),
+    };
+    await expect(
+      new ExternalImportService(database!.context, runtime).importCandidate({
+        candidateId: importCandidateId,
+        chosenEventType: "expense",
+        mainAccountId: "account-usd-target",
+        confirmed: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "FILE_IMPORT_PROVENANCE_INTEGRITY_ERROR",
+    });
+    expect({
+      events: tableCount(database!, "ledger_events"),
+      entries: tableCount(database!, "ledger_entries"),
+      links: tableCount(database!, "external_import_links"),
+      status: scalarText(
+        database!,
+        "select status as value from external_transaction_candidates where id = ?",
+        importCandidateId,
+      ),
+    }).toEqual(beforeImport);
+
+    const ledgerEventId = await new LedgerCommandService(
+      database!.context,
+      runtime,
+    ).createExpense({
+      accountId: "account-usd-target",
+      amount: "36.00",
+      occurredAt: "2026-08-14T04:00:00.000Z",
+    });
+    database!.context.sqlite
+      .prepare(
+        "update external_transaction_legs set amount_text = '-36.00', amount_atomic = '-3600' where candidate_id = ?",
+      )
+      .run(matchCandidateId);
+    const beforeMatch = {
+      events: tableCount(database!, "ledger_events"),
+      entries: tableCount(database!, "ledger_entries"),
+      links: tableCount(database!, "external_candidate_match_links"),
+      status: scalarText(
+        database!,
+        "select status as value from external_transaction_candidates where id = ?",
+        matchCandidateId,
+      ),
+    };
+    await expect(
+      service.matchExisting({
+        candidateId: matchCandidateId,
+        ledgerEventId,
+        confirmed: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "FILE_IMPORT_PROVENANCE_INTEGRITY_ERROR",
+    });
+    expect({
+      events: tableCount(database!, "ledger_events"),
+      entries: tableCount(database!, "ledger_entries"),
+      links: tableCount(database!, "external_candidate_match_links"),
+      status: scalarText(
+        database!,
+        "select status as value from external_transaction_candidates where id = ?",
+        matchCandidateId,
+      ),
+    }).toEqual(beforeMatch);
   });
 
   it("rejects explicit matches with the wrong amount or book", async () => {

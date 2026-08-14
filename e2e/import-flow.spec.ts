@@ -224,16 +224,14 @@ test("financial file import stays outside Ledger until explicit match or import"
 test("OFX closing balance remains an observation until explicit reconcile", async ({
   page,
 }, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "CSV covers the mobile critical path; OFX reconcile runs once on desktop.",
-  );
   const consoleErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
   });
 
-  const accountName = "desktop-V5-OFX-USD";
+  const suffix = testInfo.project.name;
+  const accountName = `${suffix}-V5-OFX-USD`;
+  const profileName = `${suffix}-OFX-profile`;
   await page.goto("/accounts/new");
   await page.getByLabel("账户名称").fill(accountName);
   await page.getByLabel("账户类型").selectOption("bank");
@@ -241,16 +239,16 @@ test("OFX closing balance remains an observation until explicit reconcile", asyn
   await page.getByLabel("初始余额（可选）").fill("0.00");
   await page.getByRole("button", { name: "创建账户" }).click();
   await page.getByRole("link", { name: "Import statement" }).click();
-  await page.getByLabel("Profile name").fill("desktop-OFX-profile");
+  await page.getByLabel("Profile name").fill(profileName);
   await page.getByLabel("Statement format").selectOption("ofx");
   await page
     .getByRole("button", { name: "Create explicit import profile" })
     .click();
   await expect(
-    page.getByText("desktop-OFX-profile", { exact: true }).first(),
+    page.getByText(profileName, { exact: true }).first(),
   ).toBeVisible();
   await page.getByLabel("Import profile").selectOption({
-    label: `desktop-OFX-profile · ${accountName} · USD`,
+    label: `${profileName} · ${accountName} · USD`,
   });
 
   const beforeCommit = await backupCounts(page);
@@ -288,6 +286,7 @@ test("OFX closing balance remains an observation until explicit reconcile", asyn
   await expect(
     observation.getByRole("button", { name: "已创建余额快照" }),
   ).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
 
   const afterReconcile = await backupCounts(page);
   expect(afterReconcile.ledgerEvents).toBe(afterCommit.ledgerEvents);

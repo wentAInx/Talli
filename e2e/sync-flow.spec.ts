@@ -505,15 +505,17 @@ test("Base and Arbitrum expose discovery limits, exact traces, and exact fee com
     await page.getByLabel("Public EVM address").fill(sharedAddress);
     await page.getByLabel(/History start date/).fill("2026-01-01");
     await page.getByRole("button", { name: "添加 EVM 只读钱包" }).click();
-
+    const workbench = page.locator(".evm-workbench").filter({
+      has: page.getByRole("heading", { name: network.name, exact: true }),
+    });
+    await expect(
+      workbench.getByRole("heading", { name: network.name, exact: true }),
+    ).toBeVisible();
     const beforeSync = (await (
       await page.request.get("/api/data/backup")
     ).json()) as {
       data: { ledgerEvents: unknown[]; externalImportLinks: unknown[] };
     };
-    const workbench = page.locator(".evm-workbench").filter({
-      has: page.getByRole("heading", { name: network.name, exact: true }),
-    });
     await workbench.getByRole("button", { name: "立即同步" }).click();
     await expect(
       workbench.getByText("只读同步正常", { exact: true }),
