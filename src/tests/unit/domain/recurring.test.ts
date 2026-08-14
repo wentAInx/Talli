@@ -5,6 +5,8 @@ import {
   recurringAmountBounds,
   recurringAmountMatches,
   scoreRecurringMatch,
+  validateRecurringLinkCompatibility,
+  type RecurringLinkEventState,
   type RecurringItem,
 } from "../../../domain/recurring";
 
@@ -35,6 +37,17 @@ function item(overrides: Partial<RecurringItem> = {}): RecurringItem {
     startsOn: null,
     endsOn: null,
     isActive: true,
+    ...overrides,
+  };
+}
+
+function linkedEvent(
+  overrides: Partial<RecurringLinkEventState> = {},
+): RecurringLinkEventState {
+  return {
+    bookId: "book-1",
+    eventType: "expense",
+    entries: [{ accountId: "account-usd", role: "main", amountAtomic: -1599n }],
     ...overrides,
   };
 }
@@ -151,5 +164,128 @@ describe("V5.1 recurring bigint expectations", () => {
         "exact expected amount",
       ],
     });
+  });
+});
+
+describe("V5.1 recurring link compatibility", () => {
+  it.each([
+    {
+      name: "missing recurring item",
+      input: { item: null, event: linkedEvent() },
+      reason: "item_missing",
+    },
+    {
+      name: "invalid recurring definition",
+      input: { item: item({ amountAtomic: null }), event: linkedEvent() },
+      reason: "item_invalid",
+    },
+    {
+      name: "non-generated occurrence",
+      input: {
+        item: item(),
+        event: linkedEvent(),
+        occurrenceDate: "2026-02-28",
+      },
+      reason: "occurrence_invalid",
+    },
+    {
+      name: "missing Ledger event",
+      input: { item: item(), event: null },
+      reason: "event_missing",
+    },
+    {
+      name: "different book",
+      input: { item: item(), event: linkedEvent({ bookId: "book-2" }) },
+      reason: "book_mismatch",
+    },
+    {
+      name: "different event type",
+      input: { item: item(), event: linkedEvent({ eventType: "income" }) },
+      reason: "event_type_mismatch",
+    },
+    {
+      name: "wrong main cardinality",
+      input: { item: item(), event: linkedEvent({ entries: [] }) },
+      reason: "main_entry_cardinality",
+    },
+    {
+      name: "multiple main entries",
+      input: {
+        item: item(),
+        event: linkedEvent({
+          entries: [
+            { accountId: "account-usd", role: "main", amountAtomic: -1599n },
+            { accountId: "account-usd", role: "main", amountAtomic: -100n },
+          ],
+        }),
+      },
+      reason: "main_entry_cardinality",
+    },
+    {
+      name: "different main account",
+      input: {
+        item: item(),
+        event: linkedEvent({
+          entries: [
+            { accountId: "account-other", role: "main", amountAtomic: -1599n },
+          ],
+        }),
+      },
+      reason: "main_account_mismatch",
+    },
+    {
+      name: "wrong Expense direction",
+      input: {
+        item: item(),
+        event: linkedEvent({
+          entries: [
+            { accountId: "account-usd", role: "main", amountAtomic: 1599n },
+          ],
+        }),
+      },
+      reason: "direction_mismatch",
+    },
+    {
+      name: "wrong Income direction",
+      input: {
+        item: item({ eventType: "income" }),
+        event: linkedEvent({
+          eventType: "income",
+          entries: [
+            { accountId: "account-usd", role: "main", amountAtomic: -1599n },
+          ],
+        }),
+      },
+      reason: "direction_mismatch",
+    },
+  ])("rejects $name", ({ input, reason }) => {
+    expect(
+      validateRecurringLinkCompatibility({
+        occurrenceDate: "2026-01-31",
+        ...input,
+      }),
+    ).toEqual({ ok: false, reason });
+  });
+
+  it("accepts one same-book, same-type main entry with the expected account and direction", () => {
+    expect(
+      validateRecurringLinkCompatibility({
+        item: item(),
+        occurrenceDate: "2026-01-31",
+        event: linkedEvent(),
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      validateRecurringLinkCompatibility({
+        item: item({ eventType: "income" }),
+        occurrenceDate: "2026-01-31",
+        event: linkedEvent({
+          eventType: "income",
+          entries: [
+            { accountId: "account-usd", role: "main", amountAtomic: 1599n },
+          ],
+        }),
+      }),
+    ).toEqual({ ok: true });
   });
 });

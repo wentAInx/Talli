@@ -19,15 +19,15 @@ import {
 } from "@/db/queries";
 import { addLocalDays } from "@/domain/recurring";
 import { formatAtomic } from "@/domain/money";
-import { utcInstantToLocalDateTime } from "@/domain/time";
 import {
   AutomationRuleService,
   FileImportReadService,
+  RecurringCalendarService,
   RecurringItemService,
   ReferenceDataService,
-  SettingsService,
 } from "@/services";
 
+import { buildCandidateRecurringPrefill } from "./recurring-prefill";
 import { withDatabase } from "../server-runtime";
 
 export const dynamic = "force-dynamic";
@@ -47,11 +47,8 @@ export default async function AutomationPage({
   const data = await withDatabase((context) => {
     const references = new ReferenceDataService(context);
     const bookId = references.getDefaultBookId();
-    const settings = new SettingsService(context);
-    const currentLocalDate = utcInstantToLocalDateTime(
-      new Date().toISOString(),
-      settings.getTimeZoneOrDefault(),
-    ).slice(0, 10);
+    const calendar = new RecurringCalendarService(context);
+    const currentLocalDate = calendar.currentLocalDate();
     const allAccounts = listAccountsForBook(context.db, bookId).flatMap(
       (account) => {
         const withAsset = findAccountWithAsset(context.db, account.id);
@@ -185,10 +182,7 @@ export default async function AutomationPage({
             maxAmount: null,
             frequency: "monthly",
             intervalCount: 1,
-            anchorDate: utcInstantToLocalDateTime(
-              event.occurredAt,
-              settings.getTimeZoneOrDefault(),
-            ).slice(0, 10),
+            anchorDate: calendar.localDateForInstant(event.occurredAt),
             monthlyDayMode: "fixed",
             dateWindowBeforeDays: 2,
             dateWindowAfterDays: 2,
@@ -206,51 +200,11 @@ export default async function AutomationPage({
         const account = allAccounts.find(
           (entry) => entry.id === candidate.targetAccount.id,
         );
-        if (
-          account &&
-          !account.isArchived &&
-          (candidate.status === "pending" ||
-            candidate.status === "needs_mapping")
-        ) {
-          const projection = candidate.automation.projection;
-          const eventType =
-            projection.projectedEventType === "expense" ||
-            projection.projectedEventType === "income"
-              ? projection.projectedEventType
-              : candidate.direction === "out"
-                ? "expense"
-                : "income";
-          const signedAtomic = BigInt(candidate.amountAtomic);
-          const magnitude = signedAtomic < 0n ? -signedAtomic : signedAtomic;
-          const payee = projection.projectedPayee ?? candidate.payee;
-          recurringPrefill = {
-            sourceLabel: `file candidate ${candidate.id}`,
-            name: `Recurring ${payee ?? candidate.title}`.slice(0, 120),
-            eventType,
-            accountId: account.id,
-            payeeText: payee,
-            payeeMatchMode: payee ? "exact" : "any",
-            categoryId: projection.projectedCategoryId,
-            tagIds: projection.projectedTagIds,
-            note: projection.projectedNote,
-            amountMode: "exact",
-            amount: formatAtomic(magnitude, account.assetScale, {
-              trimTrailingZeros: false,
-            }),
-            toleranceBps: null,
-            minAmount: null,
-            maxAmount: null,
-            frequency: "monthly",
-            intervalCount: 1,
-            anchorDate: candidate.sourceDateText,
-            monthlyDayMode: "fixed",
-            dateWindowBeforeDays: 2,
-            dateWindowAfterDays: 2,
-            startsOn: null,
-            endsOn: null,
-            isActive: true,
-          };
-        }
+        recurringPrefill = buildCandidateRecurringPrefill({
+          candidate,
+          account: account ?? null,
+          calendar,
+        });
       } catch {
         recurringPrefill = null;
       }
@@ -264,6 +218,7 @@ export default async function AutomationPage({
       tags,
       profiles,
       recurringPrefill,
+      currentLocalDate,
     };
   });
 
@@ -317,6 +272,7 @@ export default async function AutomationPage({
             categoryType,
           }))}
           items={data.recurring}
+          currentLocalDate={data.currentLocalDate}
           prefill={data.recurringPrefill}
           tags={data.tags.map(({ id, name }) => ({ id, name }))}
         />

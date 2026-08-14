@@ -94,6 +94,7 @@ export function RecurringManager({
   accounts,
   categories,
   tags,
+  currentLocalDate,
   prefill = null,
 }: {
   bookId: string;
@@ -105,6 +106,7 @@ export function RecurringManager({
     categoryType: "expense" | "income" | "both";
   }>;
   tags: Array<{ id: string; name: string }>;
+  currentLocalDate: string;
   prefill?: RecurringPrefill | null;
 }) {
   const router = useRouter();
@@ -199,6 +201,7 @@ export function RecurringManager({
   }
 
   const initial = editing ?? prefill;
+  const resolvedAnchorDate = initial?.anchorDate ?? currentLocalDate;
   const visibleItems = items.filter((item) => {
     if (filter === "all") return true;
     if (filter === "active") return item.isActive;
@@ -354,7 +357,7 @@ export function RecurringManager({
         <form
           action={save}
           className="recurring-form"
-          key={editing?.id ?? prefill?.sourceLabel ?? "new"}
+          key={`${editing?.id ?? prefill?.sourceLabel ?? "new"}:${resolvedAnchorDate}`}
         >
           <div className="field-grid field-grid-two">
             <label className="field">
@@ -537,9 +540,7 @@ export function RecurringManager({
             <label className="field">
               <span>Anchor date</span>
               <input
-                defaultValue={
-                  initial?.anchorDate ?? new Date().toISOString().slice(0, 10)
-                }
+                defaultValue={resolvedAnchorDate}
                 name="anchorDate"
                 type="date"
               />

@@ -6,6 +6,7 @@ import {
   localDateTimeToUtc,
   monthInTimeZone,
   monthUtcRange,
+  utcInstantToLocalDate,
   utcInstantToLocalDateTime,
 } from "../../../domain/time";
 
@@ -52,4 +53,22 @@ describe("app timezone boundaries", () => {
     );
     expect(monthInTimeZone(instant, "Asia/Shanghai")).toBe("2026-08");
   });
+
+  it.each([
+    {
+      timeZone: "Asia/Shanghai",
+      instant: "2026-08-14T16:30:00.000Z",
+      expected: "2026-08-15",
+    },
+    {
+      timeZone: "America/Los_Angeles",
+      instant: "2026-08-15T06:30:00.000Z",
+      expected: "2026-08-14",
+    },
+  ])(
+    "derives the App-local recurring date in $timeZone",
+    ({ timeZone, instant, expected }) => {
+      expect(utcInstantToLocalDate(instant, timeZone)).toBe(expected);
+    },
+  );
 });

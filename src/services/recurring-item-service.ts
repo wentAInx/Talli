@@ -1,4 +1,5 @@
 import type { DatabaseContext, DatabaseExecutor } from "../db/connection";
+import { atomicFromDb } from "../db/atomic";
 import {
   deleteRecurringOccurrenceLink,
   deleteRecurringOccurrenceSkip,
@@ -7,7 +8,6 @@ import {
   findCategoryById,
   findEntriesForEvent,
   findLedgerEventById,
-  findRecurringItemRow,
   findRecurringOccurrenceLink,
   findRecurringOccurrenceLinkByLedgerEvent,
   findRecurringOccurrenceSkip,
@@ -16,7 +16,6 @@ import {
   insertRecurringOccurrenceLink,
   insertRecurringOccurrenceSkip,
   listRecurringItemRowsForBook,
-  listRecurringItemTagIds,
   listRecurringOccurrenceLinks,
   listRecurringOccurrenceSkips,
   replaceRecurringItemTags,
@@ -26,8 +25,8 @@ import { parseDecimalToAtomic } from "../domain/money";
 import {
   generateOccurrenceDates,
   isGeneratedOccurrence,
-  parsePositiveAtomicText,
   recurringOccurrenceStatus,
+  validateRecurringLinkCompatibility,
   validateRecurringItem,
   type GeneratedOccurrence,
   type MonthlyDayMode,
@@ -46,6 +45,10 @@ import {
   type ServiceRuntime,
 } from "./runtime";
 import { optionalText, requiredText, uniqueTagIds } from "./validation";
+import {
+  hydrateRecurringItem,
+  requireRecurringItem,
+} from "./recurring-item-reader";
 
 export interface RecurringItemDraft {
   id?: string;
@@ -74,65 +77,6 @@ export interface RecurringItemDraft {
   isActive: boolean;
 }
 
-function hydrateRecurringItem(
-  executor: DatabaseExecutor,
-  recurringItemId: string,
-): RecurringItem | null {
-  const row = findRecurringItemRow(executor, recurringItemId);
-  if (!row) return null;
-  const item: RecurringItem = {
-    id: row.id,
-    bookId: row.bookId,
-    accountId: row.accountId,
-    assetId: row.assetId,
-    name: row.name,
-    eventType: row.eventType,
-    payeeText: row.payeeText,
-    payeeMatchMode: row.payeeMatchMode,
-    categoryId: row.categoryId,
-    tagIds: listRecurringItemTagIds(executor, row.id),
-    note: row.note,
-    amountMode: row.amountMode,
-    amountAtomic:
-      row.amountAtomicText === null
-        ? null
-        : parsePositiveAtomicText(row.amountAtomicText),
-    toleranceBps: row.toleranceBps,
-    minAmountAtomic:
-      row.minAmountAtomicText === null
-        ? null
-        : parsePositiveAtomicText(row.minAmountAtomicText),
-    maxAmountAtomic:
-      row.maxAmountAtomicText === null
-        ? null
-        : parsePositiveAtomicText(row.maxAmountAtomicText),
-    frequency: row.frequency,
-    intervalCount: row.intervalCount,
-    anchorDate: row.anchorDate,
-    monthlyDayMode: row.monthlyDayMode,
-    dateWindowBeforeDays: row.dateWindowBeforeDays,
-    dateWindowAfterDays: row.dateWindowAfterDays,
-    startsOn: row.startsOn,
-    endsOn: row.endsOn,
-    isActive: row.isActive,
-  };
-  validateRecurringItem(item);
-  return item;
-}
-
-export function requireRecurringItem(
-  executor: DatabaseExecutor,
-  recurringItemId: string,
-): RecurringItem {
-  const item = hydrateRecurringItem(executor, recurringItemId);
-  assertService(
-    item,
-    "RECURRING_ITEM_NOT_FOUND",
-    "Recurring item was not found.",
-  );
-  return item;
-}
-
 function exactPositiveAmount(
   value: string | null | undefined,
   scale: number,
@@ -147,6 +91,47 @@ function exactPositiveAmount(
   return atomic;
 }
 
+function assertRecurringActivationReferences(
+  executor: DatabaseExecutor,
+  item: RecurringItem,
+): void {
+  validateRecurringItem({ ...item, isActive: true });
+  assertService(
+    findBookById(executor, item.bookId),
+    "BOOK_NOT_FOUND",
+    "Recurring item book was not found.",
+  );
+  const account = findAccountWithAsset(executor, item.accountId);
+  assertService(
+    account &&
+      account.account.bookId === item.bookId &&
+      account.asset.id === item.assetId &&
+      !account.account.isArchived &&
+      !account.asset.isArchived,
+    "RECURRING_ACCOUNT_INVALID",
+    "Active recurring items require an active same-book account and asset.",
+  );
+  if (item.categoryId) {
+    const category = findCategoryById(executor, item.categoryId);
+    assertService(
+      category &&
+        category.bookId === item.bookId &&
+        !category.isArchived &&
+        (category.categoryType === "both" ||
+          category.categoryType === item.eventType),
+      "RECURRING_CATEGORY_INVALID",
+      "Active recurring items require an active, same-book, event-type compatible category.",
+    );
+  }
+  const tags = findTagsByIds(executor, item.tagIds);
+  assertService(
+    tags.length === item.tagIds.length &&
+      tags.every((tag) => tag.bookId === item.bookId && !tag.isArchived),
+    "RECURRING_TAG_INVALID",
+    "Active recurring items require active tags from the same book.",
+  );
+}
+
 function normalizeDraft(
   executor: DatabaseExecutor,
   draft: RecurringItemDraft,
@@ -158,20 +143,17 @@ function normalizeDraft(
   );
   const account = findAccountWithAsset(executor, draft.accountId);
   assertService(
-    account &&
-      account.account.bookId === draft.bookId &&
-      !account.account.isArchived &&
-      !account.asset.isArchived,
+    account && account.account.bookId === draft.bookId,
     "RECURRING_ACCOUNT_INVALID",
-    "Recurring account and asset must be active and in the same book.",
+    "Recurring account and asset must exist in the same book.",
   );
   const tagIds = uniqueTagIds(draft.tagIds);
   const tagRows = findTagsByIds(executor, tagIds);
   assertService(
     tagRows.length === tagIds.length &&
-      tagRows.every((tag) => tag.bookId === draft.bookId && !tag.isArchived),
+      tagRows.every((tag) => tag.bookId === draft.bookId),
     "RECURRING_TAG_INVALID",
-    "Recurring tags must be active and in the same book.",
+    "Recurring tags must exist in the same book.",
   );
   const categoryId = draft.categoryId ?? null;
   if (categoryId) {
@@ -179,11 +161,10 @@ function normalizeDraft(
     assertService(
       category &&
         category.bookId === draft.bookId &&
-        !category.isArchived &&
         (category.categoryType === "both" ||
           category.categoryType === draft.eventType),
       "RECURRING_CATEGORY_INVALID",
-      "Recurring category must be active, same-book, and event-type compatible.",
+      "Recurring category must exist, be same-book, and event-type compatible.",
     );
   }
   let amountAtomic: bigint | null = null;
@@ -246,6 +227,9 @@ function normalizeDraft(
     "RECURRING_TEXT_TOO_LONG",
     "Recurring name, payee, or note exceeds its allowed length.",
   );
+  if (item.isActive) {
+    assertRecurringActivationReferences(executor, item);
+  }
   return item;
 }
 
@@ -287,26 +271,44 @@ function validateLedgerEventForItem(
   executor: DatabaseExecutor,
   item: RecurringItem,
   ledgerEventId: string,
+  occurrenceDate: string,
 ): void {
   const event = findLedgerEventById(executor, ledgerEventId);
-  assertService(
-    event && event.bookId === item.bookId && event.eventType === item.eventType,
-    "RECURRING_LEDGER_EVENT_INVALID",
-    "Ledger event must be a same-book Expense or Income matching the recurring item.",
-  );
-  const entries = findEntriesForEvent(executor, ledgerEventId);
-  const main = entries.filter((entry) => entry.entryRole === "main");
-  assertService(
-    main.length === 1 && main[0]!.accountId === item.accountId,
-    "RECURRING_LEDGER_ACCOUNT_INVALID",
-    "Ledger event main entry must use the recurring account.",
-  );
-  const amount = BigInt(main[0]!.amountAtomic);
-  assertService(
-    item.eventType === "expense" ? amount < 0n : amount > 0n,
-    "RECURRING_LEDGER_DIRECTION_INVALID",
-    "Ledger event direction does not match the recurring item.",
-  );
+  const result = validateRecurringLinkCompatibility({
+    item,
+    occurrenceDate,
+    event: event
+      ? {
+          bookId: event.bookId,
+          eventType: event.eventType,
+          entries: findEntriesForEvent(executor, ledgerEventId).map(
+            (entry) => ({
+              accountId: entry.accountId,
+              role: entry.entryRole,
+              amountAtomic: atomicFromDb(entry.amountAtomic),
+            }),
+          ),
+        }
+      : null,
+  });
+  if (!result.ok) {
+    assertService(
+      result.reason !== "main_account_mismatch" &&
+        result.reason !== "main_entry_cardinality",
+      "RECURRING_LEDGER_ACCOUNT_INVALID",
+      "Ledger event main entry must use the recurring account.",
+    );
+    assertService(
+      result.reason !== "direction_mismatch",
+      "RECURRING_LEDGER_DIRECTION_INVALID",
+      "Ledger event direction does not match the recurring item.",
+    );
+    assertService(
+      false,
+      "RECURRING_LEDGER_EVENT_INVALID",
+      "Ledger event must be a compatible same-book Expense or Income occurrence.",
+    );
+  }
   assertService(
     !findRecurringOccurrenceLinkByLedgerEvent(executor, ledgerEventId),
     "RECURRING_LEDGER_EVENT_ALREADY_LINKED",
@@ -325,7 +327,12 @@ export function insertConfirmedRecurringLink(
 ): void {
   const item = requireRecurringItem(executor, input.recurringItemId);
   requireOpenOccurrence(executor, item, input.occurrenceDate);
-  validateLedgerEventForItem(executor, item, input.ledgerEventId);
+  validateLedgerEventForItem(
+    executor,
+    item,
+    input.ledgerEventId,
+    input.occurrenceDate,
+  );
   insertRecurringOccurrenceLink(executor, {
     recurringItemId: item.id,
     occurrenceDate: input.occurrenceDate,
@@ -353,18 +360,29 @@ export class RecurringItemService {
   save(draft: RecurringItemDraft): string {
     return this.context.db.transaction(
       (transaction) => {
-        const normalized = normalizeDraft(transaction, draft);
         const existing = draft.id
           ? requireRecurringItem(transaction, draft.id)
           : null;
+        const links = existing
+          ? listRecurringOccurrenceLinks(transaction, existing.id)
+          : [];
+        const skips = existing
+          ? listRecurringOccurrenceSkips(transaction, existing.id)
+          : [];
+        if (existing) {
+          assertService(
+            links.length === 0 || existing.eventType === draft.eventType,
+            "RECURRING_EVENT_TYPE_CHANGE_FORBIDDEN",
+            "Recurring event type cannot change after a Ledger occurrence is linked.",
+          );
+        }
+        const normalized = normalizeDraft(transaction, draft);
         if (existing) {
           assertService(
             existing.bookId === normalized.bookId,
             "RECURRING_BOOK_CHANGE_FORBIDDEN",
             "Recurring item cannot move to another book.",
           );
-          const links = listRecurringOccurrenceLinks(transaction, existing.id);
-          const skips = listRecurringOccurrenceSkips(transaction, existing.id);
           assertService(
             (links.length === 0 && skips.length === 0) ||
               (existing.accountId === normalized.accountId &&
@@ -427,7 +445,13 @@ export class RecurringItemService {
   setActive(recurringItemId: string, isActive: boolean): void {
     this.context.db.transaction(
       (transaction) => {
-        requireRecurringItem(transaction, recurringItemId);
+        const item = requireRecurringItem(transaction, recurringItemId);
+        if (isActive) {
+          assertRecurringActivationReferences(transaction, {
+            ...item,
+            isActive: true,
+          });
+        }
         updateRecurringItem(transaction, recurringItemId, {
           isActive,
           updatedAt: runtimeNow(this.runtime),

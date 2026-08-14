@@ -14,15 +14,15 @@ import {
   scoreRecurringMatch,
   type RecurringMatchSuggestion,
 } from "../domain/recurring";
-import { localDateRangeToUtc, utcInstantToLocalDateTime } from "../domain/time";
+import { localDateRangeToUtc } from "../domain/time";
 import {
   buildFileCandidateAutomationContext,
   projectFileCandidate,
 } from "./automation-projection-service";
 import { assertStoredFileImportCandidateProvenance } from "./file-import-provenance-integrity";
-import { requireRecurringItem } from "./recurring-item-service";
+import { requireRecurringItem } from "./recurring-item-reader";
+import { RecurringCalendarService } from "./recurring-calendar-service";
 import { defaultServiceRuntime, type ServiceRuntime } from "./runtime";
-import { SettingsService } from "./settings-service";
 
 function magnitude(value: bigint): bigint {
   return value < 0n ? -value : value;
@@ -74,10 +74,8 @@ export class RecurringMatchService {
     ) {
       return [];
     }
-    const timeZone = new SettingsService(
-      this.context,
-      this.runtime,
-    ).getTimeZoneOrDefault();
+    const calendar = new RecurringCalendarService(this.context, this.runtime);
+    const timeZone = calendar.getTimeZone();
     const range = utcRangeForWindow(
       input.occurrenceDate,
       item.dateWindowBeforeDays,
@@ -109,10 +107,7 @@ export class RecurringMatchService {
       const scored = scoreRecurringMatch({
         item,
         occurrenceDate: input.occurrenceDate,
-        actualDate: utcInstantToLocalDateTime(event.occurredAt, timeZone).slice(
-          0,
-          10,
-        ),
+        actualDate: calendar.localDateForInstant(event.occurredAt),
         actualPayee: event.payee,
         actualMagnitudeAtomic: magnitude(signedAtomic),
       });
@@ -149,7 +144,7 @@ export class RecurringMatchService {
       const scored = scoreRecurringMatch({
         item,
         occurrenceDate: input.occurrenceDate,
-        actualDate: provenance.candidateDetail.sourceDateText,
+        actualDate: calendar.localDateForInstant(candidate.occurredAt),
         actualPayee:
           projection.projectedPayee ??
           provenance.candidateDetail.normalizedPayee,
@@ -184,6 +179,14 @@ export class RecurringMatchService {
     ) {
       return [];
     }
+    const calendar = new RecurringCalendarService(this.context, this.runtime);
+    const provenance = assertStoredFileImportCandidateProvenance(
+      this.context.db,
+      candidateId,
+    );
+    const actualDate = calendar.localDateForInstant(
+      provenance.candidate.occurredAt,
+    );
     const projection = projectFileCandidate(this.context.db, candidateId);
     const actualMagnitudeAtomic = magnitude(context.sourceAmountAtomic);
     const expectedEventType =
@@ -204,8 +207,8 @@ export class RecurringMatchService {
       }
       const dates = generateOccurrenceDates(
         item,
-        addLocalDays(context.sourceDate, -item.dateWindowAfterDays),
-        addLocalDays(context.sourceDate, item.dateWindowBeforeDays),
+        addLocalDays(actualDate, -item.dateWindowAfterDays),
+        addLocalDays(actualDate, item.dateWindowBeforeDays),
       );
       for (const occurrenceDate of dates) {
         if (
@@ -221,7 +224,7 @@ export class RecurringMatchService {
         const scored = scoreRecurringMatch({
           item,
           occurrenceDate,
-          actualDate: context.sourceDate,
+          actualDate,
           actualPayee: projection.projectedPayee ?? context.sourcePayee,
           actualMagnitudeAtomic,
         });

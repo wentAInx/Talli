@@ -138,6 +138,60 @@ assertAbsent(
   "Financial-file parser network isolation",
 );
 
+const automationPureFiles = [
+  join(root, "src/domain/automation.ts"),
+  join(root, "src/domain/recurring.ts"),
+  join(root, "src/services/automation-projection-service.ts"),
+  join(root, "src/services/recurring-calendar-service.ts"),
+  join(root, "src/services/recurring-match-service.ts"),
+];
+assertAbsent(
+  automationPureFiles,
+  [
+    /\bfetch\s*\(/,
+    /\bXMLHttpRequest\b/,
+    /\b(?:axios|got|undici)\b/,
+    /from\s+["']node:(?:http|https|net|tls)["']/,
+    /https?:\/\//,
+  ],
+  "Automation and recurring network isolation",
+);
+assertAbsent(
+  [
+    join(root, "src/domain/automation.ts"),
+    join(root, "src/services/automation-projection-service.ts"),
+  ],
+  [
+    /from\s+["'][^"']*(?:ledger-command-service|external-import-service|file-import-service)["']/,
+    /\b(?:insert|update|delete)(?:Ledger|External|Candidate|Source)/,
+  ],
+  "Rule projection fact-write isolation",
+);
+assertAbsent(
+  [
+    join(root, "src/domain/automation.ts"),
+    join(root, "src/services/automation-rule-service.ts"),
+    join(root, "src/db/schema.ts"),
+  ],
+  [/["'`](?:regex|matches_regex)["'`]/i],
+  "Automation user-regex boundary",
+);
+assertAbsent(
+  [
+    ...filesUnder(join(root, "src/domain")),
+    ...filesUnder(join(root, "src/services")),
+  ].filter(
+    (file) =>
+      /\.(?:ts|tsx)$/.test(file) && /(?:automation|recurring)/.test(file),
+  ),
+  [
+    /\bsetInterval\s*\(/,
+    /\bscheduleJob\s*\(/,
+    /from\s+["'](?:node-cron|cron|cron-parser|agenda|bree)["']/,
+  ],
+  "Automation and recurring scheduler boundary",
+);
+
 const fileImportIngressFiles = [
   ...fileImportProviderFiles,
   ...filesUnder(join(root, "src/app/api/import")),

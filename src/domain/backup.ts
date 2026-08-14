@@ -42,6 +42,7 @@ import {
 import {
   isGeneratedOccurrence,
   parsePositiveAtomicText,
+  validateRecurringLinkCompatibility,
   validateRecurringItem,
   type RecurringItem,
 } from "./recurring";
@@ -2753,31 +2754,24 @@ function validateAutomationAndRecurring(data: BackupData): void {
   for (const link of data.recurringOccurrenceLinks) {
     const item = recurringById.get(link.recurringItemId);
     const event = eventById.get(link.ledgerEventId);
-    const mainEntries = data.ledgerEntries.filter(
-      (entry) =>
-        entry.eventId === link.ledgerEventId && entry.entryRole === "main",
-    );
-    let generated = false;
-    try {
-      generated = Boolean(
-        item &&
-        isGeneratedOccurrence({ ...item, isActive: true }, link.occurrenceDate),
-      );
-    } catch {
-      generated = false;
-    }
-    const amount =
-      mainEntries.length === 1 ? BigInt(mainEntries[0]!.amountAtomic) : 0n;
-    if (
-      !item ||
-      !generated ||
-      !event ||
-      event.bookId !== item.bookId ||
-      event.eventType !== item.eventType ||
-      mainEntries.length !== 1 ||
-      mainEntries[0]!.accountId !== item.accountId ||
-      (item.eventType === "expense" ? amount >= 0n : amount <= 0n)
-    ) {
+    const compatibility = validateRecurringLinkCompatibility({
+      item,
+      occurrenceDate: link.occurrenceDate,
+      event: event
+        ? {
+            bookId: event.bookId,
+            eventType: event.eventType,
+            entries: data.ledgerEntries
+              .filter((entry) => entry.eventId === link.ledgerEventId)
+              .map((entry) => ({
+                accountId: entry.accountId,
+                role: entry.entryRole,
+                amountAtomic: BigInt(entry.amountAtomic),
+              })),
+          }
+        : null,
+    });
+    if (!compatibility.ok) {
       fail(
         "BACKUP_RECURRING_LINK_INVALID",
         `Recurring occurrence link ${link.recurringItemId}/${link.occurrenceDate} is invalid.`,

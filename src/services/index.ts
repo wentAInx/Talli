@@ -16,6 +16,7 @@ export * from "./ledger-command-service";
 export * from "./ledger-read-service";
 export * from "./reconciliation-service";
 export * from "./report-service";
+export * from "./recurring-calendar-service";
 export * from "./recurring-item-service";
 export * from "./recurring-match-service";
 export * from "./reference-data-service";

@@ -1,5 +1,6 @@
 import { assertDomain } from "./errors";
 import { normalizeAutomationText } from "./automation";
+import type { EventType, LedgerEntryDraft } from "./types";
 
 export type RecurringEventType = "expense" | "income";
 export type RecurringFrequency = "daily" | "weekly" | "monthly" | "yearly";
@@ -50,6 +51,26 @@ export interface RecurringMatchSuggestion {
   score: number;
   reasons: string[];
 }
+
+export interface RecurringLinkEventState {
+  bookId: string;
+  eventType: EventType;
+  entries: readonly LedgerEntryDraft[];
+}
+
+export type RecurringLinkCompatibilityFailure =
+  | "item_missing"
+  | "item_invalid"
+  | "occurrence_invalid"
+  | "event_missing"
+  | "book_mismatch"
+  | "event_type_mismatch"
+  | "main_entry_cardinality"
+  | "main_account_mismatch"
+  | "direction_mismatch";
+
+export type RecurringLinkCompatibilityResult =
+  { ok: true } | { ok: false; reason: RecurringLinkCompatibilityFailure };
 
 interface DateParts {
   year: number;
@@ -341,6 +362,52 @@ export function isGeneratedOccurrence(
     generateOccurrenceDates(item, occurrenceDate, occurrenceDate, 1).length ===
     1
   );
+}
+
+export function validateRecurringLinkCompatibility(input: {
+  item: RecurringItem | null | undefined;
+  occurrenceDate: string;
+  event: RecurringLinkEventState | null | undefined;
+}): RecurringLinkCompatibilityResult {
+  const { item, event } = input;
+  if (!item) return { ok: false, reason: "item_missing" };
+  try {
+    validateRecurringItem(item);
+  } catch {
+    return { ok: false, reason: "item_invalid" };
+  }
+  try {
+    if (
+      !isGeneratedOccurrence({ ...item, isActive: true }, input.occurrenceDate)
+    ) {
+      return { ok: false, reason: "occurrence_invalid" };
+    }
+  } catch {
+    return { ok: false, reason: "occurrence_invalid" };
+  }
+  if (!event) return { ok: false, reason: "event_missing" };
+  if (event.bookId !== item.bookId) {
+    return { ok: false, reason: "book_mismatch" };
+  }
+  if (event.eventType !== item.eventType) {
+    return { ok: false, reason: "event_type_mismatch" };
+  }
+  const mainEntries = event.entries.filter((entry) => entry.role === "main");
+  if (mainEntries.length !== 1) {
+    return { ok: false, reason: "main_entry_cardinality" };
+  }
+  const main = mainEntries[0]!;
+  if (main.accountId !== item.accountId) {
+    return { ok: false, reason: "main_account_mismatch" };
+  }
+  if (
+    item.eventType === "expense"
+      ? main.amountAtomic >= 0n
+      : main.amountAtomic <= 0n
+  ) {
+    return { ok: false, reason: "direction_mismatch" };
+  }
+  return { ok: true };
 }
 
 function ceilDivide(numerator: bigint, denominator: bigint): bigint {

@@ -5,6 +5,7 @@ import {
   buildTransferEntries,
 } from "../domain/ledger";
 import { parseDecimalToAtomic } from "../domain/money";
+import { validateRecurringLinkCompatibility } from "../domain/recurring";
 import type { EventType, LedgerEntryDraft } from "../domain/types";
 import { atomicToDb } from "../db/atomic";
 import type { DatabaseContext, DatabaseExecutor } from "../db/connection";
@@ -39,6 +40,7 @@ import {
   runtimeNow,
   type ServiceRuntime,
 } from "./runtime";
+import { requireRecurringItem } from "./recurring-item-reader";
 import { canonicalTimestamp, optionalText, uniqueTagIds } from "./validation";
 
 interface PreparedCommand {
@@ -419,6 +421,29 @@ export class LedgerCommandService {
           "EVENT_BOOK_CHANGE",
           "An event cannot be moved to another book.",
         );
+        const recurringLink = findRecurringOccurrenceLinkByLedgerEvent(
+          transaction,
+          eventId,
+        );
+        if (recurringLink) {
+          const compatibility = validateRecurringLinkCompatibility({
+            item: requireRecurringItem(
+              transaction,
+              recurringLink.recurringItemId,
+            ),
+            occurrenceDate: recurringLink.occurrenceDate,
+            event: {
+              bookId: prepared.bookId,
+              eventType: prepared.eventType,
+              entries: prepared.entries,
+            },
+          });
+          assertService(
+            compatibility.ok,
+            "RECURRING_LINKED_EVENT_EDIT_INCOMPATIBLE",
+            "Unlink the recurring occurrence before changing its type, account, or direction.",
+          );
+        }
 
         const now = runtimeNow(this.runtime);
         updateLedgerEvent(transaction, eventId, {

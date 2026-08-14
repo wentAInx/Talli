@@ -206,6 +206,10 @@ export function utcInstantToLocalDateTime(
   )}:${pad(parts.minute)}:${pad(parts.second)}.${pad(parts.millisecond, 3)}`;
 }
 
+export function utcInstantToLocalDate(value: string, timeZone: string): string {
+  return utcInstantToLocalDateTime(value, timeZone).slice(0, 10);
+}
+
 function parseLocalDate(
   value: string,
 ): Pick<LocalDateTimeParts, "year" | "month" | "day"> {

@@ -1,17 +1,20 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { insertAccount } from "../../db/queries";
+import { insertAccount, readBackupData } from "../../db/queries";
 import { seedDatabase } from "../../db/seed";
 import type { CsvImportConfig } from "../../domain/file-import";
 import { AccountService } from "../../services/account-service";
 import { AutomationProjectionService } from "../../services/automation-projection-service";
 import { AutomationRuleService } from "../../services/automation-rule-service";
+import { BackupService } from "../../services/backup-service";
 import { ExternalImportService } from "../../services/external-import-service";
+import { FileImportReadService } from "../../services/file-import-read-service";
 import { FileImportService } from "../../services/file-import-service";
 import { LedgerCommandService } from "../../services/ledger-command-service";
 import { RecurringItemService } from "../../services/recurring-item-service";
 import { RecurringMatchService } from "../../services/recurring-match-service";
 import { ReferenceDataService } from "../../services/reference-data-service";
+import { SettingsService } from "../../services/settings-service";
 import {
   createTestDatabase,
   deterministicRuntime,
@@ -39,6 +42,12 @@ const CSV_CONFIG: CsvImportConfig = {
   memoColumn: "Memo",
   currencyColumn: "Currency",
   timezone: "Asia/Shanghai",
+};
+const TIMESTAMP_CSV_CONFIG: CsvImportConfig = {
+  ...CSV_CONFIG,
+  timeColumn: "Time",
+  timeFormat: "HH:mm:ss",
+  timezone: "UTC",
 };
 
 function bytes(value: string): Uint8Array {
@@ -132,6 +141,37 @@ describe("V5.1 rules and recurring services", () => {
       first: candidate("file:csv:id:netflix-1"),
       second: candidate("file:csv:id:netflix-2"),
     };
+  }
+
+  async function timestampFileCandidate(
+    runtime: ReturnType<typeof deterministicRuntime>,
+    input: { sourceDate: string; sourceTime: string; sourceId: string },
+  ): Promise<string> {
+    const files = new FileImportService(database!.context, runtime);
+    const connectionId = await files.createProfile({
+      bookId: BOOK_ID,
+      targetAccountId: ACCOUNT_ID,
+      name: `Timestamp ${input.sourceId}`,
+      format: "csv",
+      parserConfig: TIMESTAMP_CSV_CONFIG,
+      confirmed: true,
+    });
+    await files.commit({
+      connectionId,
+      bytes: bytes(
+        [
+          "Date,Time,Amount,ID,Payee,Memo,Currency",
+          `${input.sourceDate},${input.sourceTime},-16.49,${input.sourceId},Boundary merchant,Boundary memo,USD`,
+        ].join("\n"),
+      ),
+      filename: `${input.sourceId}.csv`,
+      confirmed: true,
+    });
+    return scalar(
+      database!,
+      "select id as value from external_transaction_candidates where stable_key = ?",
+      `file:csv:id:${input.sourceId}`,
+    );
   }
 
   it("lists stages in evaluator order and moves peers with equal sort values", () => {
@@ -552,4 +592,356 @@ describe("V5.1 rules and recurring services", () => {
       ),
     ).toBe("pending");
   });
+
+  it("preserves recurring link semantics across definition and normal Ledger edits", async () => {
+    const { runtime, references, recurring, ledger } = setup();
+    const accountB = "account-v51-usd-b";
+    insertAccount(database!.context.db, {
+      id: accountB,
+      bookId: BOOK_ID,
+      assetId: "seed-asset-usd",
+      name: "V5.1 checking B",
+      accountType: "bank",
+      institutionName: null,
+      note: null,
+      isArchived: false,
+      sortOrder: 20,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    const tagId = await references.createTag(BOOK_ID, "Linked edit");
+    const updatedCategoryId = await references.createCategory({
+      bookId: BOOK_ID,
+      name: "Linked edit updated category",
+      categoryType: "expense",
+    });
+    const updatedTagId = await references.createTag(
+      BOOK_ID,
+      "Linked edit updated tag",
+    );
+    const draft = {
+      bookId: BOOK_ID,
+      accountId: ACCOUNT_ID,
+      name: "Linked recurring expense",
+      eventType: "expense" as const,
+      payeeText: "Original payee",
+      payeeMatchMode: "exact" as const,
+      categoryId: "seed-category-both-other",
+      tagIds: [tagId],
+      note: "Original recurring note",
+      amountMode: "exact" as const,
+      amount: "16.49",
+      frequency: "daily" as const,
+      intervalCount: 1,
+      anchorDate: "2026-08-15",
+      dateWindowBeforeDays: 0,
+      dateWindowAfterDays: 0,
+      isActive: true,
+    };
+    const recurringItemId = recurring.save(draft);
+    const ledgerEventId = await ledger.createExpense({
+      accountId: ACCOUNT_ID,
+      amount: "16.49",
+      occurredAt: "2026-08-15T04:00:00.000Z",
+      payee: "Original payee",
+      categoryId: "seed-category-both-other",
+      tagIds: [tagId],
+      note: "Original Ledger note",
+    });
+    recurring.linkExisting({
+      recurringItemId,
+      occurrenceDate: "2026-08-15",
+      ledgerEventId,
+      confirmed: true,
+    });
+    const backup = new BackupService(database!.context, runtime);
+
+    const before = readBackupData(database!.context.db);
+    expect(() =>
+      recurring.save({
+        ...draft,
+        id: recurringItemId,
+        eventType: "income",
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "RECURRING_EVENT_TYPE_CHANGE_FORBIDDEN",
+      }),
+    );
+    expect(readBackupData(database!.context.db)).toEqual(before);
+    expect(() => backup.exportBackup()).not.toThrow();
+
+    await expect(
+      ledger.updateEvent(ledgerEventId, {
+        eventType: "income",
+        input: {
+          accountId: ACCOUNT_ID,
+          amount: "16.49",
+          occurredAt: "2026-08-15T04:00:00.000Z",
+          categoryId: "seed-category-both-other",
+          tagIds: [tagId],
+          payee: "Income attempt",
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "RECURRING_LINKED_EVENT_EDIT_INCOMPATIBLE",
+    });
+    expect(readBackupData(database!.context.db)).toEqual(before);
+
+    await expect(
+      ledger.updateEvent(ledgerEventId, {
+        eventType: "expense",
+        input: {
+          accountId: accountB,
+          amount: "16.49",
+          occurredAt: "2026-08-15T04:00:00.000Z",
+          categoryId: "seed-category-both-other",
+          tagIds: [tagId],
+          payee: "Account move attempt",
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "RECURRING_LINKED_EVENT_EDIT_INCOMPATIBLE",
+    });
+    expect(readBackupData(database!.context.db)).toEqual(before);
+
+    const linkedBefore = before.recurringOccurrenceLinks;
+    await ledger.updateEvent(ledgerEventId, {
+      eventType: "expense",
+      input: {
+        accountId: ACCOUNT_ID,
+        amount: "21.00",
+        occurredAt: "2026-08-20T23:45:00.000Z",
+        categoryId: updatedCategoryId,
+        tagIds: [updatedTagId],
+        payee: "Updated payee",
+        note: "Updated amount/date/category/tags/payee/note",
+      },
+    });
+    const compatible = readBackupData(database!.context.db);
+    expect(compatible.recurringOccurrenceLinks).toEqual(linkedBefore);
+    expect(
+      compatible.ledgerEvents.find((event) => event.id === ledgerEventId),
+    ).toMatchObject({
+      eventType: "expense",
+      occurredAt: "2026-08-20T23:45:00.000Z",
+      categoryId: updatedCategoryId,
+      payee: "Updated payee",
+      note: "Updated amount/date/category/tags/payee/note",
+    });
+    expect(
+      compatible.eventTags.filter(
+        (eventTag) => eventTag.eventId === ledgerEventId,
+      ),
+    ).toEqual([{ eventId: ledgerEventId, tagId: updatedTagId }]);
+    expect(
+      compatible.ledgerEntries.find(
+        (entry) =>
+          entry.eventId === ledgerEventId && entry.entryRole === "main",
+      ),
+    ).toMatchObject({ accountId: ACCOUNT_ID, amountAtomic: "-2100" });
+
+    const payload = backup.exportBackup();
+    const target = createTestDatabase();
+    try {
+      new BackupService(target.context, runtime).restore(payload);
+      expect(readBackupData(target.context.db)).toEqual(payload.data);
+    } finally {
+      target.close();
+    }
+
+    recurring.unlink({ recurringItemId, occurrenceDate: "2026-08-15" });
+    await ledger.updateEvent(ledgerEventId, {
+      eventType: "income",
+      input: {
+        accountId: accountB,
+        amount: "22.00",
+        occurredAt: "2026-08-21T01:00:00.000Z",
+        categoryId: "seed-category-both-other",
+        tagIds: [tagId],
+        payee: "Allowed after unlink",
+      },
+    });
+    const afterUnlink = readBackupData(database!.context.db);
+    expect(afterUnlink.recurringOccurrenceLinks).toEqual([]);
+    expect(
+      afterUnlink.ledgerEvents.find((event) => event.id === ledgerEventId),
+    ).toMatchObject({ eventType: "income", payee: "Allowed after unlink" });
+    expect(
+      afterUnlink.ledgerEntries.find(
+        (entry) =>
+          entry.eventId === ledgerEventId && entry.entryRole === "main",
+      ),
+    ).toMatchObject({ accountId: accountB, amountAtomic: "2200" });
+  });
+
+  it("revalidates every live recurring reference before reactivation", async () => {
+    const { runtime, accounts, references, recurring } = setup();
+    const categoryId = await references.createCategory({
+      bookId: BOOK_ID,
+      name: "Reactivation category",
+      categoryType: "expense",
+    });
+    const tagId = await references.createTag(BOOK_ID, "Reactivation tag");
+    const draft = {
+      bookId: BOOK_ID,
+      accountId: ACCOUNT_ID,
+      name: "Reactivation checks",
+      eventType: "expense" as const,
+      payeeMatchMode: "any" as const,
+      categoryId,
+      tagIds: [tagId],
+      amountMode: "exact" as const,
+      amount: "9.99",
+      frequency: "monthly" as const,
+      intervalCount: 1,
+      anchorDate: "2026-08-15",
+      monthlyDayMode: "fixed" as const,
+      dateWindowBeforeDays: 1,
+      dateWindowAfterDays: 1,
+      isActive: true,
+    };
+    const recurringItemId = recurring.save(draft);
+    recurring.setActive(recurringItemId, false);
+    const inactive = recurring.get(recurringItemId);
+
+    await accounts.setArchived(ACCOUNT_ID, true);
+    expect(() => recurring.setActive(recurringItemId, true)).toThrowError(
+      expect.objectContaining({ code: "RECURRING_ACCOUNT_INVALID" }),
+    );
+    expect(recurring.get(recurringItemId)).toEqual(inactive);
+    expect(() =>
+      recurring.save({
+        ...draft,
+        id: recurringItemId,
+        isActive: true,
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "RECURRING_ACCOUNT_INVALID" }),
+    );
+    expect(recurring.get(recurringItemId)).toEqual(inactive);
+    await references.setAssetArchived("seed-asset-usd", true);
+    expect(() => recurring.setActive(recurringItemId, true)).toThrowError(
+      expect.objectContaining({ code: "RECURRING_ACCOUNT_INVALID" }),
+    );
+    expect(recurring.get(recurringItemId)).toEqual(inactive);
+    await references.setAssetArchived("seed-asset-usd", false);
+    await accounts.setArchived(ACCOUNT_ID, false);
+
+    await references.setCategoryArchived(categoryId, true);
+    expect(() => recurring.setActive(recurringItemId, true)).toThrowError(
+      expect.objectContaining({ code: "RECURRING_CATEGORY_INVALID" }),
+    );
+    expect(recurring.get(recurringItemId)).toEqual(inactive);
+    await references.setCategoryArchived(categoryId, false);
+
+    await references.setTagArchived(tagId, true);
+    expect(() => recurring.setActive(recurringItemId, true)).toThrowError(
+      expect.objectContaining({ code: "RECURRING_TAG_INVALID" }),
+    );
+    expect(recurring.get(recurringItemId)).toEqual(inactive);
+    await references.setTagArchived(tagId, false);
+
+    await references.updateCategory(categoryId, {
+      bookId: BOOK_ID,
+      name: "Reactivation category",
+      categoryType: "income",
+    });
+    expect(() => recurring.setActive(recurringItemId, true)).toThrowError(
+      expect.objectContaining({ code: "RECURRING_CATEGORY_INVALID" }),
+    );
+    expect(recurring.get(recurringItemId)).toEqual(inactive);
+    await references.updateCategory(categoryId, {
+      bookId: BOOK_ID,
+      name: "Reactivation category",
+      categoryType: "expense",
+    });
+
+    recurring.setActive(recurringItemId, true);
+    expect(recurring.get(recurringItemId)?.isActive).toBe(true);
+    expect(
+      new BackupService(database!.context, runtime).exportBackup(),
+    ).toMatchObject({ schemaVersion: 7 });
+  });
+
+  it.each([
+    {
+      timeZone: "Asia/Shanghai",
+      sourceDate: "2026-08-14",
+      sourceTime: "16:30:00",
+      instant: "2026-08-14T16:30:00.000Z",
+      localDate: "2026-08-15",
+    },
+    {
+      timeZone: "America/Los_Angeles",
+      sourceDate: "2026-08-15",
+      sourceTime: "06:30:00",
+      instant: "2026-08-15T06:30:00.000Z",
+      localDate: "2026-08-14",
+    },
+  ])(
+    "uses the App timezone for file-candidate recurring matching in $timeZone",
+    async ({ timeZone, sourceDate, sourceTime, instant, localDate }) => {
+      const { runtime, recurring } = setup();
+      await new SettingsService(database!.context, runtime).setTimeZone(
+        timeZone,
+      );
+      const candidateId = await timestampFileCandidate(runtime, {
+        sourceDate,
+        sourceTime,
+        sourceId: `boundary-${timeZone.replaceAll("/", "-")}`,
+      });
+      const recurringItemId = recurring.save({
+        bookId: BOOK_ID,
+        accountId: ACCOUNT_ID,
+        name: `Boundary ${timeZone}`,
+        eventType: "expense",
+        payeeMatchMode: "any",
+        amountMode: "exact",
+        amount: "16.49",
+        frequency: "daily",
+        intervalCount: 1,
+        anchorDate: localDate,
+        dateWindowBeforeDays: 0,
+        dateWindowAfterDays: 0,
+        isActive: true,
+      });
+      const detail = new FileImportReadService(database!.context).candidate(
+        candidateId,
+      );
+      expect(detail).toMatchObject({
+        occurredAt: instant,
+        sourceDateText: sourceDate,
+      });
+      expect(sourceDate).not.toBe(localDate);
+
+      const matches = new RecurringMatchService(database!.context, runtime);
+      expect(matches.suggestionsForFileCandidate(candidateId)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            recurringItemId,
+            candidateId,
+            occurrenceDate: localDate,
+          }),
+        ]),
+      );
+      expect(
+        matches.suggestionsForOccurrence({
+          recurringItemId,
+          occurrenceDate: localDate,
+        }),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ candidateId, occurrenceDate: localDate }),
+        ]),
+      );
+      expect(
+        matches.suggestionsForOccurrence({
+          recurringItemId,
+          occurrenceDate: sourceDate,
+        }),
+      ).toEqual([]);
+      expect(count(database!, "recurring_occurrence_links")).toBe(0);
+    },
+  );
 });
