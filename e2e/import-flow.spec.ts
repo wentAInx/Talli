@@ -235,9 +235,21 @@ test("financial file import stays outside Ledger until explicit match or import"
   });
 
   page.once("dialog", (dialog) => dialog.accept());
+  const refreshedImport = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "GET" &&
+      response.request().headers().rsc === "1" &&
+      url.pathname === "/import" &&
+      url.searchParams.has("_rsc")
+    );
+  });
   await page.getByRole("button", { name: "Create review candidates" }).click();
   await expect(page.getByText(/4 already imported/)).toBeVisible();
   expect(await backupCounts(page)).toEqual(afterCommit);
+  const refreshedImportResponse = await refreshedImport;
+  expect(refreshedImportResponse.ok()).toBe(true);
+  expect(await refreshedImportResponse.finished()).toBeNull();
 
   await page.goto("/automation");
   await page
