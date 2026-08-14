@@ -54,6 +54,19 @@ async function expectNoHorizontalPageOverflow(page: Page): Promise<void> {
   ).toBe(true);
 }
 
+async function gotoHydratedAppPage(page: Page, path: string): Promise<void> {
+  const hydrationAction = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      response.request().headers()["next-action"] !== undefined &&
+      url.pathname === path
+    );
+  });
+  await page.goto(path);
+  expect((await hydrationAction).ok()).toBe(true);
+}
+
 test("financial file import stays outside Ledger until explicit match or import", async ({
   page,
 }, testInfo) => {
@@ -132,7 +145,7 @@ test("financial file import stays outside Ledger until explicit match or import"
   ).toContain(tagName);
   await expect(createTagButton).toBeEnabled();
 
-  await page.goto("/automation");
+  await gotoHydratedAppPage(page, "/automation");
   await page.getByLabel("Name").fill(ruleName);
   await page.getByLabel("Condition value").fill("Employer");
   await page.getByRole("button", { name: "+ Condition" }).click();
@@ -154,6 +167,7 @@ test("financial file import stays outside Ledger until explicit match or import"
     .nth(3)
     .selectOption("suggest_event_type");
   await page.getByLabel("Suggested event type").selectOption("income");
+  await expect(page.getByLabel("Name")).toHaveValue(ruleName);
   await page.getByRole("button", { name: "Preview" }).click();
   await expect(page.getByText(/0\/\d+ matched/)).toBeVisible();
   await page.getByRole("button", { name: "Save rule" }).click();
@@ -251,7 +265,7 @@ test("financial file import stays outside Ledger until explicit match or import"
   expect(refreshedImportResponse.ok()).toBe(true);
   expect(await refreshedImportResponse.finished()).toBeNull();
 
-  await page.goto("/automation");
+  await gotoHydratedAppPage(page, "/automation");
   await page
     .locator(".automation-rule-row")
     .filter({ hasText: ruleName })
