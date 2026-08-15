@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { insertAccount, readBackupData } from "../../db/queries";
+import {
+  findCategoryById,
+  insertAccount,
+  readBackupData,
+} from "../../db/queries";
 import { seedDatabase } from "../../db/seed";
 import type { CsvImportConfig } from "../../domain/file-import";
 import { AccountService } from "../../services/account-service";
@@ -842,26 +846,231 @@ describe("V5.1 rules and recurring services", () => {
     expect(recurring.get(recurringItemId)).toEqual(inactive);
     await references.setTagArchived(tagId, false);
 
-    await references.updateCategory(categoryId, {
-      bookId: BOOK_ID,
-      name: "Reactivation category",
-      categoryType: "income",
-    });
+    database!.context.sqlite
+      .prepare("update categories set category_type = ? where id = ?")
+      .run("income", categoryId);
     expect(() => recurring.setActive(recurringItemId, true)).toThrowError(
       expect.objectContaining({ code: "RECURRING_CATEGORY_INVALID" }),
     );
     expect(recurring.get(recurringItemId)).toEqual(inactive);
-    await references.updateCategory(categoryId, {
-      bookId: BOOK_ID,
-      name: "Reactivation category",
-      categoryType: "expense",
-    });
+    database!.context.sqlite
+      .prepare("update categories set category_type = ? where id = ?")
+      .run("expense", categoryId);
 
     recurring.setActive(recurringItemId, true);
     expect(recurring.get(recurringItemId)?.isActive).toBe(true);
     expect(
       new BackupService(database!.context, runtime).exportBackup(),
     ).toMatchObject({ schemaVersion: 7 });
+  });
+
+  it("rejects an incompatible category type change referenced by an inactive recurring item", async () => {
+    const { runtime, references, recurring } = setup();
+    const categoryId = await references.createCategory({
+      bookId: BOOK_ID,
+      name: "Dormant recurring category",
+      categoryType: "expense",
+    });
+    const recurringItemId = recurring.save({
+      bookId: BOOK_ID,
+      accountId: ACCOUNT_ID,
+      name: "Dormant recurring expense",
+      eventType: "expense",
+      payeeMatchMode: "any",
+      categoryId,
+      amountMode: "exact",
+      amount: "9.99",
+      frequency: "monthly",
+      intervalCount: 1,
+      anchorDate: "2026-08-15",
+      monthlyDayMode: "fixed",
+      dateWindowBeforeDays: 1,
+      dateWindowAfterDays: 1,
+      isActive: true,
+    });
+    recurring.setActive(recurringItemId, false);
+
+    await expect(
+      references.updateCategory(categoryId, {
+        bookId: BOOK_ID,
+        name: "Dormant recurring category",
+        categoryType: "income",
+      }),
+    ).rejects.toMatchObject({
+      code: "CATEGORY_AUTOMATION_REFERENCE_LOCKED",
+      message:
+        "Edit rules or recurring definitions that reference this category before changing its type.",
+    });
+    expect(
+      findCategoryById(database!.context.db, categoryId)?.categoryType,
+    ).toBe("expense");
+    expect(() =>
+      new BackupService(database!.context, runtime).exportBackup(),
+    ).not.toThrow();
+  });
+
+  it("allows a compatible category type widening referenced by an inactive recurring item", async () => {
+    const { runtime, references, recurring } = setup();
+    const categoryId = await references.createCategory({
+      bookId: BOOK_ID,
+      name: "Widened recurring category",
+      categoryType: "expense",
+    });
+    const recurringItemId = recurring.save({
+      bookId: BOOK_ID,
+      accountId: ACCOUNT_ID,
+      name: "Widened recurring expense",
+      eventType: "expense",
+      payeeMatchMode: "any",
+      categoryId,
+      amountMode: "exact",
+      amount: "9.99",
+      frequency: "monthly",
+      intervalCount: 1,
+      anchorDate: "2026-08-15",
+      monthlyDayMode: "fixed",
+      dateWindowBeforeDays: 1,
+      dateWindowAfterDays: 1,
+      isActive: true,
+    });
+    recurring.setActive(recurringItemId, false);
+
+    await references.updateCategory(categoryId, {
+      bookId: BOOK_ID,
+      name: "Widened recurring category",
+      categoryType: "both",
+    });
+
+    expect(
+      findCategoryById(database!.context.db, categoryId)?.categoryType,
+    ).toBe("both");
+    expect(() =>
+      new BackupService(database!.context, runtime).exportBackup(),
+    ).not.toThrow();
+  });
+
+  it("rejects an incompatible category type change referenced by a disabled rule", async () => {
+    const { runtime, references } = setup();
+    const categoryId = await references.createCategory({
+      bookId: BOOK_ID,
+      name: "Dormant rule category",
+      categoryType: "expense",
+    });
+    const rules = new AutomationRuleService(database!.context, runtime);
+    const ruleId = rules.save({
+      bookId: BOOK_ID,
+      name: "Dormant expense rule",
+      stage: "default",
+      matchMode: "all",
+      isEnabled: true,
+      sortOrder: 100,
+      conditions: [{ field: "direction", operator: "equals", value: "out" }],
+      actions: [{ actionType: "set_category", value: categoryId }],
+    });
+    rules.setEnabled(ruleId, false);
+
+    await expect(
+      references.updateCategory(categoryId, {
+        bookId: BOOK_ID,
+        name: "Dormant rule category",
+        categoryType: "income",
+      }),
+    ).rejects.toMatchObject({
+      code: "CATEGORY_AUTOMATION_REFERENCE_LOCKED",
+      message:
+        "Edit rules or recurring definitions that reference this category before changing its type.",
+    });
+    expect(
+      findCategoryById(database!.context.db, categoryId)?.categoryType,
+    ).toBe("expense");
+    expect(() =>
+      new BackupService(database!.context, runtime).exportBackup(),
+    ).not.toThrow();
+  });
+
+  it("allows a category type change after every dormant definition changes its reference and round-trips Backup V7", async () => {
+    const { runtime, references, recurring } = setup();
+    const categoryId = await references.createCategory({
+      bookId: BOOK_ID,
+      name: "Released dormant category",
+      categoryType: "expense",
+    });
+    const replacementCategoryId = await references.createCategory({
+      bookId: BOOK_ID,
+      name: "Replacement dormant category",
+      categoryType: "both",
+    });
+    const recurringDraft = {
+      bookId: BOOK_ID,
+      accountId: ACCOUNT_ID,
+      name: "Released dormant recurring",
+      eventType: "expense" as const,
+      payeeMatchMode: "any" as const,
+      categoryId,
+      amountMode: "exact" as const,
+      amount: "9.99",
+      frequency: "monthly" as const,
+      intervalCount: 1,
+      anchorDate: "2026-08-15",
+      monthlyDayMode: "fixed" as const,
+      dateWindowBeforeDays: 1,
+      dateWindowAfterDays: 1,
+      isActive: true,
+    };
+    const recurringItemId = recurring.save(recurringDraft);
+    recurring.setActive(recurringItemId, false);
+    const rules = new AutomationRuleService(database!.context, runtime);
+    const ruleDraft = {
+      bookId: BOOK_ID,
+      name: "Released dormant rule",
+      stage: "default" as const,
+      matchMode: "all" as const,
+      isEnabled: true,
+      sortOrder: 100,
+      conditions: [
+        {
+          field: "direction" as const,
+          operator: "equals" as const,
+          value: "out",
+        },
+      ],
+      actions: [{ actionType: "set_category" as const, value: categoryId }],
+    };
+    const ruleId = rules.save(ruleDraft);
+    rules.setEnabled(ruleId, false);
+
+    recurring.save({
+      ...recurringDraft,
+      id: recurringItemId,
+      categoryId: replacementCategoryId,
+      isActive: false,
+    });
+    rules.save({
+      ...ruleDraft,
+      id: ruleId,
+      isEnabled: false,
+      actions: [{ actionType: "set_category", value: replacementCategoryId }],
+    });
+    await references.updateCategory(categoryId, {
+      bookId: BOOK_ID,
+      name: "Released dormant category",
+      categoryType: "income",
+    });
+
+    expect(
+      findCategoryById(database!.context.db, categoryId)?.categoryType,
+    ).toBe("income");
+    const payload = new BackupService(
+      database!.context,
+      runtime,
+    ).exportBackup();
+    const target = createTestDatabase();
+    try {
+      new BackupService(target.context, runtime).restore(payload);
+      expect(readBackupData(target.context.db)).toEqual(payload.data);
+    } finally {
+      target.close();
+    }
   });
 
   it.each([

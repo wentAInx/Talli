@@ -21,13 +21,16 @@ import {
   listDefaultBooks,
   listEventTypesForCategory,
   listPriceProviderMappings,
+  listRecurringItemRowsForBook,
   listTagsForBook,
   updateAsset,
   updateCategory,
   updateTag,
 } from "../db/queries";
 import { SEED_ASSETS } from "../db/seed-data";
+import { possibleRuleDirections } from "../domain/automation";
 import type { AssetType } from "../domain/types";
+import { hydrateAutomationRulesForBook } from "./automation-projection-service";
 import { assertService } from "./errors";
 import {
   defaultServiceRuntime,
@@ -50,6 +53,59 @@ interface CategoryMutationInput {
   categoryType: "expense" | "income" | "both";
   parentId?: string | null;
   sortOrder?: number;
+}
+
+type CategoryType = CategoryMutationInput["categoryType"];
+
+function categoryTypeSupportsEventType(
+  categoryType: CategoryType,
+  eventType: "expense" | "income",
+): boolean {
+  return categoryType === "both" || categoryType === eventType;
+}
+
+function categoryTypeSupportsDirection(
+  categoryType: CategoryType,
+  direction: "in" | "out",
+): boolean {
+  return categoryTypeSupportsEventType(
+    categoryType,
+    direction === "out" ? "expense" : "income",
+  );
+}
+
+function assertCategoryTypeCompatibleWithDefinitions(
+  executor: DatabaseExecutor,
+  bookId: string,
+  categoryId: string,
+  categoryType: CategoryType,
+): void {
+  const recurringItemsAreCompatible = listRecurringItemRowsForBook(
+    executor,
+    bookId,
+  ).every(
+    (item) =>
+      item.categoryId !== categoryId ||
+      categoryTypeSupportsEventType(categoryType, item.eventType),
+  );
+  const automationRulesAreCompatible = hydrateAutomationRulesForBook(
+    executor,
+    bookId,
+  ).every(
+    (rule) =>
+      !rule.actions.some(
+        (action) =>
+          action.actionType === "set_category" && action.value === categoryId,
+      ) ||
+      possibleRuleDirections(rule).every((direction) =>
+        categoryTypeSupportsDirection(categoryType, direction),
+      ),
+  );
+  assertService(
+    recurringItemsAreCompatible && automationRulesAreCompatible,
+    "CATEGORY_AUTOMATION_REFERENCE_LOCKED",
+    "Edit rules or recurring definitions that reference this category before changing its type.",
+  );
 }
 
 function normalizedCode(code: string): string {
@@ -359,19 +415,11 @@ export class ReferenceDataService {
           );
         }
         if (category.categoryType !== input.categoryType) {
-          assertService(
-            !enabledAutomationRulesReferenceCategory(
-              transaction,
-              category.bookId,
-              categoryId,
-            ) &&
-              !activeRecurringItemsReferenceCategory(
-                transaction,
-                category.bookId,
-                categoryId,
-              ),
-            "CATEGORY_AUTOMATION_REFERENCE_LOCKED",
-            "Disable or edit rules and recurring items before changing this category type.",
+          assertCategoryTypeCompatibleWithDefinitions(
+            transaction,
+            category.bookId,
+            categoryId,
+            input.categoryType,
           );
         }
         updateCategory(transaction, categoryId, {
