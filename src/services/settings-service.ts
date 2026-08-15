@@ -1,4 +1,4 @@
-import type { DatabaseContext } from "../db/connection";
+import type { DatabaseContext, DatabaseExecutor } from "../db/connection";
 import { findAppSetting, upsertAppSetting } from "../db/queries";
 import { assertIanaTimeZone } from "../domain/time";
 import { ServiceError } from "./errors";
@@ -30,6 +30,15 @@ function parseTimeZone(valueJson: string): string {
   return assertIanaTimeZone(value);
 }
 
+export function readAppTimeZone(executor: DatabaseExecutor): string | null {
+  const row = findAppSetting(executor, APP_TIMEZONE_KEY);
+  return row ? parseTimeZone(row.valueJson) : null;
+}
+
+export function readAppTimeZoneOrDefault(executor: DatabaseExecutor): string {
+  return readAppTimeZone(executor) ?? FALLBACK_APP_TIMEZONE;
+}
+
 export class SettingsService {
   constructor(
     private readonly context: DatabaseContext,
@@ -37,12 +46,11 @@ export class SettingsService {
   ) {}
 
   getTimeZone(): string | null {
-    const row = findAppSetting(this.context.db, APP_TIMEZONE_KEY);
-    return row ? parseTimeZone(row.valueJson) : null;
+    return readAppTimeZone(this.context.db);
   }
 
   getTimeZoneOrDefault(): string {
-    return this.getTimeZone() ?? FALLBACK_APP_TIMEZONE;
+    return readAppTimeZoneOrDefault(this.context.db);
   }
 
   async initializeTimeZone(timeZone: string): Promise<boolean> {

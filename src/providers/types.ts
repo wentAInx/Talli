@@ -1,4 +1,9 @@
 import type {
+  HistoricalCryptoGranularity,
+  HistoricalFxObservation,
+  HistoricalPriceObservation,
+} from "../domain/historical-quote-types";
+import type {
   PriceProviderId,
   ProviderMapping,
   ProviderQuote,
@@ -37,8 +42,34 @@ export interface PriceProviderAdapters {
   ecb: EcbPriceProvider;
 }
 
+export interface CoinGeckoHistoricalProvider {
+  fetchCryptoUsdHistory(input: {
+    mapping: { assetId: string; providerAssetKey: string };
+    usdAssetId: string;
+    fromUtc: string;
+    toUtc: string;
+    interval: HistoricalCryptoGranularity;
+    fetchedAt: string;
+  }): Promise<HistoricalPriceObservation[]>;
+}
+
+export interface EcbHistoricalProvider {
+  fetchEurReferenceHistory(input: {
+    mappings: Array<{ assetId: string; providerAssetKey: string }>;
+    eurAssetId: string;
+    fromDate: string;
+    toDate: string;
+    fetchedAt: string;
+  }): Promise<HistoricalFxObservation[]>;
+}
+
+export interface HistoricalPriceProviderAdapters {
+  coingecko: CoinGeckoHistoricalProvider;
+  ecb: EcbHistoricalProvider;
+}
+
 export interface CoinGeckoRuntimeConfiguration {
-  mode: "demo" | "keyless" | "invalid";
+  mode: "demo" | "keyless" | "pro" | "invalid";
   configured: boolean;
   apiKey: string | null;
 }

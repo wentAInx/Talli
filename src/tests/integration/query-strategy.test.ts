@@ -66,4 +66,45 @@ describe("500k-event query strategy", () => {
       "idx_events_book_order",
     ]);
   });
+
+  it("uses the historical observation lookup indexes for bounded pair reads", () => {
+    const pricePlan = database.context.sqlite
+      .prepare(
+        `explain query plan
+         select rate_text
+         from historical_price_quotes
+         where base_asset_id = ?
+           and quote_asset_id = ?
+           and provider_observed_at >= ?
+           and provider_observed_at <= ?
+         order by provider_observed_at`,
+      )
+      .all(
+        "asset-btc",
+        "asset-usd",
+        "2026-08-01T00:00:00.000Z",
+        "2026-08-15T00:00:00.000Z",
+      ) as { detail: string }[];
+    const fxPlan = database.context.sqlite
+      .prepare(
+        `explain query plan
+         select rate_text
+         from historical_fx_quotes
+         where base_asset_id = ?
+           and quote_asset_id = ?
+           and provider_observation_date >= ?
+           and provider_observation_date <= ?
+         order by provider_observation_date`,
+      )
+      .all("asset-eur", "asset-cny", "2026-08-01", "2026-08-15") as {
+      detail: string;
+    }[];
+
+    expect(pricePlan.map((row) => row.detail).join("\n")).toContain(
+      "historical_price_quotes_lookup_idx",
+    );
+    expect(fxPlan.map((row) => row.detail).join("\n")).toContain(
+      "historical_fx_quotes_lookup_idx",
+    );
+  });
 });

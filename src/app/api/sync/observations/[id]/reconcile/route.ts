@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { isSameOriginRequest } from "@/app/api/same-origin";
@@ -47,6 +48,7 @@ export async function POST(
         confirmed: true,
       }),
     );
+    revalidatePath("/analytics");
     return NextResponse.json(
       {
         ok: true,

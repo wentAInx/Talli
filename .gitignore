@@ -9,6 +9,7 @@ coverage/
 playwright-report/
 playwright-report-import/
 playwright-report-sync/
+playwright-report-analytics/
 test-results/
 *.tsbuildinfo
 /data/

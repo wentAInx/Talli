@@ -64,6 +64,13 @@
       "when": 1786727390694,
       "tag": "0008_v51_rules_recurring",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1786803649819,
+      "tag": "0009_v60_historical_analytics",
+      "breakpoints": true
     }
   ]
 }

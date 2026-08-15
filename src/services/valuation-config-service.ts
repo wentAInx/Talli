@@ -1,6 +1,7 @@
 import type { DatabaseContext } from "../db/connection";
 import {
   deactivateManualPriceQuotes,
+  deleteHistoricalProviderCacheForMapping,
   deleteLatestPriceQuoteForMapping,
   findActiveManualPriceQuote,
   findAssetById,
@@ -161,6 +162,11 @@ export class ProviderMappingService {
         });
         if (previous && previous.providerAssetKey !== key) {
           deleteLatestPriceQuoteForMapping(
+            transaction,
+            input.assetId,
+            provider,
+          );
+          deleteHistoricalProviderCacheForMapping(
             transaction,
             input.assetId,
             provider,

@@ -27,7 +27,11 @@ import {
   normalizeEvmTxHash,
   parseEvmAssetKey,
 } from "./evm";
-import { assertIanaTimeZone, canonicalUtcInstantValue } from "./time";
+import {
+  assertIanaTimeZone,
+  canonicalLocalDate,
+  canonicalUtcInstantValue,
+} from "./time";
 import type { LedgerEntryDraft } from "./types";
 import { MAX_FILE_IMPORT_TEXT_CHARS } from "./file-import";
 import {
@@ -54,7 +58,8 @@ export const BACKUP_V3_SCHEMA_VERSION = 3;
 export const BACKUP_V4_SCHEMA_VERSION = 4;
 export const BACKUP_V5_SCHEMA_VERSION = 5;
 export const BACKUP_V6_SCHEMA_VERSION = 6;
-export const BACKUP_SCHEMA_VERSION = 7;
+export const BACKUP_V7_SCHEMA_VERSION = 7;
+export const BACKUP_SCHEMA_VERSION = 8;
 
 export class BackupValidationError extends Error {
   constructor(
@@ -275,6 +280,31 @@ const manualPriceQuoteSchema = z
     observedAt: canonicalInstant,
     note: nullableText,
     isActive: z.boolean(),
+    createdAt: canonicalInstant,
+    updatedAt: canonicalInstant,
+  })
+  .strict();
+
+const historicalManualQuoteSchema = z
+  .object({
+    id,
+    baseAssetId: id,
+    quoteAssetId: id,
+    valuationDate: z.string().refine((value) => {
+      try {
+        return canonicalLocalDate(value) === value;
+      } catch {
+        return false;
+      }
+    }, "Valuation date must be a real canonical YYYY-MM-DD date."),
+    rateText: z.string().refine((value) => {
+      try {
+        return normalizePositiveDecimalText(value) === value;
+      } catch {
+        return false;
+      }
+    }, "Historical rate must be canonical positive plain decimal text."),
+    note: z.string().max(1_000).nullable(),
     createdAt: canonicalInstant,
     updatedAt: canonicalInstant,
   })
@@ -1006,6 +1036,12 @@ const v7DataSchema = v6DataSchema
   })
   .strict();
 
+const v8DataSchema = v7DataSchema
+  .extend({
+    historicalManualQuotes: z.array(historicalManualQuoteSchema),
+  })
+  .strict();
+
 const legacyBackupPayloadSchema = z
   .object({
     format: z.literal(BACKUP_FORMAT),
@@ -1060,12 +1096,21 @@ const v6BackupPayloadSchema = z
   })
   .strict();
 
+const v7BackupPayloadSchema = z
+  .object({
+    format: z.literal(BACKUP_FORMAT),
+    schemaVersion: z.literal(BACKUP_V7_SCHEMA_VERSION),
+    exportedAt: canonicalInstant,
+    data: v7DataSchema,
+  })
+  .strict();
+
 export const backupPayloadSchema = z
   .object({
     format: z.literal(BACKUP_FORMAT),
     schemaVersion: z.literal(BACKUP_SCHEMA_VERSION),
     exportedAt: canonicalInstant,
-    data: v7DataSchema,
+    data: v8DataSchema,
   })
   .strict();
 
@@ -1077,6 +1122,7 @@ type V3BackupPayload = z.infer<typeof v3BackupPayloadSchema>;
 type V4BackupPayload = z.infer<typeof v4BackupPayloadSchema>;
 type V5BackupPayload = z.infer<typeof v5BackupPayloadSchema>;
 type V6BackupPayload = z.infer<typeof v6BackupPayloadSchema>;
+type V7BackupPayload = z.infer<typeof v7BackupPayloadSchema>;
 
 function fail(code: string, message: string): never {
   throw new BackupValidationError(code, message);
@@ -2842,6 +2888,17 @@ function validateRelations(data: BackupData): void {
     (row) => `${row.baseAssetId}\u0000${row.quoteAssetId}`,
     "active manual quote pair",
   );
+  uniqueBy(
+    data.historicalManualQuotes,
+    (row) => row.id,
+    "historical manual quote id",
+  );
+  uniqueBy(
+    data.historicalManualQuotes,
+    (row) =>
+      `${row.baseAssetId}\u0000${row.quoteAssetId}\u0000${row.valuationDate}`,
+    "historical manual quote pair and date",
+  );
 
   if (data.books.filter((book) => book.isDefault).length !== 1) {
     fail(
@@ -3045,6 +3102,18 @@ function validateRelations(data: BackupData): void {
       );
     }
   }
+  for (const quote of data.historicalManualQuotes) {
+    if (
+      !assets.has(quote.baseAssetId) ||
+      !assets.has(quote.quoteAssetId) ||
+      quote.baseAssetId === quote.quoteAssetId
+    ) {
+      fail(
+        "BACKUP_HISTORICAL_MANUAL_QUOTE_INVALID",
+        `Historical manual quote ${quote.id} has an invalid asset pair.`,
+      );
+    }
+  }
   validateEventEntries(data);
   validateExternalRelations(data);
   validateAutomationAndRecurring(data);
@@ -3205,10 +3274,10 @@ function upgradeV5Backup(payload: V5BackupPayload): V6BackupPayload {
   };
 }
 
-function upgradeV6Backup(payload: V6BackupPayload): BackupPayload {
+function upgradeV6Backup(payload: V6BackupPayload): V7BackupPayload {
   return {
     ...payload,
-    schemaVersion: BACKUP_SCHEMA_VERSION,
+    schemaVersion: BACKUP_V7_SCHEMA_VERSION,
     data: {
       ...payload.data,
       automationRules: [],
@@ -3218,6 +3287,17 @@ function upgradeV6Backup(payload: V6BackupPayload): BackupPayload {
       recurringItemTags: [],
       recurringOccurrenceLinks: [],
       recurringOccurrenceSkips: [],
+    },
+  };
+}
+
+function upgradeV7Backup(payload: V7BackupPayload): BackupPayload {
+  return {
+    ...payload,
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    data: {
+      ...payload.data,
+      historicalManualQuotes: [],
     },
   };
 }
@@ -3241,43 +3321,55 @@ export function parseBackupPayload(value: unknown): BackupPayload {
   if (schemaVersion === BACKUP_LEGACY_SCHEMA_VERSION) {
     const legacy = legacyBackupPayloadSchema.safeParse(value);
     if (!legacy.success) schemaFailure(legacy);
-    normalized = upgradeV6Backup(
-      upgradeV5Backup(
-        upgradeV4Backup(
-          upgradeV3Backup(upgradeV2Backup(upgradeLegacyBackup(legacy.data))),
+    normalized = upgradeV7Backup(
+      upgradeV6Backup(
+        upgradeV5Backup(
+          upgradeV4Backup(
+            upgradeV3Backup(upgradeV2Backup(upgradeLegacyBackup(legacy.data))),
+          ),
         ),
       ),
     );
   } else if (schemaVersion === BACKUP_V2_SCHEMA_VERSION) {
     const v2 = v2BackupPayloadSchema.safeParse(value);
     if (!v2.success) schemaFailure(v2);
-    normalized = upgradeV6Backup(
-      upgradeV5Backup(
-        upgradeV4Backup(upgradeV3Backup(upgradeV2Backup(v2.data))),
+    normalized = upgradeV7Backup(
+      upgradeV6Backup(
+        upgradeV5Backup(
+          upgradeV4Backup(upgradeV3Backup(upgradeV2Backup(v2.data))),
+        ),
       ),
     );
   } else if (schemaVersion === BACKUP_V3_SCHEMA_VERSION) {
     const v3 = v3BackupPayloadSchema.safeParse(value);
     if (!v3.success) schemaFailure(v3);
-    normalized = upgradeV6Backup(
-      upgradeV5Backup(upgradeV4Backup(upgradeV3Backup(v3.data))),
+    normalized = upgradeV7Backup(
+      upgradeV6Backup(
+        upgradeV5Backup(upgradeV4Backup(upgradeV3Backup(v3.data))),
+      ),
     );
   } else if (schemaVersion === BACKUP_V4_SCHEMA_VERSION) {
     const v4 = v4BackupPayloadSchema.safeParse(value);
     if (!v4.success) schemaFailure(v4);
-    normalized = upgradeV6Backup(upgradeV5Backup(upgradeV4Backup(v4.data)));
+    normalized = upgradeV7Backup(
+      upgradeV6Backup(upgradeV5Backup(upgradeV4Backup(v4.data))),
+    );
   } else if (schemaVersion === BACKUP_V5_SCHEMA_VERSION) {
     const v5 = v5BackupPayloadSchema.safeParse(value);
     if (!v5.success) schemaFailure(v5);
-    normalized = upgradeV6Backup(upgradeV5Backup(v5.data));
+    normalized = upgradeV7Backup(upgradeV6Backup(upgradeV5Backup(v5.data)));
   } else if (schemaVersion === BACKUP_V6_SCHEMA_VERSION) {
     const v6 = v6BackupPayloadSchema.safeParse(value);
     if (!v6.success) schemaFailure(v6);
-    normalized = upgradeV6Backup(v6.data);
-  } else {
-    const v7 = backupPayloadSchema.safeParse(value);
+    normalized = upgradeV7Backup(upgradeV6Backup(v6.data));
+  } else if (schemaVersion === BACKUP_V7_SCHEMA_VERSION) {
+    const v7 = v7BackupPayloadSchema.safeParse(value);
     if (!v7.success) schemaFailure(v7);
-    normalized = v7.data;
+    normalized = upgradeV7Backup(v7.data);
+  } else {
+    const v8 = backupPayloadSchema.safeParse(value);
+    if (!v8.success) schemaFailure(v8);
+    normalized = v8.data;
   }
   validateRelations(normalized.data);
   return normalized;

@@ -72,6 +72,7 @@ assertAbsent(
     /\bKRAKEN_API_KEY\b/,
     /\bKRAKEN_API_SECRET\b/,
     /\bALCHEMY_API_KEY\b/,
+    /\bCOINGECKO_API_KEY\b/,
     /\bapiSecret\b/,
   ],
   "Client/UI secret boundary",
@@ -100,6 +101,7 @@ assertAbsent(
     /\bKRAKEN_API_KEY\b/,
     /\bKRAKEN_API_SECRET\b/,
     /\bALCHEMY_API_KEY\b/,
+    /\bCOINGECKO_API_KEY\b/,
     /\bapiSecret\b/,
   ],
   "Persistence secret boundary",
@@ -145,6 +147,64 @@ const automationPureFiles = [
   join(root, "src/services/recurring-calendar-service.ts"),
   join(root, "src/services/recurring-match-service.ts"),
 ];
+
+const historicalAnalyticsReadFiles = [
+  join(root, "src/app/analytics/page.tsx"),
+  join(root, "src/services/historical-analytics-service.ts"),
+  join(root, "src/domain/historical-analytics.ts"),
+  join(root, "src/domain/historical-quote-math.ts"),
+];
+assertAbsent(
+  historicalAnalyticsReadFiles,
+  [
+    /\bfetch\s*\(/,
+    /createServerHistoricalPriceProviderAdapters/,
+    /from\s+["'][^"']*providers\/(?:coingecko|ecb|fetch-http-transport)["']/,
+  ],
+  "Historical analytics cache-only read boundary",
+);
+
+const historicalLayerFiles = [
+  ...filesUnder(join(root, "src/domain")),
+  ...filesUnder(join(root, "src/services")),
+  ...filesUnder(join(root, "src/db/queries")),
+].filter((file) => /historical/.test(file) && /\.(?:ts|tsx)$/.test(file));
+assertAbsent(
+  historicalLayerFiles,
+  [
+    /\bsetInterval\s*\(/,
+    /\bscheduleJob\s*\(/,
+    /from\s+["'](?:node-cron|cron|cron-parser|agenda|bree)["']/,
+    /\b(?:insert|update|delete)Ledger(?:Event|Entry|Snapshot)/,
+  ],
+  "Historical layer scheduler and Ledger-write isolation",
+);
+
+const backupQueryText = readFileSync(
+  join(root, "src/db/queries/backup.ts"),
+  "utf8",
+);
+const backupReadBody = backupQueryText.slice(
+  backupQueryText.indexOf("export function readBackupData"),
+  backupQueryText.indexOf("export function readAppMetaRows"),
+);
+for (const forbidden of [
+  "historicalPriceQuotes",
+  "historicalFxQuotes",
+  "historicalRefreshRuns",
+  "historicalRefreshUnits",
+]) {
+  if (backupReadBody.includes(forbidden)) {
+    failures.push(
+      `Backup provider-cache exclusion: readBackupData referenced ${forbidden}.`,
+    );
+  }
+}
+if (!backupReadBody.includes("historicalManualQuotes")) {
+  failures.push(
+    "Backup manual-history reachability: readBackupData missed historicalManualQuotes.",
+  );
+}
 assertAbsent(
   automationPureFiles,
   [
@@ -276,7 +336,12 @@ assertAbsent(
 );
 
 const envExample = readFileSync(join(root, ".env.example"), "utf8");
-for (const name of ["KRAKEN_API_KEY", "KRAKEN_API_SECRET", "ALCHEMY_API_KEY"]) {
+for (const name of [
+  "KRAKEN_API_KEY",
+  "KRAKEN_API_SECRET",
+  "ALCHEMY_API_KEY",
+  "COINGECKO_API_KEY",
+]) {
   const expected = name + "=";
   const line = envExample
     .split(/\r?\n/)
@@ -295,6 +360,7 @@ assertAbsent(
     /\bKRAKEN_API_KEY\b/,
     /\bKRAKEN_API_SECRET\b/,
     /\bALCHEMY_API_KEY\b/,
+    /\bCOINGECKO_API_KEY\b/,
     /sentinel-api-key/,
     /sentinel-alchemy-key/,
     /c2VjcmV0LWJ5dGVz/,

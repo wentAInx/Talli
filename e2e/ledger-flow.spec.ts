@@ -289,7 +289,7 @@ test("filters, native-asset reports, settings, and exports form a V1 loop", asyn
     data: { ledgerEntries: { amountAtomic: string }[] };
   };
   expect(backup.format).toBe("multi-asset-ledger-backup");
-  expect(backup.schemaVersion).toBe(7);
+  expect(backup.schemaVersion).toBe(8);
   expect(
     backup.data.ledgerEntries.every(
       (entry) => typeof entry.amountAtomic === "string",

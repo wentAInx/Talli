@@ -120,7 +120,9 @@ export function ValuationSettings({
                         ? "Keyless 模式 · 不发送 API key"
                         : provider.mode === "demo"
                           ? `Demo key：${provider.configured ? "已配置" : "未配置"}`
-                          : "配置错误：COINGECKO_MODE 必须为 demo 或 keyless"
+                          : provider.mode === "pro"
+                            ? `Pro key：${provider.configured ? "已配置" : "未配置"}`
+                            : "配置错误：COINGECKO_MODE 必须为 demo、keyless 或 pro"
                       : "公开参考汇率 · 无需 API key"}
                   </small>
                   <small>

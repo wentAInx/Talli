@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 
 import { BackupValidationError } from "@/domain/backup";
 import { BackupService, RestoreTargetError } from "@/services";
@@ -55,6 +56,9 @@ export async function POST(request: Request) {
         ? service.previewRestore(payload)
         : service.restore(payload);
     });
+    if (mode === "commit") {
+      revalidatePath("/analytics");
+    }
     return NextResponse.json({ ok: true, mode, result }, { status: 200 });
   } catch (error) {
     if (error instanceof BackupValidationError) {

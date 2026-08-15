@@ -136,4 +136,75 @@ describe("EcbProvider", () => {
       }),
     ).rejects.toMatchObject({ code: "UPSTREAM_PAYLOAD_INVALID" });
   });
+
+  it("requests and parses a strict multi-currency historical range", async () => {
+    const transport = new StubTransport(
+      [
+        "CURRENCY,TIME_PERIOD,OBS_VALUE",
+        "USD,2026-08-07,1.17",
+        "CNY,2026-08-07,7.75",
+        "USD,2026-08-10,1.18",
+        "CNY,2026-08-10,7.80",
+      ].join("\n"),
+    );
+    const provider = new EcbProvider(transport);
+    const observations = await provider.fetchEurReferenceHistory({
+      mappings: [
+        { assetId: "asset-usd", providerAssetKey: "USD" },
+        { assetId: "asset-cny", providerAssetKey: "CNY" },
+      ],
+      eurAssetId: "asset-eur",
+      fromDate: "2026-08-07",
+      toDate: "2026-08-10",
+      fetchedAt: FETCHED_AT,
+    });
+
+    const call = transport.calls[0]!;
+    expect(decodeURI(call.url.pathname)).toBe(
+      "/service/data/EXR/D.CNY+USD.EUR.SP00.A",
+    );
+    expect(call.url.searchParams.get("startPeriod")).toBe("2026-08-07");
+    expect(call.url.searchParams.get("endPeriod")).toBe("2026-08-10");
+    expect(observations).toHaveLength(4);
+    expect(observations[0]).toMatchObject({
+      quoteAssetId: "asset-cny",
+      providerObservationDate: "2026-08-07",
+      rateText: "7.75",
+    });
+  });
+
+  it.each([
+    ["invalid date", "USD,2026-02-30,1.17"],
+    ["invalid rate", "USD,2026-08-07,0"],
+    ["unknown currency", "JPY,2026-08-07,180"],
+    ["out of range", "USD,2026-08-11,1.18"],
+  ])("rejects historical %s rows", async (_label, row) => {
+    const provider = new EcbProvider(
+      new StubTransport(`CURRENCY,TIME_PERIOD,OBS_VALUE\n${row}\n`),
+    );
+    await expect(
+      provider.fetchEurReferenceHistory({
+        mappings: [{ assetId: "asset-usd", providerAssetKey: "USD" }],
+        eurAssetId: "asset-eur",
+        fromDate: "2026-08-07",
+        toDate: "2026-08-10",
+        fetchedAt: FETCHED_AT,
+      }),
+    ).rejects.toMatchObject({ code: "UPSTREAM_PAYLOAD_INVALID" });
+  });
+
+  it("accepts an empty weekend-only historical payload", async () => {
+    const provider = new EcbProvider(
+      new StubTransport("CURRENCY,TIME_PERIOD,OBS_VALUE\n"),
+    );
+    await expect(
+      provider.fetchEurReferenceHistory({
+        mappings: [{ assetId: "asset-usd", providerAssetKey: "USD" }],
+        eurAssetId: "asset-eur",
+        fromDate: "2026-08-08",
+        toDate: "2026-08-09",
+        fetchedAt: FETCHED_AT,
+      }),
+    ).resolves.toEqual([]);
+  });
 });

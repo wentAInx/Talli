@@ -101,7 +101,7 @@ describe("Backup schemaVersion 7 automation and recurring facts", () => {
   it("round-trips definitions, tags, links, and skips while excluding derived data", async () => {
     const { source } = await sourceFixture();
     const payload = new BackupService(source.context).exportBackup();
-    expect(payload.schemaVersion).toBe(7);
+    expect(payload.schemaVersion).toBe(8);
     expect(payload.data.automationRules).toHaveLength(1);
     expect(payload.data.automationRuleConditions).toHaveLength(1);
     expect(payload.data.automationRuleActions).toHaveLength(4);
@@ -121,7 +121,7 @@ describe("Backup schemaVersion 7 automation and recurring facts", () => {
     const target = createTestDatabase();
     databases.push(target);
     const preview = new BackupService(target.context).restore(payload);
-    expect(preview.schemaVersion).toBe(7);
+    expect(preview.schemaVersion).toBe(8);
     const restored = readBackupData(target.context.db);
     for (const key of [
       "automationRules",
@@ -147,6 +147,7 @@ describe("Backup schemaVersion 7 automation and recurring facts", () => {
       recurringItemTags: _tags,
       recurringOccurrenceLinks: _links,
       recurringOccurrenceSkips: _skips,
+      historicalManualQuotes: _historicalManualQuotes,
       ...v6Data
     } = current.data;
     expect([
@@ -157,11 +158,12 @@ describe("Backup schemaVersion 7 automation and recurring facts", () => {
       _tags,
       _links,
       _skips,
+      _historicalManualQuotes,
     ]).toEqual(expect.arrayContaining([expect.any(Array)]));
     const parsed = new BackupService(source.context).parseJson(
       JSON.stringify({ ...current, schemaVersion: 6, data: v6Data }),
     );
-    expect(parsed.schemaVersion).toBe(7);
+    expect(parsed.schemaVersion).toBe(8);
     expect(parsed.data.automationRules).toEqual([]);
     expect(parsed.data.recurringItems).toEqual([]);
     expect(parsed.data.recurringOccurrenceLinks).toEqual([]);

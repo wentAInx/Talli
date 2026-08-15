@@ -67,7 +67,7 @@ async function expectRestorePreviewToBeReadOnly(page: Page) {
     ok: true,
     mode: "preview",
     result: {
-      schemaVersion: 7,
+      schemaVersion: 8,
       target: "seed-only",
     },
   });
@@ -114,7 +114,7 @@ test("rules remain projections and recurring posts only after explicit action", 
   const sourceEventUrl = page.url();
 
   const beforeRule = await automationBackupState(page);
-  expect(beforeRule.schemaVersion).toBe(7);
+  expect(beforeRule.schemaVersion).toBe(8);
   expect(beforeRule.dataKeys).not.toContain("ruleProjections");
   expect(beforeRule.dataKeys).not.toContain("recurringMatchSuggestions");
   expect(beforeRule.dataKeys).not.toContain("generatedOccurrences");

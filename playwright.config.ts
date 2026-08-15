@@ -16,7 +16,11 @@ if (e2eDirectory) {
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: ["**/sync-flow.spec.ts", "**/import-flow.spec.ts"],
+  testIgnore: [
+    "**/sync-flow.spec.ts",
+    "**/import-flow.spec.ts",
+    "**/analytics-flow.spec.ts",
+  ],
   globalTeardown: "./e2e/global-teardown.ts",
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),

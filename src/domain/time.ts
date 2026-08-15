@@ -230,12 +230,60 @@ function parseLocalDate(
   return parts;
 }
 
-function nextLocalDate(value: string): string {
+export function canonicalLocalDate(value: string): string {
   const parts = parseLocalDate(value);
-  const next = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + 1));
+  return `${pad(parts.year, 4)}-${pad(parts.month)}-${pad(parts.day)}`;
+}
+
+export function addLocalDateDays(value: string, days: number): string {
+  assertDomain(
+    Number.isSafeInteger(days),
+    "INVALID_DATE_OFFSET",
+    "Calendar-day offset must be a safe integer.",
+  );
+  const parts = parseLocalDate(value);
+  const next = new Date(
+    Date.UTC(parts.year, parts.month - 1, parts.day + days),
+  );
   return `${pad(next.getUTCFullYear(), 4)}-${pad(next.getUTCMonth() + 1)}-${pad(
     next.getUTCDate(),
   )}`;
+}
+
+export function localDateDistance(from: string, to: string): number {
+  const start = parseLocalDate(from);
+  const end = parseLocalDate(to);
+  return Math.trunc(
+    (Date.UTC(end.year, end.month - 1, end.day) -
+      Date.UTC(start.year, start.month - 1, start.day)) /
+      (24 * 60 * 60 * 1000),
+  );
+}
+
+export function enumerateLocalDates(
+  from: string,
+  to: string,
+  maxPoints = 5_000,
+): string[] {
+  const distance = localDateDistance(from, to);
+  assertDomain(
+    distance >= 0,
+    "INVALID_DATE_RANGE",
+    "Date range start must not be after its end.",
+  );
+  assertDomain(
+    Number.isSafeInteger(maxPoints) && maxPoints > 0,
+    "INVALID_RANGE_LIMIT",
+    "Date range limit must be a positive safe integer.",
+  );
+  assertDomain(
+    distance + 1 <= maxPoints,
+    "DATE_RANGE_TOO_LARGE",
+    `Date range may contain at most ${maxPoints} days.`,
+  );
+  return Array.from({ length: distance + 1 }, (_, index) =>
+    addLocalDateDays(from, index),
+  );
 }
 
 export function localDateRangeToUtc(
@@ -249,9 +297,13 @@ export function localDateRangeToUtc(
       })
     : undefined;
   const endExclusive = input.to
-    ? localDateTimeToUtc(`${nextLocalDate(input.to)}T00:00:00.000`, zone, {
-        disambiguation: "compatible",
-      })
+    ? localDateTimeToUtc(
+        `${addLocalDateDays(input.to, 1)}T00:00:00.000`,
+        zone,
+        {
+          disambiguation: "compatible",
+        },
+      )
     : undefined;
   if (startInclusive && endExclusive) {
     assertDomain(
@@ -261,6 +313,26 @@ export function localDateRangeToUtc(
     );
   }
   return { startInclusive, endExclusive };
+}
+
+export function localDateEndInclusiveUtc(
+  date: string,
+  timeZone: string,
+): string {
+  const { endExclusive } = localDateRangeToUtc(
+    { from: date, to: date },
+    timeZone,
+  );
+  assertDomain(
+    endExclusive,
+    "INVALID_DATE_RANGE",
+    "Local date end could not be resolved.",
+  );
+  return new Date(canonicalUtcInstantValue(endExclusive) - 1).toISOString();
+}
+
+export function lastCompletedLocalDate(now: string, timeZone: string): string {
+  return addLocalDateDays(utcInstantToLocalDate(now, timeZone), -1);
 }
 
 export function monthUtcRange(month: string, timeZone: string): UtcRange {

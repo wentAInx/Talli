@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { seedDatabase } from "../../db/seed";
 import { SEED_BOOK_ID, seedAssetId } from "../../db/seed-data";
+import {
+  queryBalancesAt,
+  queryBalancesAtInstants,
+} from "../../db/queries/balances";
 import { AccountService } from "../../services/account-service";
 import { LedgerCommandService } from "../../services/ledger-command-service";
 import { ReconciliationService } from "../../services/reconciliation-service";
@@ -219,5 +223,68 @@ describe("file-backed balance acceptance matrix", () => {
     await expect(
       reconciliation.balanceAt(accountId, "2026-08-04T23:59:59.999Z"),
     ).resolves.toBe(70n);
+  });
+
+  it("matches the canonical balance query at 120 historical instants", async () => {
+    const first = await createCnyAccount();
+    const second = await accounts.createAccount({
+      bookId: SEED_BOOK_ID,
+      assetId: seedAssetId("CNY"),
+      name: "Second historical balance",
+      accountType: "bank",
+      initialBalance: "10.00",
+    });
+    await ledger.createIncome({
+      accountId: first,
+      amount: "25.50",
+      occurredAt: "2026-08-01T02:00:00.000Z",
+    });
+    await ledger.createExpense({
+      accountId: first,
+      amount: "5.25",
+      occurredAt: "2026-08-02T02:00:00.000Z",
+    });
+    await reconciliation.reconcile({
+      accountId: first,
+      actualBalance: "30.00",
+      asOf: "2026-08-03T02:00:00.000Z",
+    });
+    await ledger.createExpense({
+      accountId: first,
+      amount: "7.75",
+      occurredAt: "2026-08-03T02:00:00.000Z",
+    });
+    await ledger.createIncome({
+      accountId: first,
+      amount: "1.25",
+      occurredAt: "2026-08-04T18:00:00.000Z",
+    });
+    await ledger.createExpense({
+      accountId: second,
+      amount: "2.00",
+      occurredAt: "2026-08-02T11:00:00.000Z",
+    });
+    await reconciliation.reconcile({
+      accountId: second,
+      actualBalance: "9.50",
+      asOf: "2026-08-04T00:00:00.000Z",
+    });
+
+    const instants = Array.from({ length: 120 }, (_, index) =>
+      new Date(
+        Date.parse("2026-07-31T00:00:00.000Z") + index * 3_600_000,
+      ).toISOString(),
+    ).reverse();
+    const accountIds = [first, second];
+    const batched = queryBalancesAtInstants(
+      database.context.db,
+      accountIds,
+      instants,
+    );
+    for (const instant of instants) {
+      expect(batched.get(instant)).toEqual(
+        queryBalancesAt(database.context.db, accountIds, instant),
+      );
+    }
   });
 });

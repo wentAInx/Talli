@@ -50,6 +50,7 @@ const V6_FILE_IMPORT_DATA_KEYS = [
   "recurringItemTags",
   "recurringOccurrenceLinks",
   "recurringOccurrenceSkips",
+  "historicalManualQuotes",
 ] as const;
 
 function removeV6FileImportFacts(data: Record<string, unknown>): void {
@@ -741,7 +742,7 @@ describe("EVM wallet sync persistence", () => {
     const payload = new BackupService(database!.context).exportBackup();
     const json = JSON.stringify(payload);
 
-    expect(payload.schemaVersion).toBe(7);
+    expect(payload.schemaVersion).toBe(8);
     expect(payload.data.evmWalletConnections).toHaveLength(1);
     expect(payload.data.evmBalanceObservationDetails).toHaveLength(2);
     expect(payload.data.evmCandidateDetails).toHaveLength(2);
@@ -815,7 +816,7 @@ describe("EVM wallet sync persistence", () => {
     const target = createTestDatabase();
     try {
       const preview = new BackupService(target.context).restore(legacyV4);
-      expect(preview.schemaVersion).toBe(7);
+      expect(preview.schemaVersion).toBe(8);
       const restored = readBackupData(target.context.db);
       expect(restored.evmL2GasFeeDetails).toEqual([]);
       expect(
@@ -884,7 +885,7 @@ describe("EVM wallet sync persistence", () => {
     const target = createTestDatabase();
     try {
       const preview = new BackupService(target.context).restore(legacyV3);
-      expect(preview.schemaVersion).toBe(7);
+      expect(preview.schemaVersion).toBe(8);
       expect(
         readBackupData(target.context.db).externalConnections,
       ).toMatchObject([{ provider: "kraken", sourceKey: "kraken:primary" }]);

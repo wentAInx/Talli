@@ -385,7 +385,7 @@ test("Ethereum Mainnet wallet keeps on-chain balance, gas, and movement outside 
     schemaVersion: number;
     data: { ledgerEvents: unknown[]; externalImportLinks: unknown[] };
   };
-  expect(beforeResync.schemaVersion).toBe(7);
+  expect(beforeResync.schemaVersion).toBe(8);
   await page.goto("/sync?queue=imported");
   await page
     .locator(".evm-workbench .sync-connection-card")
@@ -614,7 +614,7 @@ test("Base and Arbitrum expose discovery limits, exact traces, and exact fee com
       schemaVersion: number;
       data: { ledgerEvents: unknown[]; externalImportLinks: unknown[] };
     };
-    expect(afterImport.schemaVersion).toBe(7);
+    expect(afterImport.schemaVersion).toBe(8);
     expect(afterImport.data.ledgerEvents).toHaveLength(
       beforeSync.data.ledgerEvents.length + 2,
     );

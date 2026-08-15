@@ -237,6 +237,7 @@ function revalidateLedgerViews(): void {
   revalidatePath("/accounts");
   revalidatePath("/transactions");
   revalidatePath("/reports");
+  revalidatePath("/analytics");
 }
 
 function revalidateSettingsViews(): void {

@@ -8,6 +8,8 @@ export * from "./categories";
 export * from "./events";
 export * from "./external-sync";
 export * from "./file-import";
+export * from "./historical-valuation";
+export * from "./historical-refresh";
 export * from "./evm-sync";
 export * from "./read-models";
 export * from "./reports";

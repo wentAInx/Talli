@@ -13,11 +13,14 @@ account-first financial-file import for CSV, OFX/QFX banking and credit-card
 statements, and ISO 20022 camt.053 while keeping file commit outside Ledger.
 V5.1 adds deterministic rule projections for file-import review and date-only
 recurring expectations; neither becomes a Ledger fact automatically.
+V6 adds an on-demand historical valuation and analytics layer derived from
+Ledger quantities plus separately persisted historical quote facts. It does not
+change current V2 valuation or allow provider data to become Ledger data.
 
-## V5.1 implementation status
+## V6 feature-branch scope
 
-The frozen V1 ledger and additive V2/V3/V4/V4.1 baselines remain intact; the V5
-task-package phases are implemented:
+The frozen V1 ledger and additive V2/V3/V4/V4.1/V5/V5.1 baselines remain
+intact; the V6 feature branch adds the following scope:
 
 - Next.js 16, strict TypeScript, Tailwind CSS, ESLint, Prettier, Vitest, and
   Playwright tooling.
@@ -144,6 +147,25 @@ task-package phases are implemented:
   definitions, tags, links, and skips while excluding derived projections,
   match suggestions, and generated future occurrence caches. Restore accepts
   versions 1 through 7.
+- `/analytics` provides historical net worth, positive-value allocation,
+  external cash-flow, and exact period decomposition over completed app-timezone
+  days. Historical exposure remains visible after an account or asset is
+  archived.
+- Historical balance reads preserve the Ledger snapshot rule: choose the latest
+  snapshot at or before the instant, then include only entries in
+  `(snapshot.asOf, instant]`. Batched reads keep exact `bigint` quantities.
+- Historical CoinGecko crypto/USD market observations and ECB EUR reference
+  observations live in dedicated cache tables. Missing quotes make a result
+  incomplete and never become zero; USDT and USDC have no peg shortcut.
+- Refresh is an explicit, resumable foreground action. Provider HTTP runs
+  outside database write transactions, bounded units commit atomically, and
+  mapping changes invalidate incompatible cached history. There is no cron or
+  background collector.
+- Manual historical exact-pair quotes are user facts. Backup
+  `schemaVersion=8` includes them and excludes provider history, refresh runs,
+  refresh units, provider state, and credentials. Versions 1 through 7 upgrade
+  in memory before restore.
+- V6 does not implement cost basis, tax lots, FIFO/LIFO, or realized P&L.
 
 ## Local development
 
@@ -171,8 +193,10 @@ COINGECKO_MODE=demo
 COINGECKO_API_KEY=your-server-only-demo-key
 ```
 
-`COINGECKO_MODE=keyless` is an explicit local-development option. Talli never
-falls back from failed demo-key authentication to keyless mode.
+`COINGECKO_MODE=keyless` is an explicit local-development option.
+`COINGECKO_MODE=pro` uses the fixed Pro API origin with the same server-only key
+variable. Talli never falls back between keyless, Demo, and Pro modes after an
+authentication failure.
 
 Kraken sync requires a separate, dedicated Spot API key in the server runtime:
 
@@ -209,10 +233,29 @@ RPC path. Automated tests use an injected fixture and do not call Alchemy.
 - Fresh/stale/missing/error states are explicit. A missing quote for a nonzero
   asset makes the estimate incomplete; it is never silently treated as zero.
 - The dashboard keeps native quantities primary and marks Home values with `≈`.
-- Valuation is current-only. V2.0 has no historical chart, cost basis, P&L,
-  background price collector, or stablecoin shortcut. V3/V4.1 external sync
-  remains a separate native-asset observation/review layer and never supplies
-  valuation prices.
+- The current V2 card and its freshness policy remain separate from V6
+  historical resolution. V3/V4.1 external sync remains a native-asset
+  observation/review layer and never supplies valuation prices.
+
+## Historical analytics semantics
+
+- Natural-day ranges and their end-of-day valuation instants belong to the app
+  timezone. The default endpoint is yesterday, so an in-progress current day is
+  not silently presented as complete history.
+- Every financial analytics response reads settings, Ledger facts, balances,
+  and quote facts in one SQLite read transaction. Analytics GET and server
+  rendering are cache-only and never call providers.
+- An exact manual `base → Home` quote wins for its valuation date. Automatic
+  crypto history uses a latest-prior hourly observation within 2 hours, then a
+  daily observation within 26 hours. ECB reference data may carry across a
+  weekend for at most 7 days. A future observation is never used.
+- Net worth exposes known value and completeness separately. Allocation uses
+  positive market value only. Liabilities remain visible in net worth but do
+  not create negative allocation slices.
+- Cash flow classifies external Ledger effects at event time. Transfers and
+  exchange principal stay internal. Period decomposition reports cash flow,
+  trade/rebalance, market, and reconciliation effects with exact bridge
+  arithmetic; it is not tax or realized-P&L accounting.
 
 ## Backup, CSV, and restore
 
@@ -223,12 +266,12 @@ RPC path. Automated tests use an injected fixture and do not call Alchemy.
   CSV is not a restore format.
 - The backup wire identifier remains `multi-asset-ledger-backup` after the
   Talli rename so existing V1 backups stay compatible.
-- V5.1 exports use `schemaVersion=7`. They retain V2/V3/V4/V4.1/V5 user facts,
-  add Rules and Recurring definitions/links/skips, and continue to exclude raw
-  file bytes and full statement account numbers. Backups from schema versions 1
-  through 6 are upgraded in memory and fully validated before any write.
-- `latest_price_quotes`, `price_provider_state`, and API keys are intentionally
-  excluded because they are derived or operational data. V4.1 also excludes
+- V6 exports use `schemaVersion=8`. They retain all V7 user facts and add manual
+  historical quotes. Backups from schema versions 1 through 7 are upgraded in
+  memory and fully validated before any write.
+- `latest_price_quotes`, historical provider quote cache, historical refresh
+  runs/units, `price_provider_state`, and API keys are intentionally excluded
+  because they are derived or operational data. V4.1 also excludes
   `external_connection_state`, `external_sync_runs`, and
   `evm_wallet_connection_state`.
 - `POST /api/data/restore` supports preview and commit. The complete payload,
@@ -274,8 +317,8 @@ Runtime configuration:
 | `DATABASE_PATH` | `/data/finance.db` | Writable SQLite file in persistent storage. |
 | `PORT` | `3000` | Next.js listener inside a direct container run. Compose maps `${PORT:-3000}`. |
 | `AUTO_SETUP_DATABASE` | `1` | Run checked migrations and idempotent seed at startup. |
-| `COINGECKO_MODE` | `demo` | `demo` sends the server-only Demo key; `keyless` is explicit. |
-| `COINGECKO_API_KEY` | empty | Server-only CoinGecko Demo key; never stored in SQLite or backup. |
+| `COINGECKO_MODE` | `demo` | Fixed provider mode: `demo`, `pro`, or explicit local `keyless`. |
+| `COINGECKO_API_KEY` | empty | Server-only CoinGecko Demo/Pro key; never stored in SQLite or backup. |
 | `KRAKEN_API_KEY` | empty | Dedicated server-only Kraken Spot read-only API key. |
 | `KRAKEN_API_SECRET` | empty | Dedicated server-only Kraken signing secret. |
 | `ALCHEMY_API_KEY` | empty | Server-only Alchemy key for fixed Ethereum/Base/Arbitrum Mainnet origins. |
@@ -307,6 +350,9 @@ file.
   columns are positive plain-decimal `TEXT` plus `decimal.js`, never `REAL`.
 - Provider HTTP is server-only and outside SQLite write transactions. Resolver,
   portfolio valuation, SSR, backup, and native reports never perform HTTP.
+- Historical analytics is derived from Ledger quantities and separate quote
+  facts. It never writes Ledger events, entries, or snapshots, and archived
+  accounts/assets remain eligible when they have historical exposure.
 - External API, on-chain, and imported financial-file data are not Ledger data.
   Sync/file commit writes only external source, batch, observation, candidate,
   mapping, provenance, and operational rows. Only an explicit Import may call

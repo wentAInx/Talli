@@ -192,4 +192,134 @@ describe("CoinGeckoProvider", () => {
     ).rejects.toMatchObject({ code: "CONFIG_ERROR" });
     expect(transport.calls).toHaveLength(0);
   });
+
+  it("fetches, validates, sorts, and deduplicates explicit hourly history", async () => {
+    const first = Date.parse("2026-08-01T00:00:00.000Z");
+    const second = Date.parse("2026-08-01T01:00:00.000Z");
+    const transport = new StubTransport({
+      status: 200,
+      text: JSON.stringify({
+        prices: [
+          [second, "68100.125"],
+          [first, 68000.5],
+          [second, "68100.125"],
+        ],
+        market_caps: [[first, 1]],
+        total_volumes: [[first, 2]],
+      }),
+    });
+    const provider = new CoinGeckoProvider(transport, { mode: "keyless" });
+    const observations = await provider.fetchCryptoUsdHistory({
+      mapping: { assetId: "asset-btc", providerAssetKey: "bitcoin" },
+      usdAssetId: "asset-usd",
+      fromUtc: "2026-08-01T00:00:00.000Z",
+      toUtc: "2026-08-01T02:00:00.000Z",
+      interval: "hourly",
+      fetchedAt: FETCHED_AT,
+    });
+
+    expect(transport.calls[0]?.url.pathname).toBe(
+      "/api/v3/coins/bitcoin/market_chart/range",
+    );
+    expect(transport.calls[0]?.url.searchParams.get("interval")).toBe("hourly");
+    expect(transport.calls[0]?.url.searchParams.get("precision")).toBe("full");
+    expect(observations.map((quote) => quote.providerObservedAt)).toEqual([
+      "2026-08-01T00:00:00.000Z",
+      "2026-08-01T01:00:00.000Z",
+    ]);
+    expect(observations.map((quote) => quote.rateText)).toEqual([
+      "68000.5",
+      "68100.125",
+    ]);
+    expect(observations[0]?.sourceMetadataJson).toBe(
+      '{"providerAssetKey":"bitcoin","interval":"hourly"}',
+    );
+  });
+
+  it("uses the fixed Pro origin and only the Pro header", async () => {
+    const transport = new StubTransport({
+      status: 200,
+      text: JSON.stringify({
+        prices: [[Date.parse("2026-08-01T00:00:00.000Z"), 1]],
+      }),
+    });
+    const provider = new CoinGeckoProvider(transport, {
+      mode: "pro",
+      apiKey: "pro-secret",
+    });
+    await provider.fetchCryptoUsdHistory({
+      mapping: { assetId: "asset-btc", providerAssetKey: "bitcoin" },
+      usdAssetId: "asset-usd",
+      fromUtc: "2026-08-01T00:00:00.000Z",
+      toUtc: "2026-08-01T01:00:00.000Z",
+      interval: "hourly",
+      fetchedAt: FETCHED_AT,
+    });
+    expect(transport.calls[0]?.url.origin).toBe(
+      "https://pro-api.coingecko.com",
+    );
+    expect(transport.calls[0]?.headers).toEqual({
+      "x-cg-pro-api-key": "pro-secret",
+    });
+  });
+
+  it.each([
+    ["malformed JSON", "not-json"],
+    ["missing prices", "{}"],
+    ["invalid timestamp", '{"prices":[[1,10]]}'],
+    [
+      "non-positive price",
+      JSON.stringify({
+        prices: [[Date.parse("2026-08-01T00:00:00.000Z"), 0]],
+      }),
+    ],
+    [
+      "conflicting duplicate",
+      JSON.stringify({
+        prices: [
+          [Date.parse("2026-08-01T00:00:00.000Z"), 1],
+          [Date.parse("2026-08-01T00:00:00.000Z"), 2],
+        ],
+      }),
+    ],
+  ])(
+    "rejects historical %s payloads as one failed unit",
+    async (_label, text) => {
+      const provider = new CoinGeckoProvider(
+        new StubTransport({ status: 200, text }),
+        { mode: "keyless" },
+      );
+      await expect(
+        provider.fetchCryptoUsdHistory({
+          mapping: { assetId: "asset-btc", providerAssetKey: "bitcoin" },
+          usdAssetId: "asset-usd",
+          fromUtc: "2026-08-01T00:00:00.000Z",
+          toUtc: "2026-08-01T01:00:00.000Z",
+          interval: "hourly",
+          fetchedAt: FETCHED_AT,
+        }),
+      ).rejects.toMatchObject({ code: "UPSTREAM_PAYLOAD_INVALID" });
+    },
+  );
+
+  it("normalizes historical 429 with Retry-After", async () => {
+    const provider = new CoinGeckoProvider(
+      new StubTransport({
+        status: 429,
+        headers: new Headers({ "retry-after": "90" }),
+        text: "limited",
+      }),
+      { mode: "keyless" },
+    );
+    await expect(
+      provider.fetchCryptoUsdHistory({
+        mapping: { assetId: "asset-btc", providerAssetKey: "bitcoin" },
+        usdAssetId: "asset-usd",
+        fromUtc: "2026-08-01T00:00:00.000Z",
+        toUtc: "2026-08-01T01:00:00.000Z",
+        interval: "hourly",
+        fetchedAt: FETCHED_AT,
+      }),
+    ).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterSeconds: 90 });
+  });
 });

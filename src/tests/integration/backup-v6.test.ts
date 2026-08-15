@@ -166,7 +166,7 @@ describe("Backup schemaVersion 6 file-import provenance", () => {
       deterministicRuntime("2026-08-14T00:00:00.000Z"),
     ).exportBackup();
     const json = JSON.stringify(payload);
-    expect(payload.schemaVersion).toBe(7);
+    expect(payload.schemaVersion).toBe(8);
     expect(payload.data.fileImportProfiles).toHaveLength(2);
     expect(payload.data.fileImportBatches).toHaveLength(2);
     expect(payload.data.fileImportSourceDetails).toHaveLength(3);
@@ -259,6 +259,7 @@ describe("Backup schemaVersion 6 file-import provenance", () => {
       recurringItemTags: _recurringTags,
       recurringOccurrenceLinks: _recurringLinks,
       recurringOccurrenceSkips: _recurringSkips,
+      historicalManualQuotes: _historicalManualQuotes,
       ...v5Data
     } = v6.data;
     expect([
@@ -276,7 +277,8 @@ describe("Backup schemaVersion 6 file-import provenance", () => {
       _recurringTags,
       _recurringLinks,
       _recurringSkips,
-    ]).toEqual([[], [], [], [], [], [], [], [], [], [], [], [], [], []]);
+      _historicalManualQuotes,
+    ]).toEqual([[], [], [], [], [], [], [], [], [], [], [], [], [], [], []]);
     const target = createTestDatabase();
     databases.push(target);
     const preview = new BackupService(target.context).previewRestore({
@@ -284,7 +286,7 @@ describe("Backup schemaVersion 6 file-import provenance", () => {
       schemaVersion: 5,
       data: v5Data,
     });
-    expect(preview.schemaVersion).toBe(7);
+    expect(preview.schemaVersion).toBe(8);
     const parsed = new BackupService(target.context).parseJson(
       JSON.stringify({ ...v6, schemaVersion: 5, data: v5Data }),
     );

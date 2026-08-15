@@ -195,7 +195,7 @@ test("financial file import stays outside Ledger until explicit match or import"
     .selectOption({ label: `${profileName} · ${accountName} · CNY` });
 
   const beforeCommit = await backupCounts(page);
-  expect(beforeCommit.schemaVersion).toBe(7);
+  expect(beforeCommit.schemaVersion).toBe(8);
 
   await page
     .getByLabel("Statement file")
@@ -231,7 +231,7 @@ test("financial file import stays outside Ledger until explicit match or import"
 
   const afterCommit = await backupCounts(page);
   expect(afterCommit).toMatchObject({
-    schemaVersion: 7,
+    schemaVersion: 8,
     ledgerEvents: beforeCommit.ledgerEvents,
     snapshots: beforeCommit.snapshots,
     candidates: beforeCommit.candidates + 4,

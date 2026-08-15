@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { isSameOriginRequest } from "@/app/api/same-origin";
@@ -102,6 +103,9 @@ export async function POST(request: Request) {
         }
       }
     });
+    if (parsed.data.action === "post") {
+      revalidatePath("/analytics");
+    }
     return NextResponse.json(
       { ok: true, result },
       { headers: { "Cache-Control": "no-store" } },

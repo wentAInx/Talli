@@ -36,6 +36,11 @@ import {
   fileImportCandidateDetails,
   fileImportProfiles,
   fileImportSourceDetails,
+  historicalFxQuotes,
+  historicalManualQuotes,
+  historicalPriceQuotes,
+  historicalRefreshRuns,
+  historicalRefreshUnits,
   ledgerEntries,
   ledgerEvents,
   latestPriceQuotes,
@@ -103,6 +108,11 @@ export function readBackupData(executor: DatabaseExecutor): BackupData {
       .select()
       .from(manualPriceQuotes)
       .orderBy(asc(manualPriceQuotes.id))
+      .all(),
+    historicalManualQuotes: executor
+      .select()
+      .from(historicalManualQuotes)
+      .orderBy(asc(historicalManualQuotes.id))
       .all(),
     externalConnections: executor
       .select()
@@ -286,6 +296,11 @@ export function upsertAppMetaValue(
 }
 
 export function clearRestoreTarget(executor: DatabaseExecutor): void {
+  executor.delete(historicalRefreshUnits).run();
+  executor.delete(historicalRefreshRuns).run();
+  executor.delete(historicalPriceQuotes).run();
+  executor.delete(historicalFxQuotes).run();
+  executor.delete(historicalManualQuotes).run();
   executor.delete(recurringOccurrenceLinks).run();
   executor.delete(recurringOccurrenceSkips).run();
   executor.delete(recurringItemTags).run();
@@ -341,6 +356,12 @@ export function insertBackupData(
   }
   if (data.assets.length > 0) {
     executor.insert(assets).values(data.assets).run();
+  }
+  if (data.historicalManualQuotes.length > 0) {
+    executor
+      .insert(historicalManualQuotes)
+      .values(data.historicalManualQuotes)
+      .run();
   }
   if (data.categories.length > 0) {
     executor.insert(categories).values(data.categories).run();

@@ -32,6 +32,27 @@ export const eventTypes = [
 export const entryRoles = ["main", "source", "destination", "fee"] as const;
 export const priceProviderIds = ["coingecko", "ecb"] as const;
 export const externalQuoteKinds = ["spot", "reference"] as const;
+export const historicalCryptoGranularities = ["hourly", "daily"] as const;
+export const historicalRefreshRunStatuses = [
+  "pending",
+  "running",
+  "partial",
+  "success",
+  "failed",
+  "invalidated",
+  "cancelled",
+] as const;
+export const historicalRefreshUnitStatuses = [
+  "pending",
+  "running",
+  "success",
+  "failed",
+] as const;
+export const historicalRefreshIntervalKinds = [
+  "hourly",
+  "daily",
+  "ecb_daily",
+] as const;
 export const externalProviderIds = [
   "kraken",
   "evm_wallet",
@@ -579,6 +600,244 @@ export const priceProviderState = sqliteTable(
     check(
       "price_provider_state_provider_check",
       sql`${table.provider} in ('coingecko', 'ecb')`,
+    ),
+  ],
+);
+
+export const historicalPriceQuotes = sqliteTable(
+  "historical_price_quotes",
+  {
+    id: text("id").primaryKey(),
+    baseAssetId: text("base_asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    quoteAssetId: text("quote_asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    provider: text("provider", { enum: ["coingecko"] }).notNull(),
+    quoteKind: text("quote_kind", { enum: ["market"] }).notNull(),
+    granularity: text("granularity", {
+      enum: historicalCryptoGranularities,
+    }).notNull(),
+    rateText: text("rate_text").notNull(),
+    providerObservedAt: text("provider_observed_at").notNull(),
+    firstFetchedAt: text("first_fetched_at").notNull(),
+    lastFetchedAt: text("last_fetched_at").notNull(),
+    sourceMetadataJson: text("source_metadata_json"),
+  },
+  (table) => [
+    uniqueIndex("historical_price_quotes_provider_pair_observed_unique").on(
+      table.provider,
+      table.baseAssetId,
+      table.quoteAssetId,
+      table.providerObservedAt,
+    ),
+    index("historical_price_quotes_lookup_idx").on(
+      table.baseAssetId,
+      table.quoteAssetId,
+      table.providerObservedAt,
+    ),
+    check(
+      "historical_price_quote_distinct_assets_check",
+      sql`${table.baseAssetId} <> ${table.quoteAssetId}`,
+    ),
+    check(
+      "historical_price_quote_provider_check",
+      sql`${table.provider} = 'coingecko'`,
+    ),
+    check(
+      "historical_price_quote_kind_check",
+      sql`${table.quoteKind} = 'market'`,
+    ),
+    check(
+      "historical_price_quote_granularity_check",
+      sql`${table.granularity} in ('hourly', 'daily')`,
+    ),
+    check(
+      "historical_price_quote_rate_nonempty_check",
+      sql`length(${table.rateText}) > 0`,
+    ),
+  ],
+);
+
+export const historicalFxQuotes = sqliteTable(
+  "historical_fx_quotes",
+  {
+    id: text("id").primaryKey(),
+    baseAssetId: text("base_asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    quoteAssetId: text("quote_asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    provider: text("provider", { enum: ["ecb"] }).notNull(),
+    quoteKind: text("quote_kind", { enum: ["reference"] }).notNull(),
+    rateText: text("rate_text").notNull(),
+    providerObservationDate: text("provider_observation_date").notNull(),
+    firstFetchedAt: text("first_fetched_at").notNull(),
+    lastFetchedAt: text("last_fetched_at").notNull(),
+    sourceMetadataJson: text("source_metadata_json"),
+  },
+  (table) => [
+    uniqueIndex("historical_fx_quotes_provider_pair_date_unique").on(
+      table.provider,
+      table.baseAssetId,
+      table.quoteAssetId,
+      table.providerObservationDate,
+    ),
+    index("historical_fx_quotes_lookup_idx").on(
+      table.baseAssetId,
+      table.quoteAssetId,
+      table.providerObservationDate,
+    ),
+    check(
+      "historical_fx_quote_distinct_assets_check",
+      sql`${table.baseAssetId} <> ${table.quoteAssetId}`,
+    ),
+    check("historical_fx_quote_provider_check", sql`${table.provider} = 'ecb'`),
+    check(
+      "historical_fx_quote_kind_check",
+      sql`${table.quoteKind} = 'reference'`,
+    ),
+    check(
+      "historical_fx_quote_rate_nonempty_check",
+      sql`length(${table.rateText}) > 0`,
+    ),
+  ],
+);
+
+export const historicalManualQuotes = sqliteTable(
+  "historical_manual_quotes",
+  {
+    id: text("id").primaryKey(),
+    baseAssetId: text("base_asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    quoteAssetId: text("quote_asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    valuationDate: text("valuation_date").notNull(),
+    rateText: text("rate_text").notNull(),
+    note: text("note"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("historical_manual_quotes_pair_date_unique").on(
+      table.baseAssetId,
+      table.quoteAssetId,
+      table.valuationDate,
+    ),
+    index("historical_manual_quotes_lookup_idx").on(
+      table.baseAssetId,
+      table.quoteAssetId,
+      table.valuationDate,
+    ),
+    check(
+      "historical_manual_quote_distinct_assets_check",
+      sql`${table.baseAssetId} <> ${table.quoteAssetId}`,
+    ),
+    check(
+      "historical_manual_quote_rate_nonempty_check",
+      sql`length(${table.rateText}) > 0`,
+    ),
+  ],
+);
+
+export const historicalRefreshRuns = sqliteTable(
+  "historical_refresh_runs",
+  {
+    id: text("id").primaryKey(),
+    requestedFromDate: text("requested_from_date").notNull(),
+    requestedToDate: text("requested_to_date").notNull(),
+    status: text("status", { enum: historicalRefreshRunStatuses }).notNull(),
+    mappingFingerprint: text("mapping_fingerprint").notNull(),
+    totalUnits: integer("total_units").notNull(),
+    completedUnits: integer("completed_units").notNull().default(0),
+    failedUnits: integer("failed_units").notNull().default(0),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    requestedAt: text("requested_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    completedAt: text("completed_at"),
+  },
+  (table) => [
+    check(
+      "historical_refresh_run_status_check",
+      sql`${table.status} in ('pending', 'running', 'partial', 'success', 'failed', 'invalidated', 'cancelled')`,
+    ),
+    check(
+      "historical_refresh_run_total_units_check",
+      sql`${table.totalUnits} >= 0`,
+    ),
+    check(
+      "historical_refresh_run_completed_units_check",
+      sql`${table.completedUnits} >= 0`,
+    ),
+    check(
+      "historical_refresh_run_failed_units_check",
+      sql`${table.failedUnits} >= 0`,
+    ),
+  ],
+);
+
+export const historicalRefreshUnits = sqliteTable(
+  "historical_refresh_units",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => historicalRefreshRuns.id, { onDelete: "cascade" }),
+    ordinal: integer("ordinal").notNull(),
+    provider: text("provider", { enum: priceProviderIds }).notNull(),
+    assetId: text("asset_id").references(() => assets.id, {
+      onDelete: "restrict",
+    }),
+    providerScopeJson: text("provider_scope_json").notNull(),
+    intervalKind: text("interval_kind", {
+      enum: historicalRefreshIntervalKinds,
+    }).notNull(),
+    fromBoundary: text("from_boundary").notNull(),
+    toBoundary: text("to_boundary").notNull(),
+    status: text("status", { enum: historicalRefreshUnitStatuses }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    claimedAt: text("claimed_at"),
+    completedAt: text("completed_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("historical_refresh_units_run_ordinal_unique").on(
+      table.runId,
+      table.ordinal,
+    ),
+    index("historical_refresh_units_pending_idx").on(
+      table.runId,
+      table.status,
+      table.ordinal,
+    ),
+    check(
+      "historical_refresh_unit_provider_check",
+      sql`${table.provider} in ('coingecko', 'ecb')`,
+    ),
+    check(
+      "historical_refresh_unit_interval_check",
+      sql`${table.intervalKind} in ('hourly', 'daily', 'ecb_daily')`,
+    ),
+    check(
+      "historical_refresh_unit_status_check",
+      sql`${table.status} in ('pending', 'running', 'success', 'failed')`,
+    ),
+    check("historical_refresh_unit_ordinal_check", sql`${table.ordinal} >= 0`),
+    check(
+      "historical_refresh_unit_attempts_check",
+      sql`${table.attempts} >= 0`,
+    ),
+    check(
+      "historical_refresh_unit_scope_nonempty_check",
+      sql`length(${table.providerScopeJson}) > 0`,
     ),
   ],
 );
@@ -1647,6 +1906,13 @@ export type PriceProviderMappingRow = typeof priceProviderMappings.$inferSelect;
 export type ManualPriceQuoteRow = typeof manualPriceQuotes.$inferSelect;
 export type LatestPriceQuoteRow = typeof latestPriceQuotes.$inferSelect;
 export type PriceProviderStateRow = typeof priceProviderState.$inferSelect;
+export type HistoricalPriceQuoteRow = typeof historicalPriceQuotes.$inferSelect;
+export type HistoricalFxQuoteRow = typeof historicalFxQuotes.$inferSelect;
+export type HistoricalManualQuoteRow =
+  typeof historicalManualQuotes.$inferSelect;
+export type HistoricalRefreshRunRow = typeof historicalRefreshRuns.$inferSelect;
+export type HistoricalRefreshUnitRow =
+  typeof historicalRefreshUnits.$inferSelect;
 export type ExternalConnectionRow = typeof externalConnections.$inferSelect;
 export type ExternalConnectionStateRow =
   typeof externalConnectionState.$inferSelect;

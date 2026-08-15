@@ -861,7 +861,7 @@ describe("V5.1 rules and recurring services", () => {
     expect(recurring.get(recurringItemId)?.isActive).toBe(true);
     expect(
       new BackupService(database!.context, runtime).exportBackup(),
-    ).toMatchObject({ schemaVersion: 7 });
+    ).toMatchObject({ schemaVersion: 8 });
   });
 
   it("rejects an incompatible category type change referenced by an inactive recurring item", async () => {

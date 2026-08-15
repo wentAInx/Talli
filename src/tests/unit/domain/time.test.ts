@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { DomainValidationError } from "../../../domain/errors";
 import {
+  addLocalDateDays,
+  enumerateLocalDates,
+  lastCompletedLocalDate,
+  localDateEndInclusiveUtc,
   localDateRangeToUtc,
   localDateTimeToUtc,
   monthInTimeZone,
@@ -46,6 +50,44 @@ describe("app timezone boundaries", () => {
     });
   });
 
+  it.each([
+    {
+      date: "2026-03-08",
+      timeZone: "America/Los_Angeles",
+      expected: "2026-03-09T06:59:59.999Z",
+    },
+    {
+      date: "2026-11-01",
+      timeZone: "America/Los_Angeles",
+      expected: "2026-11-02T07:59:59.999Z",
+    },
+    {
+      date: "2026-08-15",
+      timeZone: "Asia/Shanghai",
+      expected: "2026-08-15T15:59:59.999Z",
+    },
+  ])(
+    "derives the inclusive day end across DST for $date in $timeZone",
+    ({ date, timeZone, expected }) => {
+      expect(localDateEndInclusiveUtc(date, timeZone)).toBe(expected);
+    },
+  );
+
+  it("uses calendar arithmetic for ranges and the last completed day", () => {
+    expect(addLocalDateDays("2024-02-28", 1)).toBe("2024-02-29");
+    expect(enumerateLocalDates("2026-08-13", "2026-08-15")).toEqual([
+      "2026-08-13",
+      "2026-08-14",
+      "2026-08-15",
+    ]);
+    expect(
+      lastCompletedLocalDate("2026-08-15T01:00:00.000Z", "America/Los_Angeles"),
+    ).toBe("2026-08-13");
+    expect(() =>
+      enumerateLocalDates("2026-01-01", "2026-01-03", 2),
+    ).toThrowError(DomainValidationError);
+  });
+
   it("round-trips an instant for form display and derives its local month", () => {
     const instant = "2026-08-07T02:15:30.123Z";
     expect(utcInstantToLocalDateTime(instant, "Asia/Shanghai")).toBe(
@@ -71,4 +113,10 @@ describe("app timezone boundaries", () => {
       expect(utcInstantToLocalDate(instant, timeZone)).toBe(expected);
     },
   );
+
+  it("assigns an event at exact next local midnight to the next day", () => {
+    expect(
+      utcInstantToLocalDate("2026-08-14T16:00:00.000Z", "Asia/Shanghai"),
+    ).toBe("2026-08-15");
+  });
 });

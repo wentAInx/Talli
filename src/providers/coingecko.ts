@@ -2,16 +2,39 @@ import {
   normalizeExternalNumberDecimal,
   normalizePositiveDecimalText,
 } from "../domain/price-decimal";
+import type {
+  HistoricalCryptoGranularity,
+  HistoricalPriceObservation,
+} from "../domain/historical-quote-types";
 import { canonicalUtcInstantValue } from "../domain/time";
 import type { ProviderMapping, ProviderQuote } from "../domain/quote-types";
 import { assertProviderHttpStatus, PriceProviderError } from "./errors";
-import type { CoinGeckoPriceProvider, PriceHttpTransport } from "./types";
+import type {
+  CoinGeckoHistoricalProvider,
+  CoinGeckoPriceProvider,
+  PriceHttpTransport,
+} from "./types";
 
 interface CoinGeckoProviderOptions {
-  mode: "demo" | "keyless";
+  mode: "demo" | "keyless" | "pro";
   apiKey?: string | null;
   baseUrl?: string;
   timeoutMs?: number;
+}
+
+const HISTORICAL_BOUNDARY_TOLERANCE_MS = 5 * 60 * 1_000;
+
+function rateTextFromExternal(value: unknown): string {
+  try {
+    if (typeof value === "number") return normalizeExternalNumberDecimal(value);
+    if (typeof value === "string") return normalizePositiveDecimalText(value);
+  } catch {
+    // Normalize every provider parse failure to a safe provider error below.
+  }
+  throw new PriceProviderError(
+    "UPSTREAM_PAYLOAD_INVALID",
+    "CoinGecko returned an invalid historical USD price.",
+  );
 }
 
 function observedAt(
@@ -46,7 +69,9 @@ function observedAt(
   };
 }
 
-export class CoinGeckoProvider implements CoinGeckoPriceProvider {
+export class CoinGeckoProvider
+  implements CoinGeckoPriceProvider, CoinGeckoHistoricalProvider
+{
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
 
@@ -54,8 +79,26 @@ export class CoinGeckoProvider implements CoinGeckoPriceProvider {
     private readonly transport: PriceHttpTransport,
     private readonly options: CoinGeckoProviderOptions,
   ) {
-    this.baseUrl = options.baseUrl ?? "https://api.coingecko.com/api/v3/";
+    this.baseUrl =
+      options.baseUrl ??
+      (options.mode === "pro"
+        ? "https://pro-api.coingecko.com/api/v3/"
+        : "https://api.coingecko.com/api/v3/");
     this.timeoutMs = options.timeoutMs ?? 8_000;
+  }
+
+  private authHeaders(): Record<string, string> | undefined {
+    if (this.options.mode === "keyless") return undefined;
+    const apiKey = this.options.apiKey?.trim();
+    if (!apiKey) {
+      throw new PriceProviderError(
+        "CONFIG_ERROR",
+        `CoinGecko ${this.options.mode} mode requires a server-side API key.`,
+      );
+    }
+    return this.options.mode === "pro"
+      ? { "x-cg-pro-api-key": apiKey }
+      : { "x-cg-demo-api-key": apiKey };
   }
 
   async fetchCryptoUsdQuotes(input: {
@@ -68,12 +111,7 @@ export class CoinGeckoProvider implements CoinGeckoPriceProvider {
       (mapping) => mapping.provider === "coingecko" && mapping.isEnabled,
     );
     if (mappings.length === 0) return [];
-    if (this.options.mode === "demo" && !this.options.apiKey?.trim()) {
-      throw new PriceProviderError(
-        "CONFIG_ERROR",
-        "CoinGecko demo mode requires a server-side API key.",
-      );
-    }
+    const headers = this.authHeaders();
     const ids = [
       ...new Set(mappings.map((mapping) => mapping.providerAssetKey)),
     ]
@@ -84,10 +122,6 @@ export class CoinGeckoProvider implements CoinGeckoPriceProvider {
     url.searchParams.set("vs_currencies", "usd");
     url.searchParams.set("include_last_updated_at", "true");
     url.searchParams.set("precision", "full");
-    const headers =
-      this.options.mode === "demo"
-        ? { "x-cg-demo-api-key": this.options.apiKey!.trim() }
-        : undefined;
     const response = await this.transport.get({
       url,
       headers,
@@ -168,5 +202,114 @@ export class CoinGeckoProvider implements CoinGeckoPriceProvider {
         }),
       };
     });
+  }
+
+  async fetchCryptoUsdHistory(input: {
+    mapping: { assetId: string; providerAssetKey: string };
+    usdAssetId: string;
+    fromUtc: string;
+    toUtc: string;
+    interval: HistoricalCryptoGranularity;
+    fetchedAt: string;
+  }): Promise<HistoricalPriceObservation[]> {
+    const from = canonicalUtcInstantValue(input.fromUtc);
+    const to = canonicalUtcInstantValue(input.toUtc);
+    canonicalUtcInstantValue(input.fetchedAt);
+    if (from >= to) {
+      throw new PriceProviderError(
+        "CONFIG_ERROR",
+        "CoinGecko historical range start must be before its end.",
+      );
+    }
+    const providerAssetKey = input.mapping.providerAssetKey.trim();
+    if (!providerAssetKey || providerAssetKey.length > 128) {
+      throw new PriceProviderError(
+        "CONFIG_ERROR",
+        "CoinGecko provider asset key is invalid.",
+      );
+    }
+    const url = new URL(
+      `coins/${encodeURIComponent(providerAssetKey)}/market_chart/range`,
+      this.baseUrl,
+    );
+    url.searchParams.set("vs_currency", "usd");
+    url.searchParams.set("from", String(Math.floor(from / 1_000)));
+    url.searchParams.set("to", String(Math.ceil(to / 1_000)));
+    url.searchParams.set("interval", input.interval);
+    url.searchParams.set("precision", "full");
+    const response = await this.transport.get({
+      url,
+      headers: this.authHeaders(),
+      timeoutMs: this.timeoutMs,
+    });
+    assertProviderHttpStatus({
+      status: response.status,
+      headers: response.headers,
+      fetchedAt: input.fetchedAt,
+      providerLabel: "CoinGecko",
+    });
+    let payload: unknown;
+    try {
+      payload = JSON.parse(response.text);
+    } catch {
+      throw new PriceProviderError(
+        "UPSTREAM_PAYLOAD_INVALID",
+        "CoinGecko returned malformed JSON.",
+      );
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new PriceProviderError(
+        "UPSTREAM_PAYLOAD_INVALID",
+        "CoinGecko historical response must be an object.",
+      );
+    }
+    const prices = (payload as Record<string, unknown>).prices;
+    if (!Array.isArray(prices)) {
+      throw new PriceProviderError(
+        "UPSTREAM_PAYLOAD_INVALID",
+        "CoinGecko historical response omitted prices.",
+      );
+    }
+    const observations = new Map<number, HistoricalPriceObservation>();
+    for (const point of prices) {
+      if (
+        !Array.isArray(point) ||
+        point.length !== 2 ||
+        typeof point[0] !== "number" ||
+        !Number.isSafeInteger(point[0]) ||
+        point[0] <= 0 ||
+        point[0] < from - HISTORICAL_BOUNDARY_TOLERANCE_MS ||
+        point[0] > to + HISTORICAL_BOUNDARY_TOLERANCE_MS
+      ) {
+        throw new PriceProviderError(
+          "UPSTREAM_PAYLOAD_INVALID",
+          "CoinGecko returned an invalid historical timestamp.",
+        );
+      }
+      const rateText = rateTextFromExternal(point[1]);
+      const previous = observations.get(point[0]);
+      if (previous && previous.rateText !== rateText) {
+        throw new PriceProviderError(
+          "UPSTREAM_PAYLOAD_INVALID",
+          "CoinGecko returned conflicting duplicate historical prices.",
+        );
+      }
+      observations.set(point[0], {
+        baseAssetId: input.mapping.assetId,
+        quoteAssetId: input.usdAssetId,
+        provider: "coingecko",
+        granularity: input.interval,
+        rateText,
+        providerObservedAt: new Date(point[0]).toISOString(),
+        fetchedAt: input.fetchedAt,
+        sourceMetadataJson: JSON.stringify({
+          providerAssetKey,
+          interval: input.interval,
+        }),
+      });
+    }
+    return [...observations.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([, observation]) => observation);
   }
 }
