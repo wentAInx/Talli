@@ -1,0 +1,120 @@
+{
+  "schema": "talli-v6-historical-fixtures-v1",
+  "timeZones": {
+    "asiaShanghai": {
+      "zone": "Asia/Shanghai",
+      "localDate": "2026-08-15",
+      "expectedEndInclusiveUtc": "2026-08-15T15:59:59.999Z"
+    },
+    "losAngeles": {
+      "zone": "America/Los_Angeles",
+      "localDate": "2026-08-15",
+      "expectedEndInclusiveUtc": "2026-08-16T06:59:59.999Z"
+    }
+  },
+  "assets": [
+    {
+      "id": "usd",
+      "code": "USD",
+      "type": "fiat",
+      "scale": 2,
+      "archived": false
+    },
+    {
+      "id": "eur",
+      "code": "EUR",
+      "type": "fiat",
+      "scale": 2,
+      "archived": false
+    },
+    {
+      "id": "cny",
+      "code": "CNY",
+      "type": "fiat",
+      "scale": 2,
+      "archived": false
+    },
+    {
+      "id": "btc",
+      "code": "BTC",
+      "type": "crypto",
+      "scale": 8,
+      "archived": true
+    },
+    {
+      "id": "custom_gold",
+      "code": "XAU-CUSTOM",
+      "type": "custom",
+      "scale": 6,
+      "archived": false
+    }
+  ],
+  "cryptoObservations": [
+    {
+      "base": "btc",
+      "quote": "usd",
+      "granularity": "hourly",
+      "observedAt": "2026-08-15T14:00:00.000Z",
+      "rateText": "118000.123456789"
+    },
+    {
+      "base": "btc",
+      "quote": "usd",
+      "granularity": "hourly",
+      "observedAt": "2026-08-15T15:00:00.000Z",
+      "rateText": "118100.987654321"
+    },
+    {
+      "base": "btc",
+      "quote": "usd",
+      "granularity": "hourly",
+      "observedAt": "2026-08-15T16:00:00.000Z",
+      "rateText": "118200.000000001"
+    }
+  ],
+  "fxObservations": [
+    {
+      "base": "eur",
+      "quote": "usd",
+      "date": "2026-08-14",
+      "rateText": "1.1701"
+    },
+    {
+      "base": "eur",
+      "quote": "cny",
+      "date": "2026-08-14",
+      "rateText": "8.4201"
+    }
+  ],
+  "manualHistoricalQuotes": [
+    {
+      "base": "custom_gold",
+      "quote": "cny",
+      "date": "2026-08-15",
+      "rateText": "815.125",
+      "note": "fixture"
+    }
+  ],
+  "cases": [
+    {
+      "name": "latest-prior-never-future",
+      "queryTime": "2026-08-15T15:59:59.999Z",
+      "base": "btc",
+      "home": "cny",
+      "expectedCryptoObservedAt": "2026-08-15T15:00:00.000Z"
+    },
+    {
+      "name": "archived-btc-still-valued",
+      "quantityAtomic": "100000000",
+      "asset": "btc",
+      "expected": "resolution-required-despite-archived"
+    },
+    {
+      "name": "manual-custom",
+      "date": "2026-08-15",
+      "base": "custom_gold",
+      "home": "cny",
+      "expectedRateText": "815.125"
+    }
+  ]
+}

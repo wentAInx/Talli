@@ -1,0 +1,17 @@
+Talli V6.0 package validation
+generated_at=2026-08-15
+repository=wentAInx/Talli
+base_sha=dd39ff06aa52c681f42a0165b2e7a0552c022d09
+file_count_before_validation=29
+
+Checks:
+PASS: UTF-8 readable
+PASS: MANIFEST.tsv generated with SHA-256
+PASS: split canonical specs present
+PASS: SQL draft present
+PASS: TypeScript target contracts present
+PASS: deterministic JSON fixtures present
+PASS: Codex handoff prompt present
+PASS: consolidated engineering package present
+
+Important: This validates package integrity only. It does not claim repository implementation or CI success.

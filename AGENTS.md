@@ -1,18 +1,18 @@
-# AGENTS.md — Talli V4.0
+# AGENTS.md — Talli V6.0
 
 ## Project identity
 
-This repository implements the frozen **Multi-Asset Personal Ledger V1** core, the additive **Talli V2.0 Price & Valuation Engine**, the frozen **Talli V3 Kraken external-sync layer**, and **Talli V4.0 Ethereum Mainnet read-only wallet sync**.
+This repository implements the frozen **Multi-Asset Personal Ledger V1** core, additive **Talli V2.0 current Price & Valuation**, frozen **Talli V3/V4/V4.1 read-only external sync**, additive **Talli V5/V5.1 import and automation**, and the approved **Talli V6.0 derived historical valuation and analytics layer**.
 
 The product is a single-user, self-hosted Next.js + TypeScript application backed by SQLite. Its primary invariant is:
 
 > Ledger quantities are source of truth. Valuation and external/on-chain observations are separate facts and may never mutate or replace Ledger data automatically.
 
-Do not reinterpret the project as a historical portfolio tracker, investment-accounting system, banking-sync product, or multi-user SaaS.
+V6 historical views are a derived, cache-backed reading of immutable Ledger quantities plus separate quote facts. Do not reinterpret that scope as tax or investment accounting, cost-basis tracking, automated banking writes, or multi-user SaaS.
 
 ## Canonical specification and precedence
 
-Before substantial implementation work, read the relevant versioned package. For V4 wallet work, `docs/v4-evm-wallet/01_CODEX_MASTER_INSTRUCTION_CN.md` and its numbered 00→15 package are canonical. V3 Kraken remains governed by `docs/v3-external-sync/`; V2 valuation remains governed by `docs/v2-price-valuation/`.
+Before substantial implementation work, read the relevant versioned package. For V6 historical analytics, `docs/v6-historical-analytics/01_CODEX_MASTER_INSTRUCTION_CN.md` and its numbered package are canonical. Earlier released scopes remain governed by their own versioned packages, including `docs/v5.1-rules-recurring/`, `docs/v5-financial-file-import/`, `docs/v4.1-evm-l2/`, `docs/v4-evm-wallet/`, `docs/v3-external-sync/`, and `docs/v2-price-valuation/`.
 
 When rules conflict, use this precedence:
 
@@ -26,13 +26,15 @@ For V2 conflicts, `docs/v2-price-valuation/01_CODEX_MASTER_INSTRUCTION_CN.md` an
 
 For V4 conflicts, `docs/v4-evm-wallet/01_CODEX_MASTER_INSTRUCTION_CN.md`, domain/identity, provider, activity/gas, security, backup, and acceptance files override older text that limits external sync to Kraken. They do not override the frozen V1/V2/V3 invariants.
 
+For V6 conflicts, `docs/v6-historical-analytics/01_CODEX_MASTER_INSTRUCTION_CN.md`, architecture, time, quote, refresh, analytics, backup, security, and acceptance files override older text that prohibits historical valuation. They do not override Ledger quantity, snapshot, atomic-money, security, or released current-valuation invariants.
+
 Do not modify canonical specification files unless the user explicitly asks to change the specification.
 
 ## V1 non-negotiable invariants
 
-- No historical pricing, P&L, cost basis, account sync, background collector, or stablecoin peg assumption.
+- The V1 Ledger never stores provider, historical-valuation, or analytics facts. V6 may store separate derived historical quote/cache and refresh-operation facts, but still has no tax lots, FIFO/LIFO, realized P&L, cost basis, background collector, or stablecoin peg assumption.
 - V2 current valuation permits one explicit fiat Home Asset. CoinGecko provides crypto/USD market quotes, ECB provides EUR reference legs, and active manual exact-pair quotes have precedence.
-- Provider calls are server-only, on-demand, outside SQLite write transactions, and never block SSR. Resolver and portfolio valuation remain cache-only.
+- Provider calls are server-only, explicit and on-demand, outside SQLite write transactions, and never block SSR or analytics reads. Current and historical resolvers remain cache-only; historical refresh is a bounded, foreground, resumable workflow with no cron/background continuation.
 - Price/rate facts use positive plain-decimal `TEXT` and `decimal.js`; they never reuse ledger `bigint` semantics or JS floating-point arithmetic.
 - Persist monetary quantities as signed base-10 integer **TEXT** atomic units. Domain arithmetic uses `bigint`.
 - Never use JavaScript `number`, `Number()`, `parseFloat()`, SQLite `REAL`, or floating-point arithmetic for persisted money, balances, fees, or executed exchange quantities.
@@ -56,7 +58,7 @@ When touching ledger semantics, invoke or follow `$ledger-domain-guard`.
 
 For implementation details not fixed by the canonical specs, also follow `CODEX_ARCHITECTURE_DEFAULTS_CN.md`.
 
-Use a pragmatic modular monolith. Do not introduce microservices, Redis, queues, cron collectors, GraphQL, event buses, CQRS frameworks, generic repository frameworks, or distributed infrastructure in V4.0.
+Use a pragmatic modular monolith. Do not introduce microservices, Redis, queues, cron collectors, GraphQL, event buses, CQRS frameworks, generic repository frameworks, or distributed infrastructure in V6.0.
 
 Preferred dependency direction:
 
@@ -123,7 +125,7 @@ Product-specific requirements include:
 
 ## Implementation workflow
 
-For V1 core follow `08_IMPLEMENTATION_PLAN_CN.md`; for V2 follow `docs/v2-price-valuation/11_IMPLEMENTATION_PLAN_CN.md`; for V3 follow `docs/v3-external-sync/13_IMPLEMENTATION_PLAN_CN.md`; for V4 follow `docs/v4-evm-wallet/12_IMPLEMENTATION_PLAN_CN.md`. Migration correctness, exact money/identity, provider/domain boundaries, and backup compatibility come before UI.
+For V1 core follow `08_IMPLEMENTATION_PLAN_CN.md`; for V2 follow `docs/v2-price-valuation/11_IMPLEMENTATION_PLAN_CN.md`; for V3 follow `docs/v3-external-sync/13_IMPLEMENTATION_PLAN_CN.md`; for V4 follow `docs/v4-evm-wallet/12_IMPLEMENTATION_PLAN_CN.md`; for V6 follow `docs/v6-historical-analytics/18_IMPLEMENTATION_PLAN_CN.md`. Migration correctness, exact money/identity, provider/domain boundaries, and backup compatibility come before UI.
 
 For non-trivial work:
 

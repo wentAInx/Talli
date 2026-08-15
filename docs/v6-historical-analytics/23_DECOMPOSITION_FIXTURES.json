@@ -1,0 +1,123 @@
+{
+  "schema": "talli-v6-decomposition-fixtures-v1",
+  "currency": "USD",
+  "cases": [
+    {
+      "name": "price-only",
+      "start": {
+        "usd": "100000",
+        "btc": "100000000",
+        "btcPrice": "100"
+      },
+      "end": {
+        "usd": "100000",
+        "btc": "100000000",
+        "btcPrice": "110"
+      },
+      "expected": {
+        "delta": "10",
+        "marketAndFx": "10",
+        "cashFlow": "0",
+        "tradeRebalance": "0",
+        "reconciliation": "0"
+      }
+    },
+    {
+      "name": "income-plus-market",
+      "start": {
+        "usd": "100000",
+        "btc": "100000000",
+        "btcPrice": "100"
+      },
+      "entries": [
+        {
+          "type": "income",
+          "asset": "usd",
+          "atomic": "10000"
+        }
+      ],
+      "end": {
+        "usd": "110000",
+        "btc": "100000000",
+        "btcPrice": "110"
+      },
+      "expected": {
+        "delta": "110",
+        "marketAndFx": "10",
+        "income": "100",
+        "reconciliation": "0"
+      }
+    },
+    {
+      "name": "transfer-zero",
+      "start": {
+        "accountAUsd": "100000",
+        "accountBUsd": "0"
+      },
+      "entries": [
+        {
+          "type": "transfer",
+          "role": "source",
+          "account": "A",
+          "asset": "usd",
+          "atomic": "-25000"
+        },
+        {
+          "type": "transfer",
+          "role": "destination",
+          "account": "B",
+          "asset": "usd",
+          "atomic": "25000"
+        }
+      ],
+      "expected": {
+        "internalTransfer": "0"
+      }
+    },
+    {
+      "name": "exchange-rebalance",
+      "start": {
+        "usd": "10000",
+        "btc": "0",
+        "btcPrice": "100"
+      },
+      "entries": [
+        {
+          "type": "exchange",
+          "role": "source",
+          "asset": "usd",
+          "atomic": "-10000"
+        },
+        {
+          "type": "exchange",
+          "role": "destination",
+          "asset": "btc",
+          "atomic": "100000000"
+        }
+      ],
+      "end": {
+        "usd": "0",
+        "btc": "100000000",
+        "btcPrice": "110"
+      },
+      "expected": {
+        "delta": "10",
+        "tradeRebalance": "10"
+      }
+    },
+    {
+      "name": "snapshot-reconciliation",
+      "start": {
+        "usd": "100000"
+      },
+      "entries": [],
+      "snapshotEnd": {
+        "usd": "90000"
+      },
+      "expected": {
+        "delta": "-100",
+        "reconciliation": "-100"
+      }
+    }
+  ]
+}
