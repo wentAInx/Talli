@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveHistoricalQuote } from "../../../domain/historical-quote-math";
+import {
+  createHistoricalQuoteResolver,
+  resolveHistoricalQuote,
+} from "../../../domain/historical-quote-math";
 import type { HistoricalQuoteResolverSnapshot } from "../../../domain/historical-quote-types";
 import {
   divideDecimalTexts,
@@ -292,5 +295,44 @@ describe("historical quote resolution", () => {
         queryTime: "2026-08-14T15:59:59.999Z",
       }),
     ).toMatchObject({ ok: false, status: "unsupported" });
+  });
+
+  it("pre-indexes unsorted observations and binary-searches latest-prior quotes", () => {
+    const snapshot = fixture();
+    const start = Date.parse("2026-08-15T14:00:00.000Z");
+    snapshot.priceObservations = Array.from({ length: 4_096 }, (_, index) => ({
+      id: `btc-${String(index).padStart(4, "0")}`,
+      baseAssetId: "btc",
+      quoteAssetId: "usd",
+      provider: "coingecko" as const,
+      granularity: "hourly" as const,
+      rateText: String(index + 1),
+      providerObservedAt: new Date(start + index * 1_000).toISOString(),
+      fetchedAt: FETCHED_AT,
+      sourceMetadataJson: null,
+    })).reverse();
+    const prepared = createHistoricalQuoteResolver(snapshot);
+    snapshot.priceObservations = [];
+
+    const input = {
+      baseAssetId: "btc",
+      homeAssetId: "usd",
+      localDate: "2026-08-15",
+      queryTime: new Date(start + 3_000_500).toISOString(),
+    };
+    expect(prepared.resolve(input)).toMatchObject({
+      ok: true,
+      rateText: "3001",
+      legs: [
+        {
+          kind: "hourly_prior",
+          providerObservedAt: new Date(start + 3_000_000).toISOString(),
+        },
+      ],
+    });
+    expect(prepared.resolve(input)).toMatchObject({
+      ok: true,
+      rateText: "3001",
+    });
   });
 });

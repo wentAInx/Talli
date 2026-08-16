@@ -125,6 +125,24 @@ function allocationSlices(
     }));
 }
 
+function liabilitySlices(
+  values: ReadonlyMap<string, { label: string; value: PriceDecimalValue }>,
+): AllocationSlice[] {
+  return [...values.entries()]
+    .filter(([, value]) => value.value.isNegative())
+    .sort(
+      (left, right) =>
+        left[1].value.comparedTo(right[1].value) ||
+        left[0].localeCompare(right[0]),
+    )
+    .map(([key, item]) => ({
+      key,
+      label: item.label,
+      valueText: decimalText(item.value),
+      shareText: null,
+    }));
+}
+
 export function calculateHistoricalAllocation(input: {
   localDate: string;
   cutoffUtc: string;
@@ -143,6 +161,10 @@ export function calculateHistoricalAllocation(input: {
     { label: string; value: PriceDecimalValue }
   >();
   const byFiatCurrency = new Map<
+    string,
+    { label: string; value: PriceDecimalValue }
+  >();
+  const liabilitiesByAsset = new Map<
     string,
     { label: string; value: PriceDecimalValue }
   >();
@@ -165,6 +187,12 @@ export function calculateHistoricalAllocation(input: {
     );
     if (value.isNegative()) {
       grossLiabilities = grossLiabilities.add(value);
+      const liability = liabilitiesByAsset.get(quantity.asset.id) ?? {
+        label: quantity.asset.code,
+        value: zero(),
+      };
+      liability.value = liability.value.add(value);
+      liabilitiesByAsset.set(quantity.asset.id, liability);
       continue;
     }
     if (!value.isPositive()) continue;
@@ -200,6 +228,7 @@ export function calculateHistoricalAllocation(input: {
     byAsset: allocationSlices(byAsset, grossAssets, complete),
     byAssetClass: allocationSlices(byAssetClass, grossAssets, complete),
     byFiatCurrency: allocationSlices(byFiatCurrency, grossAssets, complete),
+    liabilitiesByAsset: liabilitySlices(liabilitiesByAsset),
     missingAssetIds: missing,
   };
 }
@@ -326,18 +355,31 @@ export function calculateNetWorthBridge(input: {
 
   const rates = new Map<
     string,
-    { start: PriceDecimalValue; end: PriceDecimalValue }
+    { start: PriceDecimalValue | null; end: PriceDecimalValue }
   >();
   const missingAssetIds: string[] = [];
   for (const assetId of required) {
-    const start = input.resolve(assetId, input.startCutoffUtc, input.startDate);
+    const q0Atomic = input.startQuantities.get(assetId) ?? 0n;
+    let startRate: PriceDecimalValue | null = null;
+    if (q0Atomic !== 0n) {
+      const start = input.resolve(
+        assetId,
+        input.startCutoffUtc,
+        input.startDate,
+      );
+      if (!start.ok) {
+        missingAssetIds.push(assetId);
+        continue;
+      }
+      startRate = priceDecimalFromText(start.rateText);
+    }
     const end = input.resolve(assetId, input.endCutoffUtc, input.localDate);
-    if (!start.ok || !end.ok) {
+    if (!end.ok) {
       missingAssetIds.push(assetId);
       continue;
     }
     rates.set(assetId, {
-      start: priceDecimalFromText(start.rateText),
+      start: startRate,
       end: priceDecimalFromText(end.rateText),
     });
   }
@@ -384,9 +426,12 @@ export function calculateNetWorthBridge(input: {
       input.endQuantities.get(assetId) ?? 0n,
       asset.scale,
     );
-    startValue = startValue.add(q0.mul(rate.start));
+    if (!q0.isZero()) {
+      const startRate = rate.start!;
+      startValue = startValue.add(q0.mul(startRate));
+      marketAndFx = marketAndFx.add(q0.mul(rate.end.sub(startRate)));
+    }
     endValue = endValue.add(q1.mul(rate.end));
-    marketAndFx = marketAndFx.add(q0.mul(rate.end.sub(rate.start)));
 
     let classifiedDelta = 0n;
     for (const entry of input.entries) {

@@ -110,6 +110,20 @@ describe("HistoricalAnalyticsService", () => {
     expect(
       analytics.allocation({
         bookId: SEED_BOOK_ID,
+        localDate: "2026-08-13",
+      }).liabilitiesByAsset,
+    ).toEqual([
+      {
+        key: seedAssetId("USD"),
+        label: "USD",
+        valueText: "-70",
+        shareText: null,
+      },
+    ]);
+
+    expect(
+      analytics.allocation({
+        bookId: SEED_BOOK_ID,
         localDate: "2026-08-14",
       }),
     ).toMatchObject({
@@ -230,6 +244,68 @@ describe("HistoricalAnalyticsService", () => {
       completeValueText: "0",
       isComplete: true,
       missingAssetIds: [],
+    });
+  });
+
+  it("keeps decomposition complete when Q0 is zero and only P1 exists", async () => {
+    const runtime = deterministicRuntime("2026-08-12T00:00:00.000Z");
+    const references = new ReferenceDataService(database.context, runtime);
+    const customId = await references.createAsset({
+      code: "NEW",
+      name: "New custom holding",
+      assetType: "custom",
+      scale: 0,
+    });
+    const accountId = await new AccountService(
+      database.context,
+      runtime,
+    ).createAccount({
+      bookId: SEED_BOOK_ID,
+      assetId: customId,
+      name: "New holding",
+      accountType: "other",
+      initialBalance: "0",
+    });
+    await new LedgerCommandService(database.context, runtime).createIncome({
+      accountId,
+      amount: "1",
+      occurredAt: "2026-08-14T02:00:00.000Z",
+      note: "Acquired from zero",
+    });
+    await new HistoricalManualQuoteService(
+      database.context,
+      deterministicRuntime("2026-08-15T00:00:00.000Z"),
+    ).save({
+      baseAssetId: customId,
+      quoteAssetId: seedAssetId("CNY"),
+      valuationDate: "2026-08-14",
+      rateText: "5000",
+    });
+
+    expect(
+      new HistoricalAnalyticsService(database.context).decomposition({
+        bookId: SEED_BOOK_ID,
+        fromDate: "2026-08-14",
+        toDate: "2026-08-14",
+      }),
+    ).toEqual({
+      points: [
+        {
+          localDate: "2026-08-14",
+          startValueText: "0",
+          endValueText: "5000",
+          deltaText: "5000",
+          marketAndFxText: "0",
+          incomeText: "5000",
+          expenseText: "0",
+          feesText: "0",
+          internalTransferText: "0",
+          tradeRebalanceText: "0",
+          reconciliationText: "0",
+          isComplete: true,
+          missingAssetIds: [],
+        },
+      ],
     });
   });
 });

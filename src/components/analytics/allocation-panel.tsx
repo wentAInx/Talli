@@ -112,6 +112,33 @@ export function AllocationPanel({
           </div>
         )}
       </div>
+      <section
+        aria-labelledby="liability-breakdown-heading"
+        className="liability-breakdown"
+      >
+        <div className="liability-breakdown-heading">
+          <div>
+            <h3 id="liability-breakdown-heading">负债明细</h3>
+            <p>按资产列出负值；不计入 gross assets 配置占比。</p>
+          </div>
+          <span>{result.liabilitiesByAsset.length} 项</span>
+        </div>
+        {result.liabilitiesByAsset.length === 0 ? (
+          <p className="analytics-muted">该日期没有已知负债。</p>
+        ) : (
+          <div className="allocation-list liability-list">
+            {result.liabilitiesByAsset.map((liability) => (
+              <div className="allocation-row liability-row" key={liability.key}>
+                <div>
+                  <strong>{liability.label}</strong>
+                  <span>{`${liability.valueText} ${homeCode}`}</span>
+                </div>
+                <small>负值 · 不进入正资产 denominator</small>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </>
   );
 }

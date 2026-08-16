@@ -122,6 +122,7 @@ export interface HistoricalAllocationResult {
   byAsset: AllocationSlice[];
   byAssetClass: AllocationSlice[];
   byFiatCurrency: AllocationSlice[];
+  liabilitiesByAsset: AllocationSlice[];
   missingAssetIds: string[];
 }
 

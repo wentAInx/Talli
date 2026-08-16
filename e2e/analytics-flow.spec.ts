@@ -80,6 +80,12 @@ test("historical analytics refresh, gaps, archived exposure, manual facts, flows
   await expect(page.locator(".analytics-kpi.is-liability")).toContainText(
     "-70.00 CNY",
   );
+  const liabilityBreakdown = page
+    .locator(".liability-breakdown")
+    .filter({ has: page.getByRole("heading", { name: "负债明细" }) });
+  await expect(liabilityBreakdown).toContainText("USD");
+  await expect(liabilityBreakdown).toContainText("-70 CNY");
+  await expect(liabilityBreakdown).toContainText("不进入正资产 denominator");
   await createArtworkQuote(page, "2026-08-13", "5000");
 
   const bridge = page

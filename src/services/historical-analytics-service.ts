@@ -23,7 +23,7 @@ import {
   type HistoricalEntryFact,
   type HistoricalQuantity,
 } from "../domain/historical-analytics";
-import { resolveHistoricalQuote } from "../domain/historical-quote-math";
+import { createHistoricalQuoteResolver } from "../domain/historical-quote-math";
 import type {
   HistoricalAllocationResult,
   HistoricalNetWorthSeriesResult,
@@ -164,8 +164,9 @@ function resolver(
   snapshot: HistoricalQuoteResolverSnapshot,
   homeAssetId: string,
 ) {
+  const prepared = createHistoricalQuoteResolver(snapshot);
   return (assetId: string, queryTime: string, localDate: string) =>
-    resolveHistoricalQuote(snapshot, {
+    prepared.resolve({
       baseAssetId: assetId,
       homeAssetId,
       queryTime,

@@ -6,6 +6,7 @@ import {
 } from "./price-decimal";
 import type {
   HistoricalFxObservation,
+  HistoricalManualQuote,
   HistoricalQuoteLeg,
   HistoricalQuoteResolution,
   HistoricalQuoteResolverSnapshot,
@@ -24,15 +25,209 @@ import {
 } from "./time";
 
 const HOUR_MS = 60 * 60 * 1_000;
+const INDEX_KEY_SEPARATOR = "\u0000";
+
+type BridgeAssetKey = "EUR" | "USD";
+
+interface IndexedPriceObservation {
+  observedAt: number;
+  observation: HistoricalPriceObservation;
+}
+
+interface IndexedFxObservation {
+  observationDate: string;
+  observation: HistoricalFxObservation;
+}
+
+interface HistoricalResolverIndex {
+  assets: ReadonlyMap<string, ValuationAsset>;
+  enabledMappings: ReadonlyMap<string, ProviderMapping>;
+  bridgeAssets: ReadonlyMap<BridgeAssetKey, ValuationAsset>;
+  manualQuotes: ReadonlyMap<string, HistoricalManualQuote>;
+  priceSeries: ReadonlyMap<string, readonly IndexedPriceObservation[]>;
+  fxSeries: ReadonlyMap<string, readonly IndexedFxObservation[]>;
+  providerErrors: ReadonlySet<HistoricalProviderId>;
+}
 
 interface ResolverContext {
   queryInstant: number;
   localDate: string;
-  assets: Map<string, ValuationAsset>;
-  mappings: readonly ProviderMapping[];
-  priceObservations: readonly HistoricalPriceObservation[];
-  fxObservations: readonly HistoricalFxObservation[];
-  providerErrors: ReadonlySet<HistoricalProviderId>;
+  index: HistoricalResolverIndex;
+}
+
+export interface HistoricalQuoteResolverInput {
+  baseAssetId: string;
+  homeAssetId: string;
+  queryTime: string;
+  localDate: string;
+}
+
+export interface HistoricalQuoteResolver {
+  resolve(input: HistoricalQuoteResolverInput): HistoricalQuoteResolution;
+}
+
+function joinedKey(...parts: readonly string[]): string {
+  return parts.join(INDEX_KEY_SEPARATOR);
+}
+
+function mappingKey(assetId: string, provider: PriceProviderId): string {
+  return joinedKey(provider, assetId);
+}
+
+function manualQuoteKey(
+  baseAssetId: string,
+  quoteAssetId: string,
+  localDate: string,
+): string {
+  return joinedKey(baseAssetId, quoteAssetId, localDate);
+}
+
+function priceSeriesKey(
+  baseAssetId: string,
+  quoteAssetId: string,
+  granularity: HistoricalPriceObservation["granularity"],
+): string {
+  return joinedKey(baseAssetId, quoteAssetId, granularity);
+}
+
+function fxSeriesKey(baseAssetId: string, quoteAssetId: string): string {
+  return joinedKey(baseAssetId, quoteAssetId);
+}
+
+function appendIndexed<T>(map: Map<string, T[]>, key: string, value: T): void {
+  const values = map.get(key) ?? [];
+  values.push(value);
+  map.set(key, values);
+}
+
+function latestPrior<T>(
+  values: readonly T[],
+  compareToQuery: (value: T) => number,
+): T | null {
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (compareToQuery(values[middle]!) <= 0) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  return low === 0 ? null : values[low - 1]!;
+}
+
+function bridgeAssetFromSnapshot(
+  snapshot: HistoricalQuoteResolverSnapshot,
+  assets: ReadonlyMap<string, ValuationAsset>,
+  providerAssetKey: BridgeAssetKey,
+): ValuationAsset | undefined {
+  const mapped = [...snapshot.mappings]
+    .filter(
+      (mapping) =>
+        mapping.provider === "ecb" &&
+        mapping.providerAssetKey.trim().toUpperCase() === providerAssetKey,
+    )
+    .sort(
+      (left, right) =>
+        left.priority - right.priority ||
+        left.assetId.localeCompare(right.assetId),
+    )
+    .map((mapping) => assets.get(mapping.assetId))
+    .find((asset) => asset?.assetType === "fiat");
+  return (
+    mapped ??
+    [...assets.values()].find(
+      (asset) =>
+        asset.assetType === "fiat" &&
+        asset.code.toUpperCase() === providerAssetKey,
+    )
+  );
+}
+
+function createResolverIndex(
+  snapshot: HistoricalQuoteResolverSnapshot,
+): HistoricalResolverIndex {
+  const assets = new Map(snapshot.assets.map((asset) => [asset.id, asset]));
+  const enabledMappings = new Map<string, ProviderMapping>();
+  for (const mapping of snapshot.mappings) {
+    const key = mappingKey(mapping.assetId, mapping.provider);
+    if (mapping.isEnabled && !enabledMappings.has(key)) {
+      enabledMappings.set(key, mapping);
+    }
+  }
+
+  const bridgeAssets = new Map<BridgeAssetKey, ValuationAsset>();
+  for (const key of ["EUR", "USD"] as const) {
+    const asset = bridgeAssetFromSnapshot(snapshot, assets, key);
+    if (asset) bridgeAssets.set(key, asset);
+  }
+
+  const manualQuotes = new Map<string, HistoricalManualQuote>();
+  for (const quote of snapshot.manualQuotes) {
+    const key = manualQuoteKey(
+      quote.baseAssetId,
+      quote.quoteAssetId,
+      canonicalLocalDate(quote.valuationDate),
+    );
+    if (!manualQuotes.has(key)) manualQuotes.set(key, quote);
+  }
+
+  const priceSeries = new Map<string, IndexedPriceObservation[]>();
+  for (const observation of snapshot.priceObservations) {
+    appendIndexed(
+      priceSeries,
+      priceSeriesKey(
+        observation.baseAssetId,
+        observation.quoteAssetId,
+        observation.granularity,
+      ),
+      {
+        observedAt: canonicalUtcInstantValue(observation.providerObservedAt),
+        observation,
+      },
+    );
+  }
+  for (const values of priceSeries.values()) {
+    values.sort(
+      (left, right) =>
+        left.observedAt - right.observedAt ||
+        left.observation.fetchedAt.localeCompare(right.observation.fetchedAt) ||
+        (left.observation.id ?? "").localeCompare(right.observation.id ?? ""),
+    );
+  }
+
+  const fxSeries = new Map<string, IndexedFxObservation[]>();
+  for (const observation of snapshot.fxObservations) {
+    appendIndexed(
+      fxSeries,
+      fxSeriesKey(observation.baseAssetId, observation.quoteAssetId),
+      {
+        observationDate: canonicalLocalDate(
+          observation.providerObservationDate,
+        ),
+        observation,
+      },
+    );
+  }
+  for (const values of fxSeries.values()) {
+    values.sort(
+      (left, right) =>
+        left.observationDate.localeCompare(right.observationDate) ||
+        left.observation.fetchedAt.localeCompare(right.observation.fetchedAt) ||
+        (left.observation.id ?? "").localeCompare(right.observation.id ?? ""),
+    );
+  }
+
+  return {
+    assets,
+    enabledMappings,
+    bridgeAssets,
+    manualQuotes,
+    priceSeries,
+    fxSeries,
+    providerErrors: new Set(snapshot.providerErrors ?? []),
+  };
 }
 
 function failure(
@@ -56,47 +251,22 @@ function mappingFor(
   provider: PriceProviderId,
 ): ProviderMapping | null {
   return (
-    context.mappings.find(
-      (mapping) =>
-        mapping.assetId === assetId &&
-        mapping.provider === provider &&
-        mapping.isEnabled,
-    ) ?? null
+    context.index.enabledMappings.get(mappingKey(assetId, provider)) ?? null
   );
 }
 
 function bridgeAsset(
   context: ResolverContext,
-  providerAssetKey: "EUR" | "USD",
+  providerAssetKey: BridgeAssetKey,
 ): ValuationAsset | undefined {
-  const mapped = context.mappings
-    .filter(
-      (mapping) =>
-        mapping.provider === "ecb" &&
-        mapping.providerAssetKey.trim().toUpperCase() === providerAssetKey,
-    )
-    .sort(
-      (left, right) =>
-        left.priority - right.priority ||
-        left.assetId.localeCompare(right.assetId),
-    )
-    .map((mapping) => context.assets.get(mapping.assetId))
-    .find((asset) => asset?.assetType === "fiat");
-  return (
-    mapped ??
-    [...context.assets.values()].find(
-      (asset) =>
-        asset.assetType === "fiat" &&
-        asset.code.toUpperCase() === providerAssetKey,
-    )
-  );
+  return context.index.bridgeAssets.get(providerAssetKey);
 }
 
 function providerFailureStatus(
   context: ResolverContext,
   provider: HistoricalProviderId,
 ): "provider_error" | "missing_quote" {
-  return context.providerErrors.has(provider)
+  return context.index.providerErrors.has(provider)
     ? "provider_error"
     : "missing_quote";
 }
@@ -106,37 +276,26 @@ function cryptoLeg(
   base: ValuationAsset,
   usd: ValuationAsset,
 ): HistoricalQuoteLeg | HistoricalQuoteResolution {
-  const candidates = context.priceObservations
-    .filter(
-      (quote) =>
-        quote.baseAssetId === base.id &&
-        quote.quoteAssetId === usd.id &&
-        quote.provider === "coingecko" &&
-        canonicalUtcInstantValue(quote.providerObservedAt) <=
-          context.queryInstant,
-    )
-    .sort(
-      (left, right) =>
-        right.providerObservedAt.localeCompare(left.providerObservedAt) ||
-        right.fetchedAt.localeCompare(left.fetchedAt) ||
-        (right.id ?? "").localeCompare(left.id ?? ""),
-    );
-  const hourly = candidates.find((candidate) => {
-    if (candidate.granularity !== "hourly") return false;
-    const age =
-      context.queryInstant -
-      canonicalUtcInstantValue(candidate.providerObservedAt);
-    return age >= 0 && age <= 2 * HOUR_MS;
-  });
-  const daily = candidates.find((candidate) => {
-    if (candidate.granularity !== "daily") return false;
-    const age =
-      context.queryInstant -
-      canonicalUtcInstantValue(candidate.providerObservedAt);
-    return age >= 0 && age <= 26 * HOUR_MS;
-  });
-  const selected = hourly ?? daily;
-  if (!selected) {
+  const hourly = latestPrior(
+    context.index.priceSeries.get(priceSeriesKey(base.id, usd.id, "hourly")) ??
+      [],
+    (candidate) => candidate.observedAt - context.queryInstant,
+  );
+  const daily = latestPrior(
+    context.index.priceSeries.get(priceSeriesKey(base.id, usd.id, "daily")) ??
+      [],
+    (candidate) => candidate.observedAt - context.queryInstant,
+  );
+  const usableHourly =
+    hourly && context.queryInstant - hourly.observedAt <= 2 * HOUR_MS
+      ? hourly
+      : null;
+  const usableDaily =
+    daily && context.queryInstant - daily.observedAt <= 26 * HOUR_MS
+      ? daily
+      : null;
+  const selected = usableHourly ?? usableDaily;
+  if (selected === null) {
     return failure(
       base.id,
       usd.id,
@@ -144,15 +303,17 @@ function cryptoLeg(
       `No usable historical CoinGecko quote is available for ${base.code}.`,
     );
   }
+  const observation = selected.observation;
   return {
-    baseAssetId: selected.baseAssetId,
-    quoteAssetId: selected.quoteAssetId,
-    rateText: normalizePositiveDecimalText(selected.rateText),
+    baseAssetId: observation.baseAssetId,
+    quoteAssetId: observation.quoteAssetId,
+    rateText: normalizePositiveDecimalText(observation.rateText),
     source: "coingecko",
-    kind: selected.granularity === "hourly" ? "hourly_prior" : "daily_fallback",
-    providerObservedAt: selected.providerObservedAt,
-    fetchedAt: selected.fetchedAt,
-    granularity: selected.granularity,
+    kind:
+      observation.granularity === "hourly" ? "hourly_prior" : "daily_fallback",
+    providerObservedAt: observation.providerObservedAt,
+    fetchedAt: observation.fetchedAt,
+    granularity: observation.granularity,
   };
 }
 
@@ -178,23 +339,11 @@ function fxLeg(
       `${target.code} has no enabled ECB mapping.`,
     );
   }
-  const selected = context.fxObservations
-    .filter(
-      (quote) =>
-        quote.baseAssetId === eur.id &&
-        quote.quoteAssetId === target.id &&
-        quote.provider === "ecb" &&
-        quote.providerObservationDate <= context.localDate,
-    )
-    .sort(
-      (left, right) =>
-        right.providerObservationDate.localeCompare(
-          left.providerObservationDate,
-        ) ||
-        right.fetchedAt.localeCompare(left.fetchedAt) ||
-        (right.id ?? "").localeCompare(left.id ?? ""),
-    )[0];
-  if (!selected) {
+  const selected = latestPrior(
+    context.index.fxSeries.get(fxSeriesKey(eur.id, target.id)) ?? [],
+    (candidate) => candidate.observationDate.localeCompare(context.localDate),
+  );
+  if (selected === null) {
     return failure(
       eur.id,
       target.id,
@@ -203,7 +352,7 @@ function fxLeg(
     );
   }
   const ageDays = localDateDistance(
-    selected.providerObservationDate,
+    selected.observationDate,
     context.localDate,
   );
   if (ageDays < 0 || ageDays > 7) {
@@ -214,14 +363,15 @@ function fxLeg(
       `The historical ECB reference quote for ${target.code} is too old.`,
     );
   }
+  const observation = selected.observation;
   return {
-    baseAssetId: selected.baseAssetId,
-    quoteAssetId: selected.quoteAssetId,
-    rateText: normalizePositiveDecimalText(selected.rateText),
+    baseAssetId: observation.baseAssetId,
+    quoteAssetId: observation.quoteAssetId,
+    rateText: normalizePositiveDecimalText(observation.rateText),
     source: "ecb",
     kind: ageDays === 0 ? "fx_reference_same_day" : "fx_carry_forward",
-    providerObservationDate: selected.providerObservationDate,
-    fetchedAt: selected.fetchedAt,
+    providerObservationDate: observation.providerObservationDate,
+    fetchedAt: observation.fetchedAt,
   };
 }
 
@@ -276,20 +426,14 @@ function fiatResolution(
   };
 }
 
-export function resolveHistoricalQuote(
-  snapshot: HistoricalQuoteResolverSnapshot,
-  input: {
-    baseAssetId: string;
-    homeAssetId: string;
-    queryTime: string;
-    localDate: string;
-  },
+function resolveWithIndex(
+  index: HistoricalResolverIndex,
+  input: HistoricalQuoteResolverInput,
 ): HistoricalQuoteResolution {
   const queryInstant = canonicalUtcInstantValue(input.queryTime);
   const localDate = canonicalLocalDate(input.localDate);
-  const assets = new Map(snapshot.assets.map((asset) => [asset.id, asset]));
-  const base = assets.get(input.baseAssetId);
-  const home = assets.get(input.homeAssetId);
+  const base = index.assets.get(input.baseAssetId);
+  const home = index.assets.get(input.homeAssetId);
   if (!base || !home) {
     return failure(
       input.baseAssetId,
@@ -324,11 +468,8 @@ export function resolveHistoricalQuote(
       degraded: false,
     };
   }
-  const manual = snapshot.manualQuotes.find(
-    (quote) =>
-      quote.baseAssetId === base.id &&
-      quote.quoteAssetId === home.id &&
-      quote.valuationDate === localDate,
+  const manual = index.manualQuotes.get(
+    manualQuoteKey(base.id, home.id, localDate),
   );
   if (manual) {
     const rateText = normalizePositiveDecimalText(manual.rateText);
@@ -352,11 +493,7 @@ export function resolveHistoricalQuote(
   const context: ResolverContext = {
     queryInstant,
     localDate,
-    assets,
-    mappings: snapshot.mappings,
-    priceObservations: snapshot.priceObservations,
-    fxObservations: snapshot.fxObservations,
-    providerErrors: new Set(snapshot.providerErrors ?? []),
+    index,
   };
   if (base.assetType === "fiat") {
     return fiatResolution(context, base, home);
@@ -408,4 +545,20 @@ export function resolveHistoricalQuote(
     "unsupported",
     `${base.code} requires a manual historical exact-pair quote.`,
   );
+}
+
+export function createHistoricalQuoteResolver(
+  snapshot: HistoricalQuoteResolverSnapshot,
+): HistoricalQuoteResolver {
+  const index = createResolverIndex(snapshot);
+  return {
+    resolve: (input) => resolveWithIndex(index, input),
+  };
+}
+
+export function resolveHistoricalQuote(
+  snapshot: HistoricalQuoteResolverSnapshot,
+  input: HistoricalQuoteResolverInput,
+): HistoricalQuoteResolution {
+  return createHistoricalQuoteResolver(snapshot).resolve(input);
 }

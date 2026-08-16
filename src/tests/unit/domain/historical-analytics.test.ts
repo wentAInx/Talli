@@ -110,6 +110,14 @@ describe("historical analytics exact math", () => {
       isComplete: true,
     });
     expect(result.byAsset.map((slice) => slice.key)).toEqual(["cny", "usd"]);
+    expect(result.liabilitiesByAsset).toEqual([
+      {
+        key: "btc",
+        label: "BTC",
+        valueText: "-4760",
+        shareText: null,
+      },
+    ]);
     expect(result.byFiatCurrency.map((slice) => slice.key)).toEqual([
       "CNY",
       "USD",
@@ -352,6 +360,49 @@ describe("historical analytics exact math", () => {
       marketAndFxText: "0",
       tradeRebalanceText: "20",
       reconciliationText: "0",
+    });
+  });
+
+  it("does not require P0 when Q0 is zero and P1 can value the day activity", () => {
+    const startCutoffUtc = "2026-08-13T15:59:59.999Z";
+    const queriedInstants: string[] = [];
+    const result = calculateNetWorthBridge({
+      localDate: "2026-08-14",
+      startDate: "2026-08-13",
+      startCutoffUtc,
+      endCutoffUtc: cutoff,
+      startQuantities: new Map([["usd", 0n]]),
+      endQuantities: new Map([["usd", 10_00n]]),
+      entries: [
+        {
+          entryId: "income-from-zero",
+          eventId: "income-from-zero",
+          occurredAt: "2026-08-14T02:00:00.000Z",
+          eventType: "income",
+          entryRole: "main",
+          assetId: "usd",
+          amountAtomic: 10_00n,
+        },
+      ],
+      assets: new Map([[usd.id, usd]]),
+      resolve: (assetId, queryTime) => {
+        queriedInstants.push(queryTime);
+        return queryTime === startCutoffUtc
+          ? missing(assetId)
+          : resolved(assetId, "2");
+      },
+    });
+
+    expect(queriedInstants).toEqual([cutoff]);
+    expect(result).toMatchObject({
+      startValueText: "0",
+      endValueText: "20",
+      deltaText: "20",
+      marketAndFxText: "0",
+      incomeText: "20",
+      reconciliationText: "0",
+      isComplete: true,
+      missingAssetIds: [],
     });
   });
 
