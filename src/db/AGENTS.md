@@ -1,4 +1,4 @@
-# Persistence-specific Codex rules
+# Persistence contributor guidance
 
 These rules apply to `src/db/**`.
 
@@ -7,7 +7,9 @@ These rules apply to `src/db/**`.
 - Schema changes use explicit Drizzle migrations.
 - Amount and snapshot atomic quantities persist as signed base-10 integer TEXT, never REAL/float.
 - V2 price/rate columns persist as validated positive plain-decimal TEXT; derived quote cache/state never becomes a ledger fact.
-- Preserve the logical schema and FK/on-delete semantics from `04_DATABASE_SCHEMA.sql` unless the canonical spec is explicitly changed.
+- Treat `src/db/schema.ts` and `src/db/migrations/**` as the current schema and
+  executable history. Preserve their foreign-key and delete semantics unless a
+  reviewed forward migration explicitly changes them.
 - Event plus entries/tag mutations are one DB transaction. Restore is one DB transaction after full pre-validation.
 - Do not maintain `account.balance` as source of truth.
 - Avoid unsafe SQL SUM over arbitrary-size amount TEXT. Use bounded reads and Node `BigInt` aggregation where specified.

@@ -1,4 +1,4 @@
-# Shared component Codex rules
+# Shared component contributor guidance
 
 - Components are presentation/interaction primitives, not a second domain layer.
 - Money display accepts exact preformatted/string/bigint-safe inputs; do not coerce financial values through JS number for formatting.

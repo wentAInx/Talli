@@ -8,10 +8,10 @@ export default defineConfig([
   globalIgnores([
     ".next/**",
     "coverage/**",
+    "docs/history/**",
     "out/**",
-    "playwright-report/**",
+    "playwright-report*/**",
     "test-results/**",
     "next-env.d.ts",
-    "05_TYPES_AND_SERVICE_CONTRACTS.ts",
   ]),
 ]);

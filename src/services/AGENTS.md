@@ -1,4 +1,4 @@
-# Service-layer Codex rules
+# Service-layer contributor guidance
 
 - Services own application use-cases and transaction orchestration; they do not render UI.
 - Revalidate untrusted inputs at the server/application boundary and call domain rules rather than reproducing them ad hoc.

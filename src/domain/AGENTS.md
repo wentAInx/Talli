@@ -1,4 +1,4 @@
-# Domain-specific Codex rules
+# Domain contributor guidance
 
 These rules override/generalize the repository instructions for `src/domain/**`.
 

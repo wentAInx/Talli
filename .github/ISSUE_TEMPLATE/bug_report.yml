@@ -1,0 +1,70 @@
+name: Bug report
+description: Report a reproducible defect using synthetic or redacted data.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem.
+
+        **DO NOT upload real financial data or credentials.** Do not attach API keys, wallet secrets, real backups, databases, bank statements, full account/card numbers, screenshots, or logs containing personal financial information. For security issues, follow SECURITY.md; this repository does not currently provide a verified private reporting channel.
+  - type: input
+    id: version
+    attributes:
+      label: Talli version or commit
+      description: Provide a tag or full commit SHA.
+      placeholder: v6.0.0 or 40-character SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Local pnpm development
+        - Docker Compose
+        - Other self-hosted setup
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the actual and expected behavior without private data.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction with synthetic data
+      description: Give the smallest repeatable sequence and synthetic values.
+      placeholder: |
+        1. Create a synthetic CNY cash account...
+        2. Add an expense...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, browser, Node/pnpm or image version, and relevant non-secret configuration.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted diagnostics
+      description: Paste only minimal diagnostics after removing secrets and personal/financial data.
+      render: shell
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I verified that this report contains no credentials, real financial files, full account/card numbers, backup/database data, or personally identifying financial information.
+          required: true
+        - label: This is not a security vulnerability requiring private reporting.
+          required: true

@@ -1,187 +1,141 @@
-# AGENTS.md — Talli V6.0
+# AGENTS.md — contributor guidance
 
-## Project identity
+This file describes repository-wide engineering constraints for human and
+AI-assisted contributors. It is tool-independent. Current source, migrations,
+tests, and the documents under `docs/architecture/` are authoritative; material
+under `docs/history/` records design evolution only.
 
-This repository implements the frozen **Multi-Asset Personal Ledger V1** core, additive **Talli V2.0 current Price & Valuation**, frozen **Talli V3/V4/V4.1 read-only external sync**, additive **Talli V5/V5.1 import and automation**, and the approved **Talli V6.0 derived historical valuation and analytics layer**.
+## Product boundary
 
-The product is a single-user, self-hosted Next.js + TypeScript application backed by SQLite. Its primary invariant is:
+Talli is a single-user, self-hosted Next.js application backed by SQLite. It is
+not a multi-user service, transaction signer, custodial wallet, tax engine, or
+write-capable banking client.
 
-> Ledger quantities are source of truth. Valuation and external/on-chain observations are separate facts and may never mutate or replace Ledger data automatically.
+Talli currently has no built-in authentication. Do not expose it directly to
+the Internet. Use a trusted private network or VPN, or an external
+authentication and access-control proxy.
 
-V6 historical views are a derived, cache-backed reading of immutable Ledger quantities plus separate quote facts. Do not reinterpret that scope as tax or investment accounting, cost-basis tracking, automated banking writes, or multi-user SaaS.
+## Ledger and money invariants
 
-## Canonical specification and precedence
+- Ledger quantities are the source of truth. Prices, provider observations,
+  imported files, rule projections, recurring expectations, and analytics are
+  separate facts.
+- Persist monetary quantities as signed base-10 integer `TEXT` atomic units and
+  use `bigint` in domain code.
+- Never use JavaScript `number`, `Number()`, `parseFloat()`, SQLite `REAL`, or
+  floating-point arithmetic for money, balances, fees, or executed quantities.
+- Reject excess fractional digits. Never silently round financial input.
+- A transfer moves the same asset between distinct accounts with equal absolute
+  quantities. An exchange moves different assets with independently entered
+  quantities.
+- A balance snapshot at `T` covers events with `occurredAt <= T`; only entries
+  in `(snapshot.asOf, queryTime]` are added after the latest applicable snapshot.
+- Transfer and exchange principal are excluded from income/expense reports.
+  Explicit fee entries remain expenses in their own asset.
+- Event metadata, entries, tags, imports, links, and snapshots must preserve the
+  transaction boundaries defined by the current service layer.
+- Referenced accounts and assets are archived rather than destructively removed.
 
-Before substantial implementation work, read the relevant versioned package. For V6 historical analytics, `docs/v6-historical-analytics/01_CODEX_MASTER_INSTRUCTION_CN.md` and its numbered package are canonical. Earlier released scopes remain governed by their own versioned packages, including `docs/v5.1-rules-recurring/`, `docs/v5-financial-file-import/`, `docs/v4.1-evm-l2/`, `docs/v4-evm-wallet/`, `docs/v3-external-sync/`, and `docs/v2-price-valuation/`.
+## Valuation and provider boundaries
 
-When rules conflict, use this precedence:
+- Price and rate facts use validated positive decimal strings and `decimal.js`.
+  They do not reuse ledger atomic-unit semantics.
+- Home Asset valuation requires an active fiat asset and explicit quote legs.
+- Never assume `USDT`, `USDC`, or another stablecoin equals a fiat currency.
+- Missing quotes for a nonzero position make the result incomplete; they never
+  become zero.
+- Provider HTTP is server-only, explicit, and outside SQLite write transactions.
+  Resolvers, server rendering, reports, and analytics reads are cache-only.
+- Provider, exchange, on-chain, and imported-file data never write Ledger facts
+  directly. Only an explicit Import may invoke Ledger writers; only an explicit
+  Reconcile may invoke snapshot writers.
+- Accept only public EVM addresses. Never accept, persist, display, or request
+  private keys, mnemonics, seed phrases, signing, or transaction broadcasting.
+- Chain and contract identity, not a display symbol, identifies an ERC-20 asset.
 
-1. `01_CODEX_MASTER_INSTRUCTION_CN.md`
-2. `03_DOMAIN_LEDGER_SPEC_CN.md`
-3. `07_TEST_ACCEPTANCE_CN.md`
-4. `04_DATABASE_SCHEMA.sql` and `05_TYPES_AND_SERVICE_CONTRACTS.ts`
-5. UI and implementation guidance
-
-For V2 conflicts, `docs/v2-price-valuation/01_CODEX_MASTER_INSTRUCTION_CN.md` and its numbered package files override V1 text that says valuation does not yet exist. They do not override V1 ledger, snapshot, report, or atomic-money invariants.
-
-For V4 conflicts, `docs/v4-evm-wallet/01_CODEX_MASTER_INSTRUCTION_CN.md`, domain/identity, provider, activity/gas, security, backup, and acceptance files override older text that limits external sync to Kraken. They do not override the frozen V1/V2/V3 invariants.
-
-For V6 conflicts, `docs/v6-historical-analytics/01_CODEX_MASTER_INSTRUCTION_CN.md`, architecture, time, quote, refresh, analytics, backup, security, and acceptance files override older text that prohibits historical valuation. They do not override Ledger quantity, snapshot, atomic-money, security, or released current-valuation invariants.
-
-Do not modify canonical specification files unless the user explicitly asks to change the specification.
-
-## V1 non-negotiable invariants
-
-- The V1 Ledger never stores provider, historical-valuation, or analytics facts. V6 may store separate derived historical quote/cache and refresh-operation facts, but still has no tax lots, FIFO/LIFO, realized P&L, cost basis, background collector, or stablecoin peg assumption.
-- V2 current valuation permits one explicit fiat Home Asset. CoinGecko provides crypto/USD market quotes, ECB provides EUR reference legs, and active manual exact-pair quotes have precedence.
-- Provider calls are server-only, explicit and on-demand, outside SQLite write transactions, and never block SSR or analytics reads. Current and historical resolvers remain cache-only; historical refresh is a bounded, foreground, resumable workflow with no cron/background continuation.
-- Price/rate facts use positive plain-decimal `TEXT` and `decimal.js`; they never reuse ledger `bigint` semantics or JS floating-point arithmetic.
-- Persist monetary quantities as signed base-10 integer **TEXT** atomic units. Domain arithmetic uses `bigint`.
-- Never use JavaScript `number`, `Number()`, `parseFloat()`, SQLite `REAL`, or floating-point arithmetic for persisted money, balances, fees, or executed exchange quantities.
-- Reject user input with fractional digits greater than the asset `scale`; never silently round.
-- `transfer` means same-asset movement between distinct accounts with equal absolute source/destination quantities.
-- `exchange` means different-asset movement with independently entered source/destination quantities.
-- Reconciliation is a balance snapshot, not income/expense. A snapshot at T covers events with `occurredAt <= T`; only entries with `occurredAt > T` are added after it.
-- Reports count `expense/main`, `income/main`, and transfer/exchange `fee` as specified. Transfer/exchange principal and snapshots are excluded.
-- Event plus entries mutations are atomic SQLite transactions.
-- An account belongs to exactly one asset.
-- Referenced assets/accounts are archived rather than destructively removed.
-- On-chain data is not Ledger data. Ethereum sync writes only connection, mapping, append-only observation, source, and candidate facts. Only explicit Import/Reconcile may invoke the existing V1 writers.
-- V4.0 accepts only public Ethereum addresses on chainId 1. Never accept, persist, display, or request private keys, mnemonics, seed phrases, signing, transaction sending, or configurable write RPC URLs.
-- `ALCHEMY_API_KEY` is server-only and the Mainnet origin is fixed. Tests use injectable deterministic transport and never real Alchemy.
-- Native/ERC-20 amounts come from hex or `rawContract.value` through `bigint`; human provider values are audit-only. ERC-20 identity is chain plus contract, never symbol.
-- Complex DeFi stays unsupported. Gas is a separate candidate, including exact failed-transaction gas; it is never silently folded into movement.
-
-When touching ledger semantics, invoke or follow `$ledger-domain-guard`.
-
-## Architecture baseline
-
-For implementation details not fixed by the canonical specs, also follow `CODEX_ARCHITECTURE_DEFAULTS_CN.md`.
-
-Use a pragmatic modular monolith. Do not introduce microservices, Redis, queues, cron collectors, GraphQL, event buses, CQRS frameworks, generic repository frameworks, or distributed infrastructure in V6.0.
-
-Preferred dependency direction:
+## Architecture and dependency direction
 
 ```text
 React / App Router UI
         ↓
-server boundary (Server Action or Route Handler)
+server boundary
         ↓
-application/service layer
+application services
         ↓
 pure domain rules
         ↓
-concrete persistence/query layer
+concrete queries and persistence
         ↓
 SQLite via Drizzle
 ```
 
-Rules:
+- UI code does not own ledger rules, balance algorithms, report semantics, money
+  arithmetic, or database transaction orchestration.
+- Domain modules remain deterministic and independent of React, HTTP, Drizzle,
+  SQLite, filesystem, and network access.
+- Database access stays under `src/db/**` and application services.
+- Validate untrusted data at server boundaries and again where domain invariants
+  require it.
+- Store timestamps as UTC ISO strings. Natural-day and natural-month behavior
+  uses the configured application timezone, never an implicit server timezone.
+- Prefer the smallest concrete design that preserves these boundaries. Do not
+  add distributed infrastructure or generic framework layers without a current
+  product requirement.
 
-- React components do not own ledger rules, money arithmetic, balance computation, report semantics, or transaction orchestration.
-- Domain modules are deterministic and independently testable; they do not import React, HTTP primitives, or Drizzle.
-- DB access stays under `src/db/**` and application services. Avoid ad-hoc SQL/Drizzle calls from components.
-- Validate at the server boundary and again at the domain/application invariant boundary where correctness requires it.
-- Prefer Server Components for reads and minimal client state. Use Server Actions for ordinary in-app mutations; use Route Handlers only where an HTTP/file boundary is materially useful (for example backup/export/restore endpoints).
-- Do not create abstraction layers merely to satisfy a pattern. Prefer concrete repositories/query modules and explicit transaction ownership.
-- Use `crypto.randomUUID()` unless a stronger project requirement appears; do not add an ID dependency by default.
-- Keep all date storage UTC ISO. Natural-month reporting is computed using the configured app timezone, never the server-local timezone implicitly.
-- For stable transaction pagination, use deterministic ordering compatible with `occurredAt DESC`, `createdAt DESC`, then `id` and prefer keyset/cursor pagination over loading all history.
+## Database, migrations, and backups
 
-When designing backend modules, services, APIs, or dependency boundaries, invoke or follow `$backend-architecture`.
+- The current schema is `src/db/schema.ts`; executable history is
+  `src/db/migrations/**`. Historical SQL under `docs/history/` is not executable.
+- Keep SQLite foreign keys and WAL enabled.
+- Use explicit forward migrations. Do not mutate schema at runtime.
+- Preserve backup wire compatibility and validate the full payload before any
+  restore write.
+- Restore writes all accepted facts atomically to an eligible empty or seed-only
+  database and runs foreign-key verification before commit.
+- Credentials, provider caches, cursors, and operational refresh state stay out
+  of backups unless a future version explicitly changes the wire contract.
 
-## SQLite / persistence baseline
+## Security and privacy
 
-- SQLite is the V1 source of persistence and must enable foreign keys and WAL.
-- Use Drizzle schema + explicit migrations; do not rely on runtime schema mutation.
-- Atomic amount columns remain TEXT even when SQL aggregation would be convenient.
-- Where arbitrary-size integer TEXT cannot be safely summed by SQLite, fetch bounded rows and sum with `BigInt` in Node, as specified.
-- Restore validates the complete backup first, then writes everything in one transaction to an empty business database.
+- Keep secrets in server runtime environment variables. Never commit or log
+  credentials, signed requests, full statement account numbers, real backups,
+  or real financial fixtures.
+- Kraken credentials must be dedicated and read-only. EVM integrations use a
+  fixed chain registry and read-method allowlist.
+- File parsing is bounded and rejects dangerous XML constructs. Provider and
+  file parsing work stays outside database write transactions.
+- Same-origin request checks are defense in depth; they are not authentication.
 
-When modifying schema, migrations, queries, backup/restore, or transactions, invoke or follow `$sqlite-drizzle-persistence`.
+## Change workflow
 
-## Frontend and product UX
+1. Inspect current source, migrations, architecture documentation, and affected
+   tests before editing.
+2. State the affected invariants, files, validation, impact, and rollback.
+3. Make the smallest coherent change. Do not mix feature work with repository,
+   security, or release maintenance.
+4. Add deterministic tests with behavior changes, especially for exact money,
+   snapshots, provider boundaries, migrations, and backup compatibility.
+5. Run targeted checks, then the full repository gate.
+6. Review the final diff for floating-point money, implicit pegs, provider-to-
+   Ledger writes, client credential exposure, hidden database access, and
+   unintended migration or backup changes.
 
-The globally installed frontend skills should be used when relevant:
-
-- `$frontend-design` for visual direction and UI implementation.
-- `$react-best-practices` for React/Next.js implementation quality.
-- `$web-design-guidelines` for accessibility and interface review.
-
-Also follow `$finance-ui-review` for this product's finance-specific rules.
-
-Product-specific requirements include:
-
-- clean, compact, finance-oriented, mobile-first responsive UI;
-- tabular numerals for amounts;
-- clear asset code/precision and explicit negative signs;
-- never communicate sign only through color;
-- a Home-denominated total is always marked approximate (`≈`), sourced from explicit quote legs, and marked incomplete when a nonzero asset is missing a usable quote;
-- never show an implicit native-asset total or assume `USDT/USDC = USD`;
-- transaction entry should minimize steps;
-- transfer and exchange forms must expose their different semantics;
-- destructive delete and destructive restore require explicit confirmation;
-- empty states must not seed fake balances or fake transactions.
-
-## Implementation workflow
-
-For V1 core follow `08_IMPLEMENTATION_PLAN_CN.md`; for V2 follow `docs/v2-price-valuation/11_IMPLEMENTATION_PLAN_CN.md`; for V3 follow `docs/v3-external-sync/13_IMPLEMENTATION_PLAN_CN.md`; for V4 follow `docs/v4-evm-wallet/12_IMPLEMENTATION_PLAN_CN.md`; for V6 follow `docs/v6-historical-analytics/18_IMPLEMENTATION_PLAN_CN.md`. Migration correctness, exact money/identity, provider/domain boundaries, and backup compatibility come before UI.
-
-For non-trivial work:
-
-1. Inspect existing code and the relevant spec sections before editing.
-2. State the affected invariants and acceptance cases.
-3. Make the smallest coherent change that preserves the frozen V1/V2/V3 baselines and the active version scope.
-4. Add/update tests together with behavior changes.
-5. Run targeted checks first, then the repository validation gate.
-6. Review the diff for future-version scope creep, float money/rates, symbol identity, implicit FX or stablecoin pegs, client key leakage, signing/write RPC, hidden DB access, and missing transaction boundaries.
-
-Do not ask the user to resolve an ambiguity if the canonical specs already resolve it. For minor unspecified implementation details, choose the simplest conservative V1-compatible option and record it briefly if consequential.
-
-## Testing and verification
-
-Financial-core tests use deterministic timestamps and exact quantities.
-
-Before declaring work complete, run the actual project equivalents of:
+## Validation gate
 
 ```text
-lint
-typecheck
-unit/integration tests
-build
-security:check
-e2e
+pnpm format:check
+pnpm lint
+pnpm typecheck
+pnpm db:check
+pnpm test:unit
+pnpm test:integration
+pnpm build
+pnpm security:check
+pnpm test:e2e
 ```
 
-Run relevant Playwright E2E when UI flows are changed or when the suite is configured.
-
-Invoke or follow `$acceptance-gate` before claiming a phase or V1 is complete.
-
-Never invent command results. Report commands not run, failures, and residual risks explicitly.
-
-## Multi-agent use
-
-Parallel agents are encouraged for **read-heavy audit work**, not concurrent edits to the same implementation.
-
-For major milestones or final review, delegate in parallel to the project-scoped read-only agents when available:
-
-- `domain_auditor`
-- `architecture_auditor`
-- `ui_auditor`
-- `test_auditor`
-
-Wait for their findings, then let the primary agent make any required fixes sequentially.
-
-## Definition of done for a Codex turn
-
-A task is done only when:
-
-- requested behavior is implemented;
-- relevant canonical invariants remain true;
-- targeted tests exist and pass where runnable;
-- relevant lint/typecheck/build checks are run where practical;
-- the diff contains no unintended scope expansion;
-- the final report names files changed, commands actually run, failures/limitations, and any intentionally deferred items.
+Report commands actually run, exact failures, untested boundaries, and residual
+risks. Do not weaken, skip, or delete existing checks to obtain a green result.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

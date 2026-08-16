@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security reporting policy
+    url: https://github.com/wentAInx/Talli/security/policy
+    about: Read the current reporting policy; never post secrets or financial data in an issue.

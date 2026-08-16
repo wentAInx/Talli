@@ -1,0 +1,52 @@
+name: Feature request
+description: Propose a scoped improvement that preserves Talli's financial boundaries.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use synthetic examples only. Do not upload real financial data, credentials, backups, statements, or account identifiers. Review ROADMAP.md before proposing work.
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What problem should Talli solve, and for whom?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed scope
+      description: Describe the smallest useful behavior, including non-goals.
+    validations:
+      required: true
+  - type: textarea
+    id: invariants
+    attributes:
+      label: Financial invariants and data boundaries
+      description: Explain effects on Ledger facts, exact money, providers, import/reconcile, migrations, and backups.
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Security and privacy impact
+      description: Identify new data, network, credential, or deployment exposure.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance evidence
+      description: What deterministic tests and failure cases should demonstrate correctness?
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope-check
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: I reviewed ROADMAP.md and this request does not require real financial data or credentials.
+          required: true
