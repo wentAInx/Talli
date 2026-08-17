@@ -31,10 +31,9 @@ violate this policy and may temporarily or permanently restrict participation.
 Enforcement decisions should consider context, severity, prior behavior, and
 the safety of affected participants.
 
-Public repository moderation tools may be used for conduct visible in public
-threads. Sensitive conduct reports require a private maintainer channel.
-**OWNER ACTION REQUIRED:** publish that private contact before making the
-repository public. Security vulnerabilities should use the separate process in
+For harassment or abuse on GitHub, use GitHub's platform reporting and blocking
+mechanisms. Do not use the vulnerability-reporting flow for non-security
+conduct reports. Security vulnerabilities must follow the separate process in
 [SECURITY.md](SECURITY.md).
 
 This policy applies in project spaces and when someone is publicly representing

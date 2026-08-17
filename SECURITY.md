@@ -12,15 +12,15 @@ authentication or authorization.
 
 ## Reporting a vulnerability
 
-This repository does not currently provide a verified private reporting
-channel. Do not disclose an unpatched vulnerability in a public issue,
-discussion, or pull request, and do not send sensitive details through an
-unverified address or form.
+When the Talli repository is public, use GitHub **Security → Report a
+vulnerability** as the preferred private reporting channel. Public releases of
+Talli require GitHub Private Vulnerability Reporting to remain enabled.
 
-**OWNER ACTION REQUIRED:** enable GitHub private vulnerability reporting or
-publish a private maintainer contact before making the repository public. Once
-enabled, the GitHub **Security → Report a vulnerability** flow is the preferred
-channel. No maintainer email is currently designated in this repository.
+Do not disclose an unpatched vulnerability in a public issue, discussion, or
+pull request. If the **Report a vulnerability** button is unexpectedly
+unavailable, do not post any vulnerability details. Open a regular issue that
+contains no vulnerability details and ask the maintainer to provide a private
+contact method.
 
 Include, when safe:
 

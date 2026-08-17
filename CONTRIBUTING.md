@@ -106,3 +106,8 @@ Current behavior belongs in `README.md` or `docs/architecture/`. Historical
 design context belongs in `docs/history/` and must be labeled non-authoritative.
 Do not add model-specific prompts, private maintainer handoffs, chat transcripts,
 or package-validation manifests to the public project documentation.
+
+## License of contributions
+
+Unless otherwise stated, contributions accepted into Talli are licensed under
+Apache-2.0. See [LICENSE](LICENSE) for the full license text.

@@ -182,7 +182,4 @@ or financial records in an issue, fixture, screenshot, or pull request.
 
 ## License
 
-No open-source license has been selected yet. Until a license file is added,
-this repository must not be described or distributed as an open-source release.
-The owner must choose a license before making the repository public; candidates
-under review are Apache-2.0, MIT, and AGPL-3.0.
+Licensed under the [Apache License 2.0](LICENSE).

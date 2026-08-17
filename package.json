@@ -2,6 +2,7 @@
   "name": "talli",
   "version": "0.2.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "Talli is a single-user, self-hosted multi-asset personal ledger.",
   "packageManager": "pnpm@10.11.0",
