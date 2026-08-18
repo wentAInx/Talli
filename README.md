@@ -1,5 +1,8 @@
 # Talli
 
+[![Talli CI](https://github.com/wentAInx/Talli/actions/workflows/ci.yml/badge.svg)](https://github.com/wentAInx/Talli/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+
 Talli is a single-user, self-hosted personal ledger for exact multi-asset
 record keeping, read-only external observations, and historical net-worth
 analytics.
